@@ -5,11 +5,20 @@ import threading
 import time
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy.engine import make_url
 
-from app.container import configure_environment, ensure_key, run_migrations, supervise
+from app import container
+from app.container import (
+    configure_environment,
+    connect_database,
+    describe_database_error,
+    ensure_key,
+    run_migrations,
+    supervise,
+)
 
 
 @pytest.fixture
@@ -43,6 +52,76 @@ def test_existing_book_settings_take_precedence(environment, monkeypatch):
     assert os.environ["BOOK_DATABASE_URL"] == "postgresql+psycopg://existing/db"
     assert os.environ["BOOK_PUBLIC_URL"] == "http://existing:8000"
     assert os.environ["BOOK_SECRET_KEY_FILE"] == "/run/secrets/app_key"
+
+
+DATABASE_URL = "postgresql://dewarr:s3cret@dewarr-postgres:5432/dewarr"
+
+
+@pytest.mark.parametrize(
+    ("driver_message", "expected"),
+    [
+        (
+            "failed to resolve host 'dewarr-postgres': [Errno -2] Name or service not known",
+            "DB_HOST dewarr-postgres does not resolve",
+        ),
+        (
+            'connection failed: connection to server at "172.18.0.2", port 5432 failed: '
+            "could not receive data from server: Connection refused",
+            "nothing accepted connections at dewarr-postgres:5432",
+        ),
+        ("connection timeout expired", "dewarr-postgres:5432 did not answer"),
+        (
+            'connection failed: connection to server at "172.18.0.2", port 5432 failed: '
+            'FATAL:  password authentication failed for user "dewarr"',
+            "rejected DB_PASSWORD for DB_USER dewarr",
+        ),
+        ('FATAL:  database "dewarr" does not exist', "DB_NAME dewarr does not exist"),
+        ("server closed the connection unexpectedly", "unavailable at dewarr-postgres:5432"),
+    ],
+)
+def test_database_errors_name_the_failed_step(driver_message, expected):
+    message = describe_database_error(psycopg.OperationalError(driver_message), DATABASE_URL)
+    assert expected in message
+    assert " ".join(driver_message.split()) in message
+
+
+def test_database_error_never_echoes_the_password():
+    error = psycopg.OperationalError("unexpected reply containing s3cret")
+    message = describe_database_error(error, DATABASE_URL)
+    assert "s3cret" not in message
+
+
+def test_unreachable_database_logs_and_reports_the_driver_reason(environment, monkeypatch, caplog):
+    configure_environment()
+    attempts = []
+
+    def unresolvable(*args, **kwargs):
+        attempts.append(1)
+        raise psycopg.OperationalError(
+            "failed to resolve host 'postgres': Name or service not known"
+        )
+
+    monkeypatch.setattr(psycopg, "connect", unresolvable)
+    stop = MagicMock(spec=threading.Event)
+    stop.is_set.return_value = False
+    with caplog.at_level("WARNING", logger="dewarr"):
+        with pytest.raises(RuntimeError, match="DB_HOST postgres does not resolve"):
+            connect_database(stop, timeout=0.05)
+    assert len(attempts) > 1
+    assert caplog.text.count("Waiting for database") == 1
+
+
+def test_lost_connection_during_startup_is_described(environment, monkeypatch, caplog):
+    def disconnect(*args):
+        raise psycopg.OperationalError("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(container, "prepare_user", lambda config: None)
+    monkeypatch.setattr(container, "connect_database", lambda stop: MagicMock())
+    monkeypatch.setattr(container, "ensure_key", disconnect)
+    with caplog.at_level("ERROR", logger="dewarr"):
+        assert container.main() == 1
+    assert "server closed the connection unexpectedly" in caplog.text
+    assert "test/password" not in caplog.text
 
 
 def test_config_key_is_created_once_and_keeps_credentials_decryptable(environment):

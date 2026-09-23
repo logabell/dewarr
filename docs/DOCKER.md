@@ -92,7 +92,7 @@ docker compose pull
 docker compose up -d
 ```
 
-The app stops both services together and runs migrations before restarting. If either service fails, the container exits so Docker can restart it. For manual `docker run` installations, pull the image, stop/remove only the Dewarr container, and recreate it using the same command and volumes.
+The app stops both services together and runs migrations before restarting. If either service fails, the container exits so Docker can restart it. `pull` and `up -d` only recreate Dewarr, so PostgreSQL keeps its existing network attachment. If you renamed the Compose network or moved Dewarr into another stack since PostgreSQL was created, recreate both together with `docker compose up -d --force-recreate dewarr postgres`. To share a network between Compose projects, create it once with `docker network create <name>` and declare it `external: true` in each project. For manual `docker run` installations, pull the image, stop/remove only the Dewarr container, and recreate it using the same command and volumes.
 
 ## Backups
 
@@ -126,7 +126,7 @@ Changing `POSTGRES_PASSWORD` in Compose does not change an existing database pas
 
 - **Cannot sign in:** make `PUBLIC_URL` exactly match the browser address. Identity provider sign-in uses that same address for its redirect URL; see [OpenID Connect](OIDC.md). Plex sign-in uses it the same way; see [Plex](PLEX.md).
 - **Permission denied:** check `PUID`, `PGID`, and shared-folder ownership.
-- **Database unavailable:** check the database host and matching passwords.
+- **Database unavailable:** the log names the failed step. If `DB_HOST` does not resolve, Dewarr and PostgreSQL are not on the same Docker network. Check with `docker network inspect <network>`, then run `docker compose down` followed by `docker compose up -d` to recreate the containers and network. Your data is kept unless you add `-v`. A rejected password means the value differs from the one the database was created with.
 - **Existing database / missing key:** restore the original key to `config/app_key`.
 - **Migrations waiting:** stop any old API/worker containers using the same database.
 - **Inspect startup:** run `docker compose logs --tail=100 dewarr`.
