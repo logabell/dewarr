@@ -9,18 +9,20 @@ from uuid import UUID
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, HTTPException
 from pydantic import Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.adapters.audiobookshelf import Audiobookshelf, backend_path
 from app.adapters.contracts import AdapterError
 from app.adapters.grimmory import Grimmory
 from app.api.automatic_imports import view as policy_view
 from app.api.dependencies import Admin, Database
+from app.config import get_settings
 from app.db.models import (
     AcquisitionDefaults,
     AuditEvent,
     AutomaticImportPolicy,
     ImportDestination,
+    ImportEntry,
     ImportStorageSettings,
     Integration,
     Library,
@@ -28,6 +30,8 @@ from app.db.models import (
 from app.domain.operations import transaction_lock
 from app.domain.release_profiles import DEFAULTS_LOCK
 from app.importing.destination_view import DestinationView, view
+from app.importing.destinations import check_library_route, choose_staging, holds_journals
+from app.importing.filesystem import InspectionError
 from app.importing.naming import StrictModel
 from app.importing.planning import assert_admin
 from app.importing.seeding_rename import normalize_seeding_target
@@ -36,6 +40,14 @@ from app.security import decrypt_secrets
 
 router = APIRouter(prefix="/organization/library-folders", tags=["organization"])
 logger = logging.getLogger(__name__)
+UNFINISHED_IMPORTS = (
+    "queued",
+    "publishing",
+    "awaiting-library",
+    "held",
+    "cancelling",
+    "cancel-held",
+)
 
 
 class FolderOption(StrictModel):
@@ -197,15 +209,43 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
             )
         root_key = destination.root_key
     settings = await storage_settings(db)
+    # Only the operator's setting fixes staging; a saved value is where an earlier pick put it.
+    explicit = get_settings().import_staging_root
     local = Path(body.local_path)
-    if not settings.import_staging_root and local.parent == Path("/"):
+    if not explicit and local.parent == Path("/"):
         raise HTTPException(
             422,
             "Use a library folder inside a shared media mount, such as /data/ebooks. "
             "Dewarr keeps its staging directory beside that folder, so the folder "
             "cannot sit directly under /.",
         )
-    stage = settings.import_staging_root or local.parent / ".book-search-staging"
+    storage = await db.get(ImportStorageSettings, 1)
+    current = Path(storage.staging_root) if storage and storage.staging_root else None
+    stage = await asyncio.to_thread(choose_staging, local, explicit, current)
+    if current and stage != current:
+        # Recovery holds any publication whose saved staging root no longer matches.
+        pending = await db.scalar(
+            select(func.count())
+            .select_from(ImportEntry)
+            .where(
+                ImportEntry.state.in_(UNFINISHED_IMPORTS),
+                ImportEntry.specification["staging_root"].astext == str(current),
+            )
+        )
+        if pending:
+            raise HTTPException(
+                409,
+                f"Unfinished imports ({pending}) still use the staging folder {current}. "
+                "Let them finish or cancel them before choosing a library folder on another "
+                "filesystem.",
+            )
+        if not explicit and await asyncio.to_thread(holds_journals, current):
+            raise HTTPException(
+                409,
+                f"The staging folder {current} holds records of earlier imports, and {local} "
+                "is on a different filesystem. Choose a folder on the same filesystem, or set "
+                "BOOK_IMPORT_STAGING_ROOT to a staging folder on the new one.",
+            )
     # All media and publication journals remain outside watched roots.
     roots = {**settings.import_destinations, root_key: local}
     for root in roots.values():
@@ -216,7 +256,11 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
                     "Library folders must be separate from download and staging folders. "
                     "Use sibling folders on the same mounted filesystem.",
                 )
-    storage = await db.get(ImportStorageSettings, 1)
+    others = [path for key, path in settings.import_destinations.items() if key != root_key]
+    try:
+        await asyncio.to_thread(check_library_route, local, stage, others)
+    except InspectionError as error:
+        raise HTTPException(422, str(error)) from error
     if not storage:
         storage = ImportStorageSettings(id=1, destinations={}, sources={})
         db.add(storage)

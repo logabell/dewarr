@@ -1,5 +1,4 @@
 import asyncio
-import errno
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,11 +16,13 @@ from app.db.models import AuditEvent, ImportDestination, Integration, Library, O
 from app.db.session import session_factory
 from app.domain.downloaders import DOWNLOAD_KINDS, mapped_path
 from app.importing.backend import verify_backend
-from app.importing.filesystem import InspectionError, directory
+from app.importing.filesystem import InspectionError, describe_os_error, directory
 from app.importing.naming import fingerprint
 from app.importing.publication import PublishFile, probe_destination, probe_download_folder
 from app.importing.storage import import_sources, storage_settings
 from app.security import decrypt_secrets
+
+STAGING_NAME = ".book-search-staging"
 
 
 async def confirm_library_mapping(downloader_id, client_path, worker_root, *, client_factory=None):
@@ -276,12 +277,10 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         report, ok, copy_fallback = {}, False, False
         if isinstance(error, (InspectionError, AdapterError)):
             message = str(error)[:300]
+        elif isinstance(error, OSError):
+            message = describe_os_error(error)
         else:
-            code = errno.errorcode.get(error.errno) if isinstance(error, OSError) else None
-            message = (
-                f"Destination probe failed{f' ({code})' if code else ''}; "
-                "check paths, permissions and filesystem support"
-            )
+            message = "Destination probe failed; check paths, permissions and filesystem support"
     async with session_factory()() as db, db.begin():
         operation = await db.get(Operation, operation_id)
         destination = await db.scalar(
@@ -332,9 +331,71 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         )
 
 
+def _device(path: Path) -> int:
+    with directory(path) as fd:
+        return os.fstat(fd).st_dev
+
+
+def choose_staging(local: Path, explicit: Path | None, current: Path | None) -> Path:
+    """Keep a working staging folder on the library's filesystem, otherwise use the sibling."""
+    if explicit:
+        return explicit
+    if current:
+        try:
+            if _device(current) == _device(local):
+                return current
+        except (OSError, InspectionError):
+            pass
+    return local.parent / STAGING_NAME
+
+
+def holds_journals(staging: Path) -> bool:
+    """Whether a staging folder still holds publication receipts that recovery reads."""
+    try:
+        with directory(staging) as fd, os.scandir(fd) as entries:
+            return any(entry.name.endswith(".json") for entry in entries)
+    except (OSError, InspectionError):
+        return False
+
+
+def check_library_route(local: Path, staging: Path, others: list[Path]) -> None:
+    """Check a library folder choice against the real mounts before it is saved."""
+    try:
+        library = _device(local)
+        if staging == local.parent / STAGING_NAME and _device(local.parent) != library:
+            raise InspectionError(
+                f"{local} is on a separate filesystem from {local.parent}, so Dewarr has "
+                "nowhere beside it for its staging folder. Mount the parent folder instead "
+                f"(for example /your/media:{local.parent}) and choose {local} again."
+            )
+    except OSError as error:
+        raise InspectionError(describe_os_error(error, local)) from error
+    try:
+        prepare_staging(staging)
+        staged = _device(staging)
+    except OSError as error:
+        raise InspectionError(describe_os_error(error, staging)) from error
+    if staged != library:
+        raise InspectionError(
+            f"The staging folder {staging} is on a different filesystem from {local}. "
+            "Mount a folder that contains both into Dewarr."
+        )
+    for other in others:
+        try:
+            device = _device(other)
+        except (OSError, InspectionError):
+            continue  # That library's own route test reports its missing folder.
+        if device != library:
+            raise InspectionError(
+                f"{local} is on a different filesystem from the library folder {other}. "
+                "Dewarr uses one staging folder for every library, so all library folders "
+                "must be on the same mount."
+            )
+
+
 def prepare_staging(path):
     """Create only our private sibling staging directory; never follow symlinks."""
-    if path.name != ".book-search-staging":
+    if path.name != STAGING_NAME:
         return  # Existing explicitly configured staging keeps its previous contract.
     with directory(path.parent) as parent:
         try:

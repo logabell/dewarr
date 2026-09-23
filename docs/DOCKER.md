@@ -30,7 +30,9 @@ Most configuration belongs in the app: connect libraries, reading accounts, sour
 | `./data:/data` | Shared downloads and library files. Replace `./data` with your existing media parent folder. |
 | `postgres:/var/lib/postgresql` | PostgreSQL 18 data in a persistent Docker volume. |
 
-Dewarr initializes `/config` and runs the app as `PUID:PGID`. It does not change ownership of existing media. Give that user/group access to your shared folders.
+Dewarr initializes `/config` and runs the app as `PUID:PGID`. It does not change ownership of existing media. Give that user/group access to your shared folders. Groups added with Compose `group_add` are kept, so folders shared through another group also work.
+
+Mount a parent folder, not the library folder itself. Dewarr keeps a private `.book-search-staging` folder beside the library folder and moves finished imports from it into the library, so both must be on the same filesystem. Mount `/media:/mnt` and choose `/mnt/audiobooks`, rather than mounting `/media/audiobooks:/mnt/audiobooks`. Dewarr uses one staging folder for every library, so ebook and audiobook library folders must also share that filesystem. Dewarr checks these when you choose a folder. The staging folder keeps records of past imports, so once it has any, Dewarr will not move it to another filesystem on its own. To move your libraries to a new filesystem, set `BOOK_IMPORT_STAGING_ROOT` to an empty folder there that is owned by `PUID` with mode `0700`.
 
 Use the same paths in Dewarr, qBittorrent, and your library server (Audiobookshelf or Grimmory) when possible. Grimmory's image is `grimmory/grimmory` and listens on port 6060. For example:
 

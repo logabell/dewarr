@@ -1,5 +1,6 @@
 """Read-only descriptor-relative access to explicitly mounted download trees."""
 
+import errno
 import hashlib
 import os
 import stat
@@ -74,6 +75,37 @@ def source_scope(root: int, relative: str, kind: str):
                 os.close(fd)
     else:
         raise InspectionError("Unknown source inspection scope")
+
+
+def describe_os_error(error: OSError, path: Path | None = None) -> str:
+    """Explain a mount or permission failure in terms a Docker user can act on."""
+    subject = str(path) if path else "a folder"
+    denied = (
+        f"Dewarr (uid {os.geteuid()}) was denied access to {subject}. Give PUID/PGID read "
+        "and write access to the library, staging and download folders."
+    )
+    messages = {
+        errno.EACCES: denied,
+        errno.EPERM: denied,
+        errno.ENOENT: f"Dewarr cannot find {subject} inside its container. "
+        "Check the volume mounts.",
+        errno.ENOTDIR: f"Dewarr expected {subject} to be a folder, "
+        "but part of that path is a file.",
+        errno.ELOOP: f"The path to {subject} contains a symbolic link, which Dewarr does not "
+        "follow. Enter the real folder path.",
+        errno.EXDEV: "The staging folder and library folder are on different filesystems. "
+        "Mount the folder that contains both into Dewarr.",
+        errno.EROFS: f"Dewarr cannot write to {subject} because it is mounted read-only. "
+        "Remove :ro from that volume.",
+        errno.ENOSPC: f"The filesystem holding {subject} is full.",
+        errno.EDQUOT: f"The filesystem holding {subject} is over its quota.",
+    }
+    message = messages.get(error.errno) or (
+        f"{f'Dewarr could not use {path}' if path else 'Destination probe failed'}; "
+        "check paths, permissions and filesystem support"
+    )
+    code = errno.errorcode.get(error.errno)
+    return f"{message} ({code})" if code else message
 
 
 def identity(info):
