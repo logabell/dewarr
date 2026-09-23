@@ -1,6 +1,7 @@
 """Shared, caller-committed planning for reviewed and automatic imports."""
 
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID, uuid5
 
@@ -15,10 +16,12 @@ from app.db.models import (
     ProviderObject,
     User,
     Version,
+    WorkMetadataSource,
 )
+from app.domain.catalog_titles import parse_title_labels
 from app.domain.download_reviews import validate_inspection
 from app.domain.operations import transaction_lock
-from app.domain.work_graph import canonical_work, graph_lock
+from app.domain.work_graph import canonical_work, family_ids, graph_lock
 from app.importing.collection_contents import ContainedWork
 from app.importing.collection_contents import freeze as freeze_contents
 from app.importing.grouping import current_grouping
@@ -40,6 +43,37 @@ from app.importing.settings import current_profile
 from app.importing.storage import import_sources
 from app.importing.versioning import version_revision
 from app.importing.workflow import source_matches
+
+
+async def filing_series(db, work):
+    """The first standalone series of the book's accepted catalog record, if any."""
+    sources = (
+        await db.scalars(
+            select(WorkMetadataSource)
+            .where(
+                WorkMetadataSource.work_id.in_(family_ids(work.id)),
+                WorkMetadataSource.accepted.is_(True),
+            )
+            .order_by(WorkMetadataSource.provider != "hardcover", WorkMetadataSource.id)
+        )
+    ).all()
+    for source in sources:
+        for entry in (source.snapshot or {}).get("series") or []:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if isinstance(name, str) and name.strip() and not entry.get("compilation"):
+                position = entry.get("position")
+                return name.strip()[:600], str(position)[:600] if position is not None else None
+    return None, None
+
+
+def release_part(group, row):
+    """(N, M) when the selected files are one part of a book released in parts."""
+    for value in (group.get("title"), PurePosixPath(row.relative_path or "").name):
+        if value:
+            labels = parse_title_labels(value)
+            if labels.part and labels.part_total and labels.part_total >= 2:
+                return labels.part, labels.part_total
+    return None
 
 
 class GroupSelection(StrictModel):
@@ -184,6 +218,8 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
             raise HTTPException(
                 409, "Resolve this version's metadata conflict before mapping files"
             )
+        series, sequence = await filing_series(db, work)
+        part = release_part(group, row)
         # Preserve version's origin work for correction/merge undo provenance.
         groups.append(
             ImportGroup(
@@ -193,8 +229,14 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
                 medium=version.medium,
                 full_content=selection.full_content,
                 metadata=NamingMetadata(
-                    title=version.title or work.title,
+                    title=parse_title_labels(version.title).title
+                    if part and version.title
+                    else version.title or work.title,
                     authors=work.authors,
+                    series=series,
+                    sequence=sequence,
+                    part_index=part[0] if part else None,
+                    part_total=part[1] if part else None,
                     language=version.language or work.language,
                     narrators=version.narrators,
                     abridged=version.abridged,
@@ -232,7 +274,9 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
                 422,
                 "Resolved book metadata cannot be exported; correct invalid or oversized fields",
             ) from error
-    plan = plan_import(groups, profile)
+    from app.domain.catalog_metadata import preferences
+
+    plan = plan_import(groups, profile, combine_parts=(await preferences(db)).combine_library_parts)
     selected_files = sorted({file.path for group in groups for file in group.files})
     document = {
         "schema_version": 2,

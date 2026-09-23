@@ -77,7 +77,9 @@ test("followed lists expose saved books and ownership without starting acquisiti
 
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (!["GET", "HEAD", "OPTIONS"].includes(request.method()))
+    // Visible cards look up their Hardcover match in one read-only batch.
+    const lookup = request.url().endsWith("/api/metadata/reader-matches");
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method()) && !lookup)
       writes.push(request.url());
   });
   await page.goto("/discover?view=yours");

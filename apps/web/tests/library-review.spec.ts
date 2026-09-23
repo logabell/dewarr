@@ -145,9 +145,9 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
     page.getByRole("navigation", { name: "Review filter" }),
   ).toBeVisible();
   const filters = page.getByRole("navigation", { name: "Review filter" });
-  await expect(filters.getByRole("link", { name: /Everything/ })).toContainText(
-    "3",
-  );
+  await expect(
+    filters.getByRole("link", { name: /Needs attention/ }),
+  ).toContainText("3");
   await expect(
     filters.getByRole("link", { name: /Needs matching/ }),
   ).toContainText("2");
@@ -179,7 +179,7 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
     .click();
   await expect(detail).toHaveCount(0);
 
-  await filters.getByRole("link", { name: /Everything/ }).click();
+  await filters.getByRole("link", { name: /Needs attention/ }).click();
   await page
     .getByRole("article", { name: "Untagged Folder" })
     .getByRole("button", { name: "Find the book" })
@@ -191,7 +191,13 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
   await expect(detail).toHaveCount(0);
   expect(matches[0]).toEqual({
     asset: "a1",
-    body: { work_id: work.id, expected_revision: "rev-3" },
+    body: {
+      work_id: work.id,
+      expected_revision: "rev-3",
+      whole_book: true,
+      part_index: null,
+      part_total: null,
+    },
   });
   await expect(page.getByRole("status")).toContainText(
     "Linked “Untagged Folder”",
@@ -225,6 +231,9 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
     body: {
       work_id: "00000000-0000-0000-0000-000000000042",
       expected_revision: "rev-3",
+      whole_book: false,
+      part_index: null,
+      part_total: null,
     },
   });
   await expect(cards).toHaveCount(1);

@@ -1,6 +1,6 @@
 [project]
 name = "dewarr"
-version = "0.2.2"
+version = "0.2.3"
 description = "Self-hosted book discovery, curation and acquisition"
 requires-python = ">=3.13,<3.14"
 license = "MIT"

@@ -25,7 +25,9 @@ from app.db.session import session_factory
 from app.domain import download_reviews
 from app.domain.catalog_metadata import attach_source, preferences
 from app.domain.catalog_network import CatalogGateway
-from app.domain.catalog_titles import display_title
+from app.domain.catalog_titles import display_title, identity_authors, parse_title_labels
+from app.domain.hardcover_matching import MatchEvidence as BookEvidence
+from app.domain.hardcover_matching import compatible
 from app.domain.identity import normalized, work_key
 from app.domain.operations import transaction_lock
 from app.domain.work_graph import canonical_work, family_ids, graph_lock
@@ -211,23 +213,20 @@ async def provider_lookup(provider, inputs, facts, medium, token):
         )
         try:
             async with asyncio.timeout(90):
-                expected = work_key(inputs["title"], inputs["authors"])
+                evidence = BookEvidence(title=inputs["title"], authors=inputs["authors"])
                 linked = [
                     source["external_id"]
                     for source in inputs["sources"]
                     if source["provider"] == provider and source["accepted"]
                 ]
                 if not linked:
-                    query = " ".join([inputs["title"], *inputs["authors"]])
+                    kept = identity_authors(inputs["authors"])[0] or inputs["authors"]
+                    query = " ".join([parse_title_labels(inputs["title"]).title, *kept])
                     page = await adapter.search(query, 1)
                     if page.has_more:
                         return None, "needs-review", "Catalog search needs disambiguation"
                     linked = list(
-                        {
-                            book.external_id
-                            for book in page.items
-                            if work_key(book.title, book.authors) == expected
-                        }
+                        {book.external_id for book in page.items if compatible(evidence, book)}
                     )
                 if len(linked) != 1:
                     return (
@@ -243,10 +242,11 @@ async def provider_lookup(provider, inputs, facts, medium, token):
                 ):
                     return None, "needs-review", "This catalog match was explicitly rejected"
                 book = await adapter.fetch(linked[0])
-                if work_key(book.title, book.authors) != expected or (
+                if not compatible(evidence, book) or (
                     book.canonical_id and book.canonical_id != book.external_id
                 ):
                     return None, "needs-review", "Catalog work identity needs review"
+                expected = work_key(book.title, book.authors)
                 editions = {edition.external_id: edition for edition in book.editions}
                 more = book.editions_more
                 for page_number in range(1, MAX_EDITION_PAGES):

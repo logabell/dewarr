@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Dewarr",
-    "version": "0.2.2"
+    "version": "0.2.3"
   },
   "paths": {
     "/api/application/release": {
@@ -8780,7 +8780,8 @@
               "enum": [
                 "all",
                 "needs-matching",
-                "read-issue"
+                "read-issue",
+                "details"
               ],
               "type": "string",
               "default": "all",
@@ -8813,6 +8814,23 @@
               "maxLength": 300,
               "default": "",
               "title": "Q"
+            }
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
             }
           },
           {
@@ -8877,6 +8895,159 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/works/{work_id}/part-sets": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Work Part Sets",
+        "operationId": "work_part_sets_api_library_works__work_id__part_sets_get",
+        "parameters": [
+          {
+            "name": "work_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Work Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CombineStatus"
+                  },
+                  "title": "Response Work Part Sets Api Library Works  Work Id  Part Sets Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/versions/{version_id}/combine": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Combine Parts",
+        "operationId": "combine_parts_api_library_versions__version_id__combine_post",
+        "parameters": [
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CombineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/versions/{version_id}/separate": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Separate Parts",
+        "operationId": "separate_parts_api_library_versions__version_id__separate_post",
+        "parameters": [
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CombineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -9370,6 +9541,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReaderMatch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metadata/reader-matches": {
+      "post": {
+        "tags": [
+          "metadata"
+        ],
+        "summary": "Reader Matches",
+        "description": "One request for the visible cards of a shelf page. Each book is checked on its own.",
+        "operationId": "reader_matches_api_metadata_reader_matches_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderMatchBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderMatchResults"
                 }
               }
             }
@@ -16578,6 +16791,28 @@
             },
             "type": "array",
             "title": "Read Issues"
+          },
+          "part_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Index"
+          },
+          "part_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Total"
           }
         },
         "type": "object",
@@ -16901,6 +17136,75 @@
           "page"
         ],
         "title": "AuthorPreview"
+      },
+      "AutoMatch": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AutoMatchCandidate"
+            },
+            "type": "array",
+            "title": "Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "AutoMatch",
+        "description": "The background Hardcover matcher's last result for the linked book."
+      },
+      "AutoMatchCandidate": {
+        "properties": {
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "external_id",
+          "title"
+        ],
+        "title": "AutoMatchCandidate"
       },
       "AutomaticRoutes": {
         "properties": {
@@ -17308,6 +17612,27 @@
             },
             "type": "array",
             "title": "Primary Audio Narrators"
+          },
+          "parts_owned": {
+            "type": "integer",
+            "title": "Parts Owned",
+            "default": 0
+          },
+          "parts_total": {
+            "type": "integer",
+            "title": "Parts Total",
+            "default": 0
+          },
+          "parts_medium": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parts Medium"
           }
         },
         "type": "object",
@@ -18568,6 +18893,105 @@
           "url"
         ],
         "title": "CollectionURL"
+      },
+      "CombineRequest": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Library Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id"
+        ],
+        "title": "CombineRequest"
+      },
+      "CombineStatus": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Library Id"
+          },
+          "library_name": {
+            "type": "string",
+            "title": "Library Name",
+            "default": ""
+          },
+          "version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Version Id"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "present": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Present"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "ready",
+              "skipped",
+              "combining",
+              "combined",
+              "separating",
+              "separated",
+              "needs-attention"
+            ],
+            "title": "State"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "can_combine": {
+            "type": "boolean",
+            "title": "Can Combine",
+            "default": false
+          },
+          "can_separate": {
+            "type": "boolean",
+            "title": "Can Separate",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "library_id",
+          "version_id",
+          "total",
+          "present",
+          "state"
+        ],
+        "title": "CombineStatus"
       },
       "CommandReconciliationItemView": {
         "properties": {
@@ -25642,6 +26066,21 @@
             "title": "Automatic Edition Lookup",
             "default": true
           },
+          "automatic_library_matching": {
+            "type": "boolean",
+            "title": "Automatic Library Matching",
+            "default": true
+          },
+          "write_library_series": {
+            "type": "boolean",
+            "title": "Write Library Series",
+            "default": false
+          },
+          "combine_library_parts": {
+            "type": "boolean",
+            "title": "Combine Library Parts",
+            "default": true
+          },
           "language": {
             "type": "string",
             "maxLength": 20,
@@ -26190,6 +26629,32 @@
               }
             ],
             "title": "Source Posted Year"
+          },
+          "part_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Index"
+          },
+          "part_total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 2.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Total"
           }
         },
         "additionalProperties": false,
@@ -27148,6 +27613,78 @@
           "title"
         ],
         "title": "PackSelection"
+      },
+      "PartSet": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "present": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Present"
+          },
+          "library_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Id"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "combine_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Combine State"
+          },
+          "combine_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Combine Reason"
+          },
+          "can_combine": {
+            "type": "boolean",
+            "title": "Can Combine",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "present"
+        ],
+        "title": "PartSet"
       },
       "PathPreviewInput": {
         "properties": {
@@ -28210,6 +28747,15 @@
             "type": "array",
             "maxItems": 32,
             "title": "Preferred Narrators"
+          },
+          "recording_style": {
+            "type": "string",
+            "enum": [
+              "any",
+              "narrated",
+              "dramatized"
+            ],
+            "title": "Recording Style"
           },
           "blocked_formats": {
             "items": {
@@ -29486,6 +30032,44 @@
         "type": "object",
         "title": "ReaderMatch"
       },
+      "ReaderMatchBatch": {
+        "properties": {
+          "work_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Work Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_ids"
+        ],
+        "title": "ReaderMatchBatch"
+      },
+      "ReaderMatchResults": {
+        "properties": {
+          "results": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReaderMatch"
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "type": "object",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "ReaderMatchResults"
+      },
       "ReadingFollowResult": {
         "properties": {
           "list_id": {
@@ -30728,6 +31312,16 @@
             "maxItems": 32,
             "title": "Preferred Narrators"
           },
+          "recording_style": {
+            "type": "string",
+            "enum": [
+              "any",
+              "narrated",
+              "dramatized"
+            ],
+            "title": "Recording Style",
+            "default": "any"
+          },
           "blocked_formats": {
             "items": {
               "type": "string"
@@ -31391,6 +31985,51 @@
                 "type": "null"
               }
             ]
+          },
+          "linked_titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Linked Titles"
+          },
+          "issue_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Issue Values"
+          },
+          "search_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Query"
+          },
+          "parts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PartSet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auto_match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -31412,6 +32051,11 @@
           "read_issues": {
             "type": "integer",
             "title": "Read Issues"
+          },
+          "details": {
+            "type": "integer",
+            "title": "Details",
+            "default": 0
           },
           "reasons": {
             "items": {
@@ -36222,6 +36866,37 @@
               }
             ],
             "title": "Expected Revision"
+          },
+          "part_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Index"
+          },
+          "part_total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 2.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Total"
+          },
+          "whole_book": {
+            "type": "boolean",
+            "title": "Whole Book",
+            "default": false
           }
         },
         "type": "object",

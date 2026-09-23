@@ -70,17 +70,22 @@ for (const connected of [true, false]) {
           items: [work],
           content_revision: "a".repeat(64),
         };
-      else if (path.endsWith("/reader-match")) {
+      else if (path === "/api/metadata/reader-matches") {
         lookups++;
+        expect(route.request().postDataJSON().work_ids).toEqual([workId]);
         data = {
-          status: "matched",
-          book: {
-            provider: "hardcover",
-            external_id: "42",
-            title: "Atmosphere: A Love Story",
-            authors: work.authors,
-            cover_url: cover,
-            description: "Verified Hardcover description",
+          results: {
+            [workId]: {
+              status: "matched",
+              book: {
+                provider: "hardcover",
+                external_id: "42",
+                title: "Atmosphere: A Love Story",
+                authors: work.authors,
+                cover_url: cover,
+                description: "Verified Hardcover description",
+              },
+            },
           },
         };
       }

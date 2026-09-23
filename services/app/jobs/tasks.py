@@ -113,6 +113,22 @@ async def enrich_metadata(operation_id: str) -> None:
 
 
 @tasks.task(
+    name="library.match", queue="metadata", retry=CatalogRetryStrategy(max_attempts=3, wait=60)
+)
+async def match_library_books(operation_id: str) -> None:
+    from app.domain.library_matching import match_library
+
+    await match_library(UUID(operation_id))
+
+
+@tasks.task(name="library.combine", queue="imports", retry=RetryStrategy(max_attempts=3, wait=60))
+async def combine_library_parts(operation_id: str) -> None:
+    from app.importing.combine import run
+
+    await run(UUID(operation_id))
+
+
+@tasks.task(
     name="catalog.series.refresh",
     queue="metadata",
     retry=CatalogRetryStrategy(max_attempts=5, wait=60),

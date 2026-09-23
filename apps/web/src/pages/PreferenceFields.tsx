@@ -21,6 +21,12 @@ export const preferenceLabels: Partial<Record<keyof Preferences, string>> = {
   search_series: "Search known series names",
   prefer_series_packs: "Prefer eligible series packs",
   series_scope: "Series scope",
+  recording_style: "Audiobook recordings",
+};
+const recordingStyleLabels = {
+  any: "Narrated or dramatized",
+  narrated: "Narrated only",
+  dramatized: "Dramatized adaptations only",
 };
 export const seriesScopeLabels = {
   just_book: "Just this book",
@@ -346,6 +352,33 @@ export default function PreferenceFields({
         </summary>
         {order("ebook_formats")}
         {order("audio_formats")}
+        <label>
+          <span className="setting-subheading">
+            Audiobook recordings
+            <SettingHelp label="download preferences">
+              A dramatized adaptation, such as a GraphicAudio or full-cast
+              recording, is an audio edition of the same book and counts as
+              owning it.
+            </SettingHelp>
+          </span>
+          <select
+            value={effective.recording_style ?? "any"}
+            onChange={(event) =>
+              onChange({
+                ...overrides,
+                recording_style: event.target
+                  .value as keyof typeof recordingStyleLabels,
+              })
+            }
+          >
+            {Object.entries(recordingStyleLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {origin("recording_style")}
         <fieldset className="format-checkbox-grid">
           <legend>Blocked formats</legend>
           {formats.map((format) => (
@@ -417,15 +450,17 @@ export function EffectivePreferences({
               <dd>
                 {key === "series_scope"
                   ? seriesScopeLabels[effectiveSeriesScope(preferences)]
-                  : Array.isArray(preferences[key])
-                    ? (preferences[key] as string[]).join(" → ") || "None"
-                    : typeof preferences[key] === "boolean"
-                      ? preferences[key]
-                        ? "Yes"
-                        : "No"
-                      : preferences[key] == null
-                        ? "No custom limit"
-                        : `${preferences[key]} bytes`}
+                  : key === "recording_style"
+                    ? recordingStyleLabels[preferences.recording_style ?? "any"]
+                    : Array.isArray(preferences[key])
+                      ? (preferences[key] as string[]).join(" → ") || "None"
+                      : typeof preferences[key] === "boolean"
+                        ? preferences[key]
+                          ? "Yes"
+                          : "No"
+                        : preferences[key] == null
+                          ? "No custom limit"
+                          : `${preferences[key]} bytes`}
                 <small>
                   {" "}
                   ·{" "}

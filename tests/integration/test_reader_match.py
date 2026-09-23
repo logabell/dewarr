@@ -62,6 +62,9 @@ async def test_inventory_reader_lookup_is_conservative_and_read_only(
                 False,
                 None,
             )
+        if operation == "fetch_many":
+            books = {key: candidate.model_copy(update={"external_id": key}) for key in args[0]}
+            return books, False, None
         if case == "changed":
             return candidate.model_copy(update={"title": "A Different Book"}), False, None
         return candidate, False, None

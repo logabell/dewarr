@@ -10,7 +10,15 @@ from sqlalchemy import func, select, update
 from app.adapters.audiobookshelf import Audiobookshelf, parse_item, readable_item
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.http import configured_url
-from app.db.models import Integration, LibraryAsset, Operation, Version, Work
+from app.db.models import (
+    AssetContains,
+    Integration,
+    LibraryAsset,
+    Operation,
+    ProviderObject,
+    Version,
+    Work,
+)
 from app.domain.inventory import synchronize
 
 
@@ -221,6 +229,34 @@ def test_bad_fields_are_dropped_and_named_instead_of_failing_the_item():
     assert parse_item(book()).read_issues == []
 
 
+@pytest.mark.parametrize(
+    "raw,year",
+    [
+        ("2021", 2021),
+        (2021, 2021),
+        (" 2021 ", 2021),
+        ("2021-10", 2021),
+        ("2021-10-15", 2021),
+        ("2021-10-15T00:00:00Z", 2021),
+        ("2021-10-15T04:00:00.000+04:00", 2021),
+        ("2021-10-15 12:30:00", 2021),
+    ],
+)
+def test_published_year_accepts_audio_tag_dates(raw, year):
+    value = book()
+    value["media"]["metadata"]["publishedYear"] = raw
+    item = parse_item(value)
+    assert item.year == year and "year" not in item.read_issues
+
+
+@pytest.mark.parametrize("raw", ["sometime", "c2019", "21", "2021/10/15", "20211015", "2021-1-5"])
+def test_published_year_that_is_not_a_date_is_named(raw):
+    value = book()
+    value["media"]["metadata"]["publishedYear"] = raw
+    item = parse_item(value)
+    assert item.year is None and "year" in item.read_issues
+
+
 def test_unreadable_placeholder_keeps_what_the_backend_said():
     value = book("lost")
     value["path"] = "/private/library/Lost Folder"
@@ -255,7 +291,12 @@ async def test_library_items_that_cannot_be_read_are_kept_for_review(
         finished = await db.get(Operation, operation)
         assert finished.status == "completed"
         assert finished.message == "Synced 1 Audiobookshelf libraries. 3 items need review"
-        assert finished.payload["review"] == {"total": 3, "needs_matching": 1, "read_issues": 3}
+        assert finished.payload["review"] == {
+            "total": 3,
+            "needs_matching": 1,
+            "read_issues": 3,
+            "details": 0,
+        }
     assets = {
         asset["open_url"].rsplit("/", 1)[-1]: asset
         for asset in (await client.get("/api/library/assets")).json()["items"]
@@ -327,6 +368,212 @@ async def test_library_items_that_cannot_be_read_are_kept_for_review(
     assert (await client.get("/api/library/review/summary")).json()["total"] == 1
 
 
+async def test_a_year_that_becomes_readable_keeps_the_match(client, admin, database):
+    connection = await connect(client)
+    fixture = ABSFixture({"one": book("one")})
+    fixture.items["one"]["media"]["metadata"]["publishedYear"] = "15/10/2021"
+    await sync(client, connection, fixture, "unreadable-year")
+    before = (await client.get("/api/library/assets")).json()["items"][0]
+    assert before["read_issues"] == ["year"] and before["match_status"] == "matched"
+    # A matched item missing only a detail stays out of the queue, under Details.
+    assert (await client.get("/api/library/review")).json()["total"] == 0
+    summary = (await client.get("/api/library/review/summary")).json()
+    assert (summary["total"], summary["details"]) == (0, 1)
+    assert summary["reasons"] == [{"reason": "year", "count": 1}]
+    (detail,) = (await client.get("/api/library/review?kind=details")).json()["items"]
+    assert detail["issue_values"] == {"year": "15/10/2021"}
+    assert detail["linked_titles"] == ["The First Harbor"]
+    assert detail["search_query"] == "The First Harbor Alex Morgan"
+    assert (await client.get("/api/library/review?reason=year")).json()["total"] == 1
+    fixture.items["one"]["media"]["metadata"]["publishedYear"] = "2021-10-15"
+    await sync(client, connection, fixture, "readable-year")
+    after = (await client.get("/api/library/assets")).json()["items"][0]
+    assert after["read_issues"] == [] and after["match_status"] == "matched"
+    assert after["work_ids"] == before["work_ids"] and after["full_content"]
+    assert (await client.get("/api/library/review")).json()["total"] == 0
+
+
+def titled(identifier, title, authors):
+    value = book(identifier)
+    value["media"]["metadata"]["title"] = title
+    value["media"]["metadata"]["authors"] = [{"name": name} for name in authors]
+    return value
+
+
+async def test_parts_and_dramatizations_join_the_book_they_record(client, admin, database):
+    connection = await connect(client)
+    fixture = ABSFixture(
+        {
+            "novel": titled("novel", "Dark Age", ["Pierce Brown"]),
+            "part-one": titled(
+                "part-one", "Dark Age (1 of 3) [Dramatized Adaptation]", ["Pierce Brown"]
+            ),
+            "part-three": titled(
+                "part-three", "Dark Age (3 of 3) [Dramatized Adaptation]", ["Pierce Brown"]
+            ),
+            "cast": titled(
+                "cast",
+                "Golden Son (Part 1 of 2) (Dramatized Adaptation)",
+                ["Amanda Forstrom", "Pierce Brown"],
+            ),
+            "golden": titled("golden", "Golden Son", ["Pierce Brown"]),
+            "credited": titled(
+                "credited", "Storm Front [Dramatized Adaptation]", ["Full Cast", "Jim Butcher"]
+            ),
+            "publisher-one": titled(
+                "publisher-one", "Mistborn 7: The Lost Metal 1 of 2", ["Graphic Audio LLC."]
+            ),
+            "publisher-two": titled(
+                "publisher-two", "Mistborn 7: The Lost Metal 2 of 2", ["Graphic Audio LLC."]
+            ),
+        }
+    )
+    await sync(client, connection, fixture, "parts-inventory")
+    assets = {
+        asset["open_url"].rsplit("/", 1)[-1]: asset
+        for asset in (await client.get("/api/library/assets")).json()["items"]
+    }
+    assert assets["part-one"]["work_ids"] == assets["novel"]["work_ids"]
+    assert assets["part-three"]["work_ids"] == assets["novel"]["work_ids"]
+    assert assets["cast"]["work_ids"] == assets["golden"]["work_ids"]
+    assert assets["publisher-one"]["work_ids"] == assets["publisher-two"]["work_ids"]
+    async with database() as db:
+        storm = await db.get(Work, UUID(assets["credited"]["work_ids"][0]))
+        assert (storm.title, storm.authors) == ("Storm Front", ["Jim Butcher"])
+        lost = await db.get(Work, UUID(assets["publisher-one"]["work_ids"][0]))
+        assert lost.title == "Mistborn 7: The Lost Metal"
+        # Parts of one recording share a version; the narrated novel is another version.
+        dramatized = await db.get(Version, UUID(assets["part-one"]["version_id"]))
+        assert assets["part-three"]["version_id"] == str(dramatized.id)
+        assert assets["novel"]["version_id"] != str(dramatized.id)
+        assert (dramatized.recording_kind, dramatized.title) == ("dramatized", "Dark Age")
+        parts = {
+            name: await db.get(
+                AssetContains, (UUID(assets[name]["id"]), UUID(assets[name]["work_ids"][0]))
+            )
+            for name in ("novel", "part-one", "part-three")
+        }
+        assert [(row.part_index, row.part_total) for row in parts.values()] == [
+            (None, None),
+            (1, 3),
+            (3, 3),
+        ]
+    fixture.items["part-one"]["media"]["metadata"]["publishedYear"] = "sometime"
+    await sync(client, connection, fixture, "part-detail")
+    (detail,) = (await client.get("/api/library/review?kind=details")).json()["items"]
+    assert {key: detail["parts"][key] for key in ("total", "present")} == {
+        "total": 3,
+        "present": [1, 3],
+    }
+    assert detail["parts"]["combine_state"] == "waiting"
+    assert detail["parts"]["combine_reason"] == "Waiting for part 2 of 3"
+    assert not detail["parts"]["can_combine"]
+    assert detail["search_query"] == "Dark Age Pierce Brown"
+    credited = (await client.get("/api/library/review?q=storm")).json()["items"]
+    assert credited == []
+
+
+async def test_a_book_is_owned_only_when_every_part_is_in_the_library(client, admin, database):
+    connection = await connect(client)
+    parts = {
+        f"part-{n}": titled(
+            f"part-{n}", f"Dark Age ({n} of 3) [Dramatized Adaptation]", ["Pierce Brown"]
+        )
+        for n in (1, 2, 3)
+    }
+    missing = {key: value for key, value in parts.items() if key != "part-2"}
+    await sync(client, connection, ABSFixture(missing), "two-of-three-parts")
+    (asset, *_) = (await client.get("/api/library/assets")).json()["items"]
+    assert (asset["part_index"], asset["part_total"]) in {(1, 3), (3, 3)}
+    work_id = asset["work_ids"][0]
+    availability = (await client.get(f"/api/catalog/works/{work_id}")).json()["availability"]
+    assert not availability["owned"] and not availability["audio"]
+    assert (availability["parts_owned"], availability["parts_total"]) == (2, 3)
+    assert availability["parts_medium"] == "audio"
+    await sync(client, connection, ABSFixture(parts), "all-three-parts")
+    availability = (await client.get(f"/api/catalog/works/{work_id}")).json()["availability"]
+    assert availability["owned"] and availability["audio"]
+    assert availability["parts_owned"] == 0
+
+
+async def test_a_manual_match_keeps_the_part_number_the_reviewer_chose(client, admin, database):
+    connection = await connect(client)
+    fixture = ABSFixture(
+        {
+            "novel": titled("novel", "Dark Age", ["Pierce Brown"]),
+            "unlabelled": titled("unlabelled", "Dark Age - Disc Two", ["Pierce Brown"]),
+        }
+    )
+    await sync(client, connection, fixture, "manual-part-inventory")
+    assets = {
+        asset["open_url"].rsplit("/", 1)[-1]: asset
+        for asset in (await client.get("/api/library/assets")).json()["items"]
+    }
+    target = assets["novel"]["work_ids"][0]
+    response = await client.post(
+        f"/api/library/assets/{assets['unlabelled']['id']}/match",
+        json={"work_id": target, "part_index": 2, "part_total": 3},
+    )
+    assert response.status_code == 204, response.text
+    await sync(client, connection, fixture, "manual-part-resync")
+    async with database() as db:
+        row = await db.get(AssetContains, (UUID(assets["unlabelled"]["id"]), UUID(target)))
+        assert (row.part_index, row.part_total) == (2, 3)
+    invalid = await client.post(
+        f"/api/library/assets/{assets['unlabelled']['id']}/match",
+        json={"work_id": target, "part_index": 4, "part_total": 3},
+    )
+    assert invalid.status_code == 422
+
+
+async def test_library_books_created_before_parts_were_understood_are_rekeyed(
+    client, admin, database
+):
+    connection = await connect(client)
+    fixture = ABSFixture(
+        {
+            "part-one": titled(
+                "part-one", "Dark Age (1 of 3) [Dramatized Adaptation]", ["Pierce Brown"]
+            ),
+            "part-three": titled(
+                "part-three", "Dark Age (3 of 3) [Dramatized Adaptation]", ["Pierce Brown"]
+            ),
+        }
+    )
+    await sync(client, connection, fixture, "first-inventory-parts")
+    async with database() as db:
+        # Books the previous release created: keyed and titled by each part.
+        for identifier, title in (
+            ("part-one", "Dark Age (1 of 3) [Dramatized Adaptation]"),
+            ("part-three", "Dark Age (3 of 3) [Dramatized Adaptation]"),
+        ):
+            work = Work(
+                title=title,
+                authors=["Pierce Brown"],
+                provisional=True,
+                catalog_public=False,
+                match_key="legacy-" + identifier,
+                metadata_fields={"origin": "audiobookshelf", "fields": {}},
+            )
+            db.add(work)
+            await db.flush()
+            await db.execute(
+                update(ProviderObject)
+                .where(ProviderObject.external_id == identifier)
+                .values(work_id=work.id)
+            )
+        await db.commit()
+    await sync(client, connection, fixture, "rekey-inventory")
+    await sync(client, connection, fixture, "settle-inventory")
+    assets = (await client.get("/api/library/assets")).json()["items"]
+    works = {asset["work_ids"][0] for asset in assets}
+    assert len(works) == 1
+    assert all(asset["match_status"] == "matched" for asset in assets)
+    async with database() as db:
+        work = await db.get(Work, UUID(works.pop()))
+        assert work.title == "Dark Age"
+
+
 async def test_http_errors_redact_and_do_not_follow_redirects():
     calls = []
 
@@ -342,6 +589,62 @@ async def test_http_errors_redact_and_do_not_follow_redirects():
     assert error.value.kind == FailureKind.ROUTE
     assert "secret" not in str(error.value)
     assert len(calls) == 1
+
+
+async def test_started_items_reads_only_the_connected_accounts_progress():
+    def handler(request):
+        assert request.url.path == "/api/me"
+        return httpx.Response(
+            200,
+            json={
+                "mediaProgress": [
+                    {"libraryItemId": "listening", "progress": 0.2, "currentTime": 400},
+                    {"libraryItemId": "finished", "progress": 1, "isFinished": True},
+                    {"libraryItemId": "untouched", "progress": 0, "currentTime": 0},
+                    {"libraryItemId": "podcast", "episodeId": "ep", "progress": 0.5},
+                ]
+            },
+        )
+
+    async with Audiobookshelf(
+        "http://abs.test", "secret", transport=httpx.MockTransport(handler)
+    ) as api:
+        assert await api.started_items() == {"listening", "finished"}
+
+
+async def test_started_items_rejects_an_unreadable_progress_list():
+    def handler(request):
+        return httpx.Response(200, json={"mediaProgress": "private"})
+
+    async with Audiobookshelf(
+        "http://abs.test", "secret", transport=httpx.MockTransport(handler)
+    ) as api:
+        with pytest.raises(AdapterError) as error:
+            await api.started_items()
+    assert error.value.kind == FailureKind.PARSER
+
+
+async def test_remove_missing_item_never_deletes_a_present_item():
+    items = {"gone": {**book("gone"), "isMissing": True}, "here": book("here")}
+    deleted = []
+
+    def handler(request):
+        identifier = request.url.path.removeprefix("/api/items/")
+        if request.method == "DELETE":
+            assert "hard" not in request.url.params
+            deleted.append(identifier)
+            items.pop(identifier)
+            return httpx.Response(200)
+        item = items.get(identifier)
+        return httpx.Response(200, json=item) if item else httpx.Response(404)
+
+    async with Audiobookshelf(
+        "http://abs.test", "secret", transport=httpx.MockTransport(handler)
+    ) as api:
+        assert not await api.remove_missing_item("here")
+        assert await api.remove_missing_item("gone")
+        assert await api.remove_missing_item("gone")
+    assert deleted == ["gone"]
 
 
 async def test_inventory_repeated_sync_versions_and_companions(client, admin, database):

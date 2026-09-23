@@ -2693,6 +2693,57 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/library/works/{work_id}/part-sets": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Work Part Sets */
+    get: operations["work_part_sets_api_library_works__work_id__part_sets_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/library/versions/{version_id}/combine": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Combine Parts */
+    post: operations["combine_parts_api_library_versions__version_id__combine_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/library/versions/{version_id}/separate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Separate Parts */
+    post: operations["separate_parts_api_library_versions__version_id__separate_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/metadata/account": {
     parameters: {
       query?: never;
@@ -2865,6 +2916,26 @@ export interface paths {
     get: operations["reader_match_api_metadata_works__work_id__reader_match_get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/metadata/reader-matches": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reader Matches
+     * @description One request for the visible cards of a shelf page. Each book is checked on its own.
+     */
+    post: operations["reader_matches_api_metadata_reader_matches_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -5274,6 +5345,10 @@ export interface components {
       contents?: components["schemas"]["ContainedBookView"][];
       /** Read Issues */
       read_issues?: string[];
+      /** Part Index */
+      part_index?: number | null;
+      /** Part Total */
+      part_total?: number | null;
     };
     /** AttemptPage */
     AttemptPage: {
@@ -5384,6 +5459,29 @@ export interface components {
       known_works?: {
         [key: string]: components["schemas"]["WorkView"];
       };
+    };
+    /**
+     * AutoMatch
+     * @description The background Hardcover matcher's last result for the linked book.
+     */
+    AutoMatch: {
+      /** Status */
+      status: string;
+      /** Reason */
+      reason?: string | null;
+      /** Checked At */
+      checked_at?: string | null;
+      /** Candidates */
+      candidates?: components["schemas"]["AutoMatchCandidate"][];
+    };
+    /** AutoMatchCandidate */
+    AutoMatchCandidate: {
+      /** External Id */
+      external_id: string;
+      /** Title */
+      title: string;
+      /** Authors */
+      authors?: string[];
     };
     /** AutomaticRoutes */
     AutomaticRoutes: {
@@ -5550,6 +5648,18 @@ export interface components {
       primary_audio_version_id?: string | null;
       /** Primary Audio Narrators */
       primary_audio_narrators?: string[];
+      /**
+       * Parts Owned
+       * @default 0
+       */
+      parts_owned: number;
+      /**
+       * Parts Total
+       * @default 0
+       */
+      parts_total: number;
+      /** Parts Medium */
+      parts_medium?: string | null;
     };
     /** BatchInput */
     BatchInput: {
@@ -6007,6 +6117,63 @@ export interface components {
     CollectionURL: {
       /** Url */
       url: string;
+    };
+    /** CombineRequest */
+    CombineRequest: {
+      /**
+       * Library Id
+       * Format: uuid
+       */
+      library_id: string;
+    };
+    /** CombineStatus */
+    CombineStatus: {
+      /**
+       * Library Id
+       * Format: uuid
+       */
+      library_id: string;
+      /**
+       * Library Name
+       * @default
+       */
+      library_name: string;
+      /**
+       * Version Id
+       * Format: uuid
+       */
+      version_id: string;
+      /** Total */
+      total: number;
+      /** Present */
+      present: number[];
+      /**
+       * State
+       * @enum {string}
+       */
+      state:
+        | "waiting"
+        | "ready"
+        | "skipped"
+        | "combining"
+        | "combined"
+        | "separating"
+        | "separated"
+        | "needs-attention";
+      /** Reason */
+      reason?: string | null;
+      /** Folder */
+      folder?: string | null;
+      /**
+       * Can Combine
+       * @default false
+       */
+      can_combine: boolean;
+      /**
+       * Can Separate
+       * @default false
+       */
+      can_separate: boolean;
     };
     /** CommandReconciliationItemView */
     CommandReconciliationItemView: {
@@ -8650,6 +8817,21 @@ export interface components {
        */
       automatic_edition_lookup: boolean;
       /**
+       * Automatic Library Matching
+       * @default true
+       */
+      automatic_library_matching: boolean;
+      /**
+       * Write Library Series
+       * @default false
+       */
+      write_library_series: boolean;
+      /**
+       * Combine Library Parts
+       * @default true
+       */
+      combine_library_parts: boolean;
+      /**
        * Language
        * @default en
        */
@@ -8813,6 +8995,10 @@ export interface components {
       release_title?: string | null;
       /** Source Posted Year */
       source_posted_year?: number | null;
+      /** Part Index */
+      part_index?: number | null;
+      /** Part Total */
+      part_total?: number | null;
     };
     /** NamingProfile */
     NamingProfile: {
@@ -9265,6 +9451,26 @@ export interface components {
       /** Title */
       title: string;
     };
+    /** PartSet */
+    PartSet: {
+      /** Total */
+      total: number;
+      /** Present */
+      present: number[];
+      /** Library Id */
+      library_id?: string | null;
+      /** Version Id */
+      version_id?: string | null;
+      /** Combine State */
+      combine_state?: string | null;
+      /** Combine Reason */
+      combine_reason?: string | null;
+      /**
+       * Can Combine
+       * @default false
+       */
+      can_combine: boolean;
+    };
     /** PathPreviewInput */
     PathPreviewInput: {
       /** Path */
@@ -9626,6 +9832,11 @@ export interface components {
       )[];
       /** Preferred Narrators */
       preferred_narrators?: string[];
+      /**
+       * Recording Style
+       * @enum {string}
+       */
+      recording_style?: "any" | "narrated" | "dramatized";
       /** Blocked Formats */
       blocked_formats?: string[];
       /** Maximum Bytes */
@@ -10089,6 +10300,18 @@ export interface components {
       /** Reason */
       reason?: string | null;
     };
+    /** ReaderMatchBatch */
+    ReaderMatchBatch: {
+      /** Work Ids */
+      work_ids: string[];
+    };
+    /** ReaderMatchResults */
+    ReaderMatchResults: {
+      /** Results */
+      results: {
+        [key: string]: components["schemas"]["ReaderMatch"];
+      };
+    };
     /** ReadingFollowResult */
     ReadingFollowResult: {
       /**
@@ -10551,6 +10774,12 @@ export interface components {
       criteria: ("format" | "source" | "seeders" | "narrator" | "popularity")[];
       /** Preferred Narrators */
       preferred_narrators?: string[];
+      /**
+       * Recording Style
+       * @default any
+       * @enum {string}
+       */
+      recording_style: "any" | "narrated" | "dramatized";
       /** Blocked Formats */
       blocked_formats?: string[];
       /** Maximum Bytes */
@@ -10762,6 +10991,16 @@ export interface components {
       kind: "asset" | "read-issue";
       asset?: components["schemas"]["AssetView"] | null;
       read_issue?: components["schemas"]["ReadIssueView"] | null;
+      /** Linked Titles */
+      linked_titles?: string[];
+      /** Issue Values */
+      issue_values?: {
+        [key: string]: string;
+      };
+      /** Search Query */
+      search_query?: string | null;
+      parts?: components["schemas"]["PartSet"] | null;
+      auto_match?: components["schemas"]["AutoMatch"] | null;
     };
     /** ReviewSummary */
     ReviewSummary: {
@@ -10771,6 +11010,11 @@ export interface components {
       needs_matching: number;
       /** Read Issues */
       read_issues: number;
+      /**
+       * Details
+       * @default 0
+       */
+      details: number;
       /** Reasons */
       reasons: components["schemas"]["ReasonCount"][];
     };
@@ -12572,6 +12816,15 @@ export interface components {
       work_id: string | null;
       /** Expected Revision */
       expected_revision?: string | null;
+      /** Part Index */
+      part_index?: number | null;
+      /** Part Total */
+      part_total?: number | null;
+      /**
+       * Whole Book
+       * @default false
+       */
+      whole_book: boolean;
     };
     /** ReviewPage */
     app__api__library_review__ReviewPage: {
@@ -18092,9 +18345,10 @@ export interface operations {
   review_api_library_review_get: {
     parameters: {
       query?: {
-        kind?: "all" | "needs-matching" | "read-issue";
+        kind?: "all" | "needs-matching" | "read-issue" | "details";
         library_id?: string | null;
         q?: string;
+        reason?: string | null;
         offset?: number;
         limit?: number;
       };
@@ -18140,6 +18394,107 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReviewSummary"];
+        };
+      };
+    };
+  };
+  work_part_sets_api_library_works__work_id__part_sets_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        work_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CombineStatus"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  combine_parts_api_library_versions__version_id__combine_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CombineRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OperationView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  separate_parts_api_library_versions__version_id__separate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CombineRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OperationView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
@@ -18482,6 +18837,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReaderMatch"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reader_matches_api_metadata_reader_matches_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReaderMatchBatch"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReaderMatchResults"];
         };
       };
       /** @description Validation Error */

@@ -107,14 +107,17 @@ for (const role of ["admin", "member", "viewer"]) {
     await expect(
       page.getByRole("heading", { name: "Background activity" }),
     ).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Downloading", exact: true })
+    const requestFilters = page.getByRole("navigation", {
+      name: "Request filters",
+    });
+    await requestFilters
+      .getByRole("link", { name: "Downloading", exact: true })
       .click();
     await expect(
       page.getByText("No downloads yet.", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Review", exact: true }),
+      requestFilters.getByRole("link", { name: "Review", exact: true }),
     ).toHaveCount(role === "admin" ? 1 : 0);
     await page.goto("/activity#downloads");
     await expect(page).toHaveURL(/\/requests#downloads$/);
@@ -176,12 +179,10 @@ for (const role of ["admin", "member", "viewer"]) {
       await page.reload();
       await expect(
         page.getByRole("progressbar", {
-          name: "The Long Way Home download progress",
+          name: "The Long Way Home audiobook download progress",
         }),
       ).toHaveAttribute("value", "0.25");
-      await expect(
-        page.getByText("25% downloaded", { exact: true }),
-      ).toBeVisible();
+      await expect(page.getByText("25%", { exact: true })).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("queue-mobile.png") });
       await page.setViewportSize({ width: 1440, height: 1000 });
       await page.screenshot({ path: testInfo.outputPath("queue-desktop.png") });

@@ -41,6 +41,7 @@ from app.domain.acquisition import (
     submit,
     validate_request,
 )
+from app.domain.availability import owned_coverage
 from app.domain.display_requests import ExistingCopyHint, existing_copy_hints
 from app.domain.list_series import SeriesPlanView
 from app.domain.permissions import (
@@ -364,8 +365,7 @@ def _owner_visible_library():
         .where(
             AssetContains.work_id.in_(family_ids(AcquisitionIntent.work_id)),
             LibraryAsset.state == "present",
-            LibraryAsset.full_content.is_(True),
-            AssetContains.verified.is_(True),
+            owned_coverage(),
             Library.accessible.is_(True),
             Integration.enabled.is_(True),
             or_(

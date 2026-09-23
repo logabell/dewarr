@@ -40,7 +40,7 @@ from app.db.models import (
     Work,
     WorkMetadataSource,
 )
-from app.domain.availability import availability_for
+from app.domain.availability import availability_for, owned_coverage
 from app.domain.catalog_bindings import displayed_provider_works, visible_provider_works
 from app.domain.catalog_display import display_family
 from app.domain.catalog_enrichment import TERMINAL, effective_status, proposal, schedule_enrichment
@@ -473,8 +473,28 @@ async def reader_lookup_identity(db, user, work_id):
     identifiers = sorted(
         set().union(*(catalog_identifiers(row.get("identifiers") or {}) for row in snapshots))
     )
+    series = sorted(
+        {
+            (
+                entry["name"].strip(),
+                str(entry["sequence"]).strip() or None
+                if type(entry.get("sequence")) in (str, int, float)
+                else None,
+            )
+            for row in snapshots
+            for entry in row.get("series") or []
+            if isinstance(entry, dict)
+            and isinstance(entry.get("name"), str)
+            and entry["name"].strip()
+        },
+        key=str,
+    )
     evidence = MatchEvidence(
-        title=work.title, authors=work.authors, language=work.language, identifiers=identifiers
+        title=work.title,
+        authors=work.authors,
+        language=work.language,
+        identifiers=identifiers,
+        series=series,
     )
     return (work.id, evidence.model_dump_json())
 
@@ -501,9 +521,62 @@ async def reader_match(work_id: UUID, user: CurrentUser, db: Database):
         user = await current_actor(db, user_id)
         if await reader_lookup_identity(db, user, canonical_id) != identity:
             return ReaderMatch(reason="Library evidence changed during lookup. Retry the match.")
-        return ReaderMatch(**match.model_dump())
+        result = ReaderMatch(**match.model_dump())
+        if result.book:
+            account = await db.get(CatalogAccount, user_id)
+            remember_match(user_id, account.generation if account else None, identity, result)
+        return result
     except AdapterError as error:
         raise adapter_http_error(error) from error
+
+
+# Verified lookups by (user, account generation, evidence). Saving a match the reader
+# just saw reuses the result instead of repeating every provider call. Per process;
+# a miss only means one fresh lookup.
+_VERIFIED: dict[tuple, tuple[float, ReaderMatch]] = {}
+_VERIFIED_SECONDS = 300
+
+
+def remember_match(user_id, generation, identity, match):
+    now = asyncio.get_running_loop().time()
+    for key in [key for key, (at, _) in _VERIFIED.items() if now - at > _VERIFIED_SECONDS]:
+        del _VERIFIED[key]
+    if len(_VERIFIED) < 2000:
+        _VERIFIED[(user_id, generation, identity)] = (now, match)
+
+
+def recent_match(user_id, generation, identity):
+    at, match = _VERIFIED.get((user_id, generation, identity), (None, None))
+    if at is None or asyncio.get_running_loop().time() - at > _VERIFIED_SECONDS:
+        return None
+    return match
+
+
+class ReaderMatchBatch(BaseModel):
+    work_ids: list[UUID] = Field(min_length=1, max_length=8)
+
+
+class ReaderMatchResults(BaseModel):
+    results: dict[UUID, ReaderMatch]
+
+
+@router.post("/reader-matches", response_model=ReaderMatchResults)
+async def reader_matches(body: ReaderMatchBatch, user: CurrentUser, db: Database):
+    """One request for the visible cards of a shelf page. Each book is checked on its own."""
+    user_id, results = user.id, {}
+    for index, work_id in enumerate(dict.fromkeys(body.work_ids)):
+        try:
+            results[work_id] = await reader_match(work_id, await current_actor(db, user_id), db)
+        except HTTPException as error:
+            if error.status_code in (401, 403):
+                raise
+            if error.status_code in (429, 503):
+                # The provider asked us to wait. The remaining books would fail the same way.
+                for rest in list(dict.fromkeys(body.work_ids))[index:]:
+                    results[rest] = ReaderMatch(reason=str(error.detail))
+                break
+            results[work_id] = ReaderMatch(reason=str(error.detail))
+    return ReaderMatchResults(results=results)
 
 
 @router.post("/works/{work_id}/match-hardcover", response_model=ReaderMatch)
@@ -527,7 +600,10 @@ async def save_hardcover_match(work_id: UUID, user: Admin, db: Database):
         return ReaderMatch(
             status="disabled", reason="This book already has a saved Hardcover match."
         )
-    match = await reader_match(work_id, user, db)
+    account = await db.get(CatalogAccount, user_id)
+    match = account and account.enabled and recent_match(user_id, account.generation, before)
+    if not match:
+        match = await reader_match(work_id, user, db)
     if not match.book:
         return match
     user = await current_actor(db, user_id, admin=True)
@@ -690,11 +766,7 @@ async def work_metadata(
         )
     )
     owned = exists(
-        accessible_asset.where(
-            AssetContains.verified.is_(True),
-            LibraryAsset.full_content.is_(True),
-            LibraryAsset.state.in_(["present", "stale"]),
-        )
+        accessible_asset.where(owned_coverage(), LibraryAsset.state.in_(["present", "stale"]))
     )
     conditions = [Version.work_id.in_(members)]
     conditions.append(or_(catalog_version, exists(accessible_asset), file_edition))

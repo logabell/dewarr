@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit
 from defusedxml import ElementTree
 from pydantic import Field
 
+from app.domain.catalog_titles import parse_title_labels
 from app.importing.book_containers import check_zip_directory
 from app.importing.filesystem import (
     InspectionError,
@@ -82,6 +83,7 @@ DEMUXERS = {
 }
 ARCHIVES = {"zip", "rar", "7z", "tar", "gz"}
 DISC = re.compile(r"^(?:cd|disc|disk)\s*(\d+)$", re.I)
+PART = re.compile(r"^part\s*(\d+)$", re.I)
 TAG_NAMES = (
     "title,album,artist,album_artist,composer,narrator,track,disc,date,year,"
     "language,isbn,isbn10,isbn13,isbn_10,isbn_13,asin,abridged,series,series-part"
@@ -253,8 +255,41 @@ def number(value, maximum):
     return None
 
 
+def folder_part(name):
+    """(N, base title) for a folder holding one part of a book released in parts."""
+    if match := PART.fullmatch(name):
+        return int(match[1]), None
+    labels = parse_title_labels(name)
+    if labels.part and labels.part_total and labels.part_total >= 2:
+        return labels.part, " ".join(re.findall(r"\w+", labels.title.casefold()))
+    return None
+
+
+def part_folders(files):
+    """Part folders to publish as discs of one item: two or more parts of one book side by side.
+
+    Audiobookshelf reads a single item's folder of disc subfolders, so a release holding
+    every part becomes one item. A lone part folder stays as its own item.
+    """
+    siblings = {}
+    for file in files:
+        if file["state"] != "inspected" or file["medium"] != "audio":
+            continue
+        folder = PurePosixPath(file["path"]).parent
+        if folder.name and (part := folder_part(folder.name)):
+            siblings.setdefault(folder.parent, {})[folder] = part
+    lifted = {}
+    for members in siblings.values():
+        numbers = [number for number, _ in members.values()]
+        if len(members) > 1 and len(set(numbers)) == len(numbers):
+            if len({title for _, title in members.values()}) == 1:
+                lifted.update({folder: number for folder, (number, _) in members.items()})
+    return lifted
+
+
 def suggest_groups(files):
     groups = {}
+    parts = part_folders(files)
     for file in files:
         if file["state"] != "inspected":
             continue
@@ -268,17 +303,23 @@ def suggest_groups(files):
             tags = file["technical"]["tags"]
             folder = path.parent
             disc_match = DISC.fullmatch(folder.name)
-            if disc_match:
+            part = parts.get(folder)
+            if disc_match or part:
                 folder = folder.parent
             # Album/narrator evidence separates differently tagged books in a flat pack.
             # Conflicting directories are never collapsed solely on a title match.
             title = tags.get("album")
+            if part and title:
+                title = parse_title_labels(title).title
             narrator = tags.get("narrator") or tags.get("composer")
             authors = [tags.get("album_artist") or tags.get("artist")]
             authors = [author for author in authors if author]
             key = ("audio", str(folder), title, narrator, tuple(authors), file["extension"])
             disc = number(tags.get("disc"), 999)
-            folder_disc = int(disc_match[1]) if disc_match else None
+            folder_disc = int(disc_match[1]) if disc_match else part
+            if part and disc in (1, part):
+                # Parts restart their own disc numbering; the part becomes the disc.
+                disc = None
             if folder_disc and disc and folder_disc != disc:
                 file["state"], file["reason"] = "held", "Disc folder conflicts with embedded tags"
                 continue

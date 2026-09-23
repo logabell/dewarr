@@ -665,7 +665,8 @@ async def catalog(request: Request, authorization: str = Header(default="")):
                 ]
             }
         }
-    if "CatalogBook(" in query:
+
+    def catalog_book():
         if body["variables"]["id"] in {9001, 9002, 9010}:
             key = body["variables"]["id"]
             return {
@@ -701,7 +702,8 @@ async def catalog(request: Request, authorization: str = Header(default="")):
                 ]
             }
         }
-    if "CatalogEditions(" in query:
+
+    def catalog_editions():
         if body["variables"]["id"] in {9001, 9002, 9010}:
             key = body["variables"]["id"]
             return {
@@ -738,6 +740,9 @@ async def catalog(request: Request, authorization: str = Header(default="")):
                 ]
             }
         }
+
+    if "CatalogBook(" in query:
+        return {"data": {**catalog_book()["data"], **catalog_editions()["data"]}}
     if "CatalogSearch(" in query:
         return {
             "data": {

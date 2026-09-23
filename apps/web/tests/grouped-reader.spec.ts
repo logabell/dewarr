@@ -130,6 +130,7 @@ test("reader editions, primary selection and separation share a consistent group
       };
     } else if (path === "/api/library/assets")
       data = { items: [], total: 0, offset: 0, limit: 40 };
+    else if (path.endsWith("/part-sets")) data = [];
     if (
       new URL(route.request().url()).pathname.includes(
         "/acquisition/preferences/",

@@ -392,3 +392,14 @@ async def test_year_only_page_two_hits_and_ebooks_do_not_invent_a_day_or_call_th
     skipped = await lookup({"medium": "ebook"}, search=forbidden, publication=publication)
     assert skipped["status"] == "skipped" and skipped["called"] is False
     assert calls["search"] == 1
+
+
+def test_series_write_back_sends_only_the_series():
+    from app.adapters.audiobookshelf import series_patch
+
+    assert series_patch("The Dresden Files", "1") == {
+        "metadata": {"series": [{"name": "The Dresden Files", "sequence": "1"}]}
+    }
+    assert series_patch("Standalone Tales", None) == {
+        "metadata": {"series": [{"name": "Standalone Tales"}]}
+    }

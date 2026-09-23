@@ -125,7 +125,8 @@ def test_route_layers_preserve_explicit_clearing_and_legacy_unset_snapshots():
 
 def candidate(**changes):
     return release(
-        release_row(title="Harbor", author_info='{"1":"Writer"}', **changes), datetime.now(UTC)
+        release_row(**{"title": "Harbor", "author_info": '{"1":"Writer"}', **changes}),
+        datetime.now(UTC),
     )
 
 
@@ -164,6 +165,41 @@ def test_format_priority_source_priority_and_known_zero_seeds():
         source_order=["prowlarr:7", "mam", "prowlarr"], criteria=["source", "format", "seeders"]
     )
     assert ordered([known, remote], preferences)[0].source == "prowlarr"
+
+
+def test_a_dramatized_release_is_an_edition_but_a_part_is_not_the_whole_book():
+    preferences = ReleasePreferences()
+    dramatized = candidate(title="Harbor [Dramatized Adaptation] [M4B]")
+    assessment = assess_release(dramatized, WORK, preferences)
+    assert assessment.identity == "corroborated" and not assessment.blocked
+    assert "Dramatized adaptation: an audio edition of this book" in assessment.explanation
+    part = assess_release(candidate(title="Harbor (1 of 3) - GraphicAudio"), WORK, preferences)
+    assert part.identity == "possible"
+    assert part.review == ["This release is part 1 of 3 of the book, not the whole book"]
+    narrated = ReleasePreferences(recording_style="narrated")
+    assert assess_release(dramatized, WORK, narrated).blocked == [
+        "The profile accepts narrated recordings only"
+    ]
+    assert not assess_release(candidate(), WORK, narrated).blocked
+    assert assess_release(
+        candidate(), WORK, ReleasePreferences(recording_style="dramatized")
+    ).blocked
+
+
+def test_a_matching_isbn_or_asin_corroborates_a_release_named_differently():
+    renamed = candidate(title="Harbor: A Novel of the Coast", isbn="ASIN: B0ABCDEFGH")
+    assert assess_release(renamed, WORK, ReleasePreferences()).identity == "possible"
+    work = {**WORK, "identifiers": ["B0ABCDEFGH"]}
+    assessment = assess_release(renamed, work, ReleasePreferences())
+    assert assessment.identity == "corroborated"
+    assert "The source's ISBN or ASIN matches an edition of this book" in assessment.explanation
+    stranger = renamed.model_copy(update={"authors": ["Someone Else"]})
+    assert assess_release(stranger, work, ReleasePreferences()).identity == "unmatched"
+
+
+def test_recording_style_overrides_can_restore_any_style():
+    assert PreferenceOverrides(recording_style="any").model_dump() == {"recording_style": "any"}
+    assert "recording_style" not in ReleasePreferences().model_dump()
 
 
 def test_unknowns_are_not_ownership_or_automatic_eligibility():

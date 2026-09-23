@@ -173,6 +173,9 @@ async def test_goodreads_resolves_verified_hardcover_without_importing(
                 False,
                 None,
             )
+        if operation == "fetch_many":
+            books = {key: candidate.model_copy(update={"external_id": key}) for key in args[0]}
+            return books, False, None
         return candidate.model_copy(update={"external_id": args[0]}), False, None
 
     monkeypatch.setattr("app.api.metadata.provider_call", call)

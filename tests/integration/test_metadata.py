@@ -5,7 +5,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
-from app.adapters.catalog_providers import HC_BOOK, HC_EDITIONS
+from app.adapters.catalog_providers import HC_BOOK
 from app.db.models import (
     CatalogAccount,
     ProviderCache,
@@ -67,15 +67,7 @@ def provider(monkeypatch):
                                 "cached_contributors": [{"author": {"name": "Writer"}}],
                                 "cached_image": {"url": "https://assets.hardcover.app/book.jpg"},
                             }
-                        ]
-                    }
-                },
-            )
-        if query == HC_EDITIONS:
-            return httpx.Response(
-                200,
-                json={
-                    "data": {
+                        ],
                         "editions": [
                             {
                                 "id": 70,
@@ -95,7 +87,7 @@ def provider(monkeypatch):
                                 "title": "A Catalog Book",
                                 "reading_format": {"format": "Physical"},
                             },
-                        ]
+                        ],
                     }
                 },
             )

@@ -278,3 +278,32 @@ def test_keep_original_names_and_format_tokens_do_not_convert_media():
         ),
     ).items[0]
     assert plan.files[0].destination.endswith("/Harbor - MP3/Harbor - MP3.mp3")
+
+
+def test_a_lone_part_keeps_its_own_labelled_item_and_parts_share_a_version():
+    parts = [group(index, medium="audio", part_index=index, part_total=3) for index in (1, 2)]
+    for part in parts:
+        part.version_id = UUID(int=500)
+    plan = plan_import(parts, NamingProfile())
+    assert [item.state for item in plan.items] == ["ready", "ready"]
+    folders = [item.files[0].destination.rsplit("/", 1)[0] for item in plan.items]
+    assert folders[0].endswith("Harbor (Part 1 of 3)")
+    assert folders[1].endswith("Harbor (Part 2 of 3)")
+    assert any(
+        "until every part is in the library" in warning and "disc folders" in warning
+        for warning in plan.items[0].warnings
+    )
+    separate = plan_import(parts, NamingProfile(), combine_parts=False).items[0]
+    assert any("grouped with the other parts" in warning for warning in separate.warnings)
+    labelled = plan_import(
+        [group(medium="audio", part_index=1, part_total=3)],
+        NamingProfile(audio_folder="{author}/{title} - {part}"),
+    ).items[0]
+    assert labelled.files[0].destination.split("/")[-2] == "Harbor - Part 1 of 3"
+
+
+def test_a_part_number_needs_its_total():
+    with pytest.raises(ValidationError):
+        NamingMetadata(title="Harbor", authors=["Writer"], part_index=2)
+    with pytest.raises(ValidationError):
+        NamingMetadata(title="Harbor", authors=["Writer"], part_index=3, part_total=2)

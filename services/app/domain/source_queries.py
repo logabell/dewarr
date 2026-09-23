@@ -4,7 +4,8 @@ import unicodedata
 
 from sqlalchemy import select
 
-from app.db.models import CatalogSeries, SeriesMembership, Work, WorkMetadataSource
+from app.db.models import CatalogSeries, SeriesMembership, Version, Work, WorkMetadataSource
+from app.domain.catalog_titles import identity_authors, parse_title_labels
 from app.domain.visibility import visible_origin_work
 from app.domain.work_graph import family_ids
 
@@ -14,6 +15,38 @@ MAX_CATALOG_SOURCES = 50
 
 def normalized_query(value):
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def default_query(work):
+    """Base title plus the first author's surname.
+
+    Recording labels like "(1 of 3)" are not in release names, and a surname
+    survives "J.K." versus "J. K." spellings that a full name would not.
+    """
+    title = parse_title_labels(work.title).title or work.title
+    authors = identity_authors(work.authors)[0]
+    surname = authors[0].split()[-1].strip(",.") if authors and authors[0].split() else ""
+    query = (
+        f"{title} {surname}" if surname and surname.casefold() not in title.casefold() else title
+    )
+    return query[:300]
+
+
+async def edition_identifiers(db, work, medium):
+    """ISBN and ASIN values of the book's editions, to corroborate source listings."""
+    rows = await db.scalars(
+        select(Version.identifiers).where(
+            Version.work_id.in_(family_ids(work.id)),
+            *(() if medium == "all" else (Version.medium == medium,)),
+        )
+    )
+    values = {
+        value.strip()
+        for identifiers in rows
+        for key in ("isbn", "isbn10", "isbn13", "isbn_10", "isbn_13", "asin")
+        if isinstance(value := (identifiers or {}).get(key), str) and value.strip()
+    }
+    return sorted(values)[:50]
 
 
 def same_scope(left, right):
@@ -104,7 +137,8 @@ async def plan(db, user, work, query, enabled):
                 )
             )
     names = {}
-    primary = normalized_query(query)
+    # The title-and-author query already finds a series named like the book.
+    primary = {normalized_query(query), normalized_query(parse_title_labels(work.title).title)}
     for name, evidence in candidates:
         if not isinstance(name, str):
             continue
@@ -113,7 +147,7 @@ async def plan(db, user, work, query, enabled):
             warnings.append("An empty, overlong or unsupported series name was not searched")
             continue
         normalized = normalized_query(name)
-        if normalized == primary:
+        if normalized in primary:
             continue
         item = names.setdefault(normalized, {"query": name, "evidence": []})
         if evidence not in item["evidence"]:
