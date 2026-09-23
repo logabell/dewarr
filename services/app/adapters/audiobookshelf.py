@@ -55,10 +55,42 @@ class ABSItem(BaseModel):
     ebook_supplementary: bool = False
     # One unreadable library row must not abort the rest of the sync.
     unreadable: bool = False
+    # Names of fields Dewarr dropped or could not read. Values are never kept here.
+    read_issues: list[str] = Field(default_factory=list)
     path: str | None = None
     library_files: list[ABSFile] = Field(default_factory=list)
     series: list[dict] = Field(default_factory=list)
     cover_path: str | None = None
+
+
+# Title and authors decide which catalog book an item is, so losing either holds automatic matching.
+IDENTITY_ISSUES = frozenset({"title", "authors"})
+
+
+def folder_title(path: Any) -> str | None:
+    if not isinstance(path, str):
+        return None
+    name = PurePosixPath(path.replace("\\", "/")).name.strip()
+    return name[:600] or None
+
+
+def names(records: Any, key: str | None = None) -> tuple[list[str], bool]:
+    """Usable names, and whether any entry was unreadable. Blank names are skipped quietly."""
+    if records is None:
+        return [], False
+    if not isinstance(records, list):
+        return [], True
+    kept, dropped = [], False
+    for record in records:
+        if key:
+            name = record.get(key) if isinstance(record, dict) else None
+        else:
+            name = record
+        if not isinstance(name, str):
+            dropped = True
+        elif name.strip():
+            kept.append(name)
+    return kept, dropped
 
 
 class ABSImportConfiguration(BaseModel):
@@ -139,31 +171,33 @@ def _language(value):
     return value if value is not None and len(value) <= 20 else None
 
 
-def unreadable_item(value: dict) -> ABSItem:
+def unreadable_item(value: dict, reason: str) -> ABSItem:
     media = value.get("media") if isinstance(value.get("media"), dict) else {}
     metadata = media.get("metadata") if isinstance(media.get("metadata"), dict) else {}
     title = metadata.get("title")
     if not isinstance(title, str) or not title.strip():
-        title = "Unread item"
+        title = folder_title(value.get("relPath") or value.get("path")) or "Unread item"
     return ABSItem(
         id=external_id(value.get("id")),
         library_id=external_id(value.get("libraryId")),
         title=title.strip()[:600],
-        authors=[],
-        narrators=[],
+        authors=names(metadata.get("authors"), "name")[0],
+        narrators=names(metadata.get("narrators"))[0],
+        path=value["path"] if isinstance(value.get("path"), str) else None,
         invalid=True,
         unreadable=True,
+        read_issues=[reason],
     )
 
 
-def _parse_reason(error: AdapterError) -> str:
+def parse_reason(error: AdapterError) -> str:
     """Field names only. Values can hold private titles and file paths."""
     cause = error.__cause__
     if isinstance(cause, ValidationError):
         return ", ".join(".".join(map(str, detail["loc"])) for detail in cause.errors())
     if isinstance(cause, KeyError):
         return f"missing {cause.args[0]!r}" if cause.args else "missing field"
-    if isinstance(cause, ValueError):
+    if isinstance(cause, (ValueError, AdapterError)):
         return str(cause)
     return type(cause).__name__ if cause else str(error)
 
@@ -172,14 +206,91 @@ def readable_item(value: Any) -> ABSItem:
     if not isinstance(value, dict):
         raise AdapterError(FailureKind.PARSER, "Audiobookshelf returned an invalid item list.")
     try:
-        return parse_item(value)
+        item = parse_item(value)
     except AdapterError as error:
         # A malformed row stays in the census so one book cannot hold the whole library.
-        item = unreadable_item(value)
+        item = unreadable_item(value, parse_reason(error))
+    if item.read_issues:
         logger.warning(
-            "Audiobookshelf item %s could not be read (%s)", item.id, _parse_reason(error)
+            "Audiobookshelf item %s %s (%s)",
+            item.id,
+            "could not be read" if item.unreadable else "was read without some fields",
+            ", ".join(item.read_issues),
         )
-        return item
+    return item
+
+
+def _metadata(value: dict, media: dict, metadata: dict) -> dict:
+    """Each field is read on its own. A bad one is dropped and named in read_issues."""
+    issues = []
+    title = metadata.get("title")
+    if not isinstance(title, str) or not title.strip() or len(title) > 600:
+        issues.append("title")
+        if isinstance(title, str) and title.strip():
+            title = title.strip()[:600]
+        else:
+            title = folder_title(value.get("relPath") or value.get("path")) or "Untitled item"
+    authors, dropped = names(metadata.get("authors"), "name")
+    if dropped:
+        issues.append("authors")
+    narrators, dropped = names(metadata.get("narrators"))
+    if dropped:
+        issues.append("narrators")
+    language = _language(metadata.get("language"))
+    if metadata.get("language") is not None and language is None:
+        issues.append("language")
+    description = metadata.get("descriptionPlain")
+    if description is not None and not isinstance(description, str):
+        issues.append("description")
+        description = None
+    raw_year = metadata.get("publishedYear")
+    year = str(raw_year) if type(raw_year) in (str, int) else ""
+    if re.fullmatch(r"\d{4}", year):
+        year = int(year)
+    else:
+        if raw_year not in (None, ""):
+            issues.append("year")
+        year = None
+    abridged = metadata.get("abridged")
+    if abridged is not None and not isinstance(abridged, bool):
+        issues.append("abridged")
+        abridged = None
+    series = metadata.get("series") or []
+    if not isinstance(series, list) or not all(isinstance(entry, dict) for entry in series):
+        issues.append("series")
+        series = series if isinstance(series, list) else []
+        series = [entry for entry in series if isinstance(entry, dict)]
+    identifiers = {}
+    for key in ("isbn", "asin"):
+        raw = metadata.get(key)
+        if type(raw) in (str, int):
+            if str(raw):
+                identifiers[key] = str(raw)
+        elif raw is not None:
+            issues.append(key)
+    old_id = None
+    if value.get("oldLibraryItemId"):
+        try:
+            old_id = external_id(value["oldLibraryItemId"])
+        except AdapterError:
+            issues.append("old_id")
+    cover = media.get("coverPath")
+    path = value.get("path")
+    return {
+        "title": title,
+        "authors": authors,
+        "narrators": narrators,
+        "language": language,
+        "description": description,
+        "year": year,
+        "abridged": abridged,
+        "series": series,
+        "identifiers": identifiers,
+        "old_id": old_id,
+        "cover_path": cover if isinstance(cover, str) else None,
+        "path": path if isinstance(path, str) else None,
+        "read_issues": issues,
+    }
 
 
 def parse_item(value: dict) -> ABSItem:
@@ -233,32 +344,14 @@ def parse_item(value: dict) -> ABSItem:
                 for file in active
             )
         )
-        author_records = metadata.get("authors", [])
-        if not isinstance(author_records, list):
-            raise ValueError("Invalid authors")
-        authors = [record["name"] for record in author_records]
-        narrators = metadata.get("narrators") or []
-        if not all(isinstance(name, str) for name in authors + narrators):
-            raise ValueError("Invalid contributor names")
-        year = str(metadata.get("publishedYear") or "")
+        library_files = [file_evidence(file) for file in files]
+        item_id, library_id = external_id(value["id"]), external_id(value["libraryId"])
+        fields = _metadata(value, media, metadata)
         return ABSItem(
-            id=external_id(value["id"]),
-            library_id=external_id(value["libraryId"]),
-            path=value.get("path"),
-            library_files=[file_evidence(file) for file in files],
-            series=metadata.get("series") or [],
-            cover_path=media.get("coverPath"),
-            old_id=external_id(value["oldLibraryItemId"])
-            if value.get("oldLibraryItemId")
-            else None,
-            title=metadata["title"],
-            authors=authors,
-            narrators=narrators,
-            language=_language(metadata.get("language")),
-            description=metadata.get("descriptionPlain"),
-            year=int(year) if re.fullmatch(r"\d{4}", year) else None,
-            abridged=metadata.get("abridged"),
-            identifiers={key: str(metadata[key]) for key in ("isbn", "asin") if metadata.get(key)},
+            id=item_id,
+            library_id=library_id,
+            library_files=library_files,
+            **fields,
             audio=audio,
             ebook=ebook,
             missing=bool(value.get("isMissing")),

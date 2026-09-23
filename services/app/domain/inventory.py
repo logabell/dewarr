@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select, update
 
-from app.adapters.audiobookshelf import ABSItem, Audiobookshelf
+from app.adapters.audiobookshelf import IDENTITY_ISSUES, ABSItem, Audiobookshelf
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.grimmory import Grimmory
 from app.config import get_settings
@@ -14,12 +14,14 @@ from app.db.models import (
     InventoryRun,
     Library,
     LibraryAsset,
+    LibraryReadIssue,
     Operation,
     ProviderObject,
 )
 from app.db.session import session_factory
 from app.domain.catalog_titles import display_title
 from app.domain.identity import normalized, resolve_abs_version, resolve_abs_work, version_changed
+from app.domain.library_review import review_counts, review_message
 from app.domain.operations import transaction_lock
 from app.security import decrypt_secrets
 
@@ -126,8 +128,26 @@ async def collect_library(client, external_library_id, run_id, integration_id, t
     return set(seen)
 
 
+async def record_read_issue(db, library, item, now):
+    issue = await db.scalar(
+        select(LibraryReadIssue).where(
+            LibraryReadIssue.library_id == library.id,
+            LibraryReadIssue.external_id == item.id,
+        )
+    )
+    if item.unreadable:
+        if not issue:
+            issue = LibraryReadIssue(library_id=library.id, external_id=item.id)
+            db.add(issue)
+        issue.title, issue.authors, issue.path = item.title, item.authors, item.path
+        issue.reasons, issue.last_seen_at, issue.resolved_at = item.read_issues, now, None
+    elif issue and not issue.resolved_at:
+        issue.resolved_at = now
+
+
 async def apply_item(db, library, item, generation, integration_id, seen):
     now = datetime.now(UTC)
+    await record_read_issue(db, library, item, now)
     if getattr(item, "unreadable", False):
         # Keep the previous observation. A later successful read can replace it.
         for medium in ("ebook", "audio"):
@@ -141,6 +161,8 @@ async def apply_item(db, library, item, generation, integration_id, seen):
             if asset:
                 asset.last_seen_at, asset.seen_generation = now, generation
         return
+    # Without a readable title or author, Dewarr cannot tell which book this is.
+    held = bool(IDENTITY_ISSUES.intersection(item.read_issues))
     for medium in ("ebook", "audio"):
         files = getattr(item, medium)
         if not files:
@@ -183,13 +205,25 @@ async def apply_item(db, library, item, generation, integration_id, seen):
         if not link:
             link = ProviderObject(provider=namespace, kind=f"item:{medium}", external_id=item.id)
             db.add(link)
+        if held and asset and link.work_id:
+            # Keep the match made from earlier readable data until the backend reads cleanly.
+            asset.last_seen_at, asset.seen_generation = now, generation
+            asset.read_issues = item.read_issues
+            asset.state = "missing-suspected" if item.missing or item.invalid else "present"
+            asset.missing_since = (
+                (asset.missing_since or now) if item.missing or item.invalid else None
+            )
+            continue
         # Serialize same-title resolution across independent backend connections.
         # Edition labels share a lock with the short title so both cannot create a book.
         identity = display_title(item.title) or normalized(item.title)
         await transaction_lock(db, "identity:" + identity)
         previous_work_id = link.work_id
-        work = None if asset and asset.containment else await resolve_abs_work(db, item, link)
-        if not (asset and asset.containment) and version_changed(item, link, medium):
+        if held or (asset and asset.containment):
+            work = None
+        else:
+            work = await resolve_abs_work(db, item, link)
+        if not held and not (asset and asset.containment) and version_changed(item, link, medium):
             work = None
             link.match_status = "needs-review"
         if not asset:
@@ -197,6 +231,7 @@ async def apply_item(db, library, item, generation, integration_id, seen):
             db.add(asset)
             await db.flush()
         asset.title, asset.metadata_snapshot = item.title, item.model_dump(mode="json")
+        asset.read_issues = item.read_issues
         previous_files = asset.files or []
         observed_files = [file.model_dump() for file in files]
         asset.last_seen_at, asset.seen_generation = now, generation
@@ -297,6 +332,7 @@ async def publish_library(
         library.generation += 1
         library.name = library_info["name"]
         library_id, generation = library.id, library.generation
+    published_at = datetime.now(UTC)
     offset = 0
     while True:
         async with session_factory()() as db, db.begin():
@@ -387,6 +423,16 @@ async def publish_library(
             else:
                 asset.missing_since = asset.missing_since or now
                 asset.state = "missing-confirmed" if asset_id in confirmed else "missing-suspected"
+        # An item that left the library has nothing left to review.
+        await db.execute(
+            update(LibraryReadIssue)
+            .where(
+                LibraryReadIssue.library_id == library_id,
+                LibraryReadIssue.resolved_at.is_(None),
+                LibraryReadIssue.last_seen_at < published_at,
+            )
+            .values(resolved_at=now)
+        )
         library.last_complete_sync = now
         library.scope_fingerprint, library.accessible = scope, True
 
@@ -529,11 +575,15 @@ async def synchronize(operation_id: UUID, *, client_factory=None):
             integration.lease_token, integration.lease_until = None, None
             run = await db.get(InventoryRun, run_id)
             run.status, run.completed_at = "completed", datetime.now(UTC)
+            review = await review_counts(
+                db, select(Library.id).where(Library.integration_id == integration_id)
+            )
             operation = await db.get(Operation, operation_id)
             operation.status, operation.message = (
                 "completed",
-                f"Synced {len(libraries)} {library_name} libraries",
+                f"Synced {len(libraries)} {library_name} libraries" + review_message(review),
             )
+            operation.payload = {**operation.payload, "review": review}
             await db.execute(
                 delete(InventoryObservation).where(InventoryObservation.run_id == run_id)
             )

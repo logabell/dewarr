@@ -7,7 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select, update
 
-from app.adapters.audiobookshelf import Audiobookshelf, parse_item
+from app.adapters.audiobookshelf import Audiobookshelf, parse_item, readable_item
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.http import configured_url
 from app.db.models import Integration, LibraryAsset, Operation, Version, Work
@@ -187,25 +187,144 @@ def test_tag_metadata_outside_the_catalog_shape_is_still_read():
     assert parse_item(no_extension).ebook[0].format == ""
 
 
-async def test_one_malformed_item_does_not_hold_the_library(client, admin, database, caplog):
+def test_bad_fields_are_dropped_and_named_instead_of_failing_the_item():
+    value = book("odd")
+    value["path"] = "/private/library/Folder Title"
+    metadata = value["media"]["metadata"]
+    metadata.update(
+        title="",
+        authors=[{"name": "Alex Morgan"}, {"name": None}],
+        narrators=["Jordan Lee", 7],
+        publishedYear="sometime",
+        abridged="no",
+        series="Harbor",
+        isbn=["978"],
+        descriptionPlain={"text": "x"},
+    )
+    value["oldLibraryItemId"] = "../bad"
+    item = parse_item(value)
+    assert item.title == "Folder Title"
+    assert item.authors == ["Alex Morgan"] and item.narrators == ["Jordan Lee"]
+    assert item.year is None and item.abridged is None and item.series == []
+    assert item.identifiers == {} and item.description is None and item.old_id is None
+    assert item.read_issues == [
+        "title",
+        "authors",
+        "narrators",
+        "description",
+        "year",
+        "abridged",
+        "series",
+        "isbn",
+        "old_id",
+    ]
+    assert parse_item(book()).read_issues == []
+
+
+def test_unreadable_placeholder_keeps_what_the_backend_said():
+    value = book("lost")
+    value["path"] = "/private/library/Lost Folder"
+    value["libraryFiles"] = []
+    value["media"]["metadata"]["title"] = None
+    item = readable_item(value)
+    assert item.unreadable and item.title == "Lost Folder"
+    assert item.authors == ["Alex Morgan"] and item.path == "/private/library/Lost Folder"
+    assert item.read_issues == ["Unlisted media file"]
+
+
+async def test_library_items_that_cannot_be_read_are_kept_for_review(
+    client, admin, database, caplog
+):
     connection = await connect(client)
     fixture = ABSFixture({"one": book("one"), "two": book("two", narrator="Casey Reed")})
     await sync(client, connection, fixture, "readable-inventory")
     assert (await client.get("/api/library/assets")).json()["total"] == 2
+    before = {
+        asset["open_url"].rsplit("/", 1)[-1]: asset
+        for asset in (await client.get("/api/library/assets")).json()["items"]
+    }
     fixture.items["two"]["media"]["metadata"]["authors"] = [{"name": None}]
     fixture.items["three"] = book("three")
+    fixture.items["three"]["path"] = "/private/library/Untagged Folder"
     fixture.items["three"]["media"]["metadata"]["title"] = ""
-    operation = await sync(client, connection, fixture, "one-malformed-item")
+    fixture.items["four"] = book("four")
+    fixture.items["four"]["path"] = "/private/library/Broken Folder"
+    fixture.items["four"]["libraryFiles"] = []
+    operation = await sync(client, connection, fixture, "malformed-items")
     async with database() as db:
-        assert (await db.get(Operation, operation)).status == "completed"
-    assets = (await client.get("/api/library/assets")).json()["items"]
-    # The unreadable item keeps its last observation. The new one waits for a readable scan.
-    assert sorted(asset["open_url"].rsplit("/", 1)[-1] for asset in assets) == ["one", "two"]
-    assert {asset["state"] for asset in assets} == {"present"}
+        finished = await db.get(Operation, operation)
+        assert finished.status == "completed"
+        assert finished.message == "Synced 1 Audiobookshelf libraries. 3 items need review"
+        assert finished.payload["review"] == {"total": 3, "needs_matching": 1, "read_issues": 3}
+    assets = {
+        asset["open_url"].rsplit("/", 1)[-1]: asset
+        for asset in (await client.get("/api/library/assets")).json()["items"]
+    }
+    assert sorted(assets) == ["one", "three", "two"]
+    # Bad author data does not undo the match made from the earlier readable scan.
+    assert assets["two"]["work_ids"] == before["two"]["work_ids"]
+    assert assets["two"]["match_status"] == before["two"]["match_status"]
+    assert assets["two"]["read_issues"] == ["authors"]
+    # Without a title, a new item is kept but never matched automatically.
+    assert assets["three"]["title"] == "Untagged Folder"
+    assert assets["three"]["match_status"] == "needs-review" and not assets["three"]["work_ids"]
+    review = (await client.get("/api/library/review")).json()
+    assert review["total"] == 3
+    rows = sorted(
+        (row["kind"], (row["asset"] or row["read_issue"])["title"]) for row in review["items"]
+    )
+    assert rows == [
+        ("asset", "The First Harbor"),
+        ("asset", "Untagged Folder"),
+        ("read-issue", "The First Harbor"),
+    ]
+    unread = next(row["read_issue"] for row in review["items"] if row["kind"] == "read-issue")
+    assert unread["authors"] == ["Alex Morgan"]
+    assert unread["reasons"] == ["Unlisted media file"]
+    assert unread["open_url"] == "https://books.test/abs/item/four"
+    matching = (await client.get("/api/library/review?kind=needs-matching")).json()
+    assert [row["asset"]["title"] for row in matching["items"]] == ["Untagged Folder"]
+    assert (await client.get("/api/library/review?q=untagged")).json()["total"] == 1
+    summary = (await client.get("/api/library/review/summary")).json()
+    assert {key: summary[key] for key in ("total", "needs_matching", "read_issues")} == {
+        "total": 3,
+        "needs_matching": 1,
+        "read_issues": 3,
+    }
+    assert {row["reason"]: row["count"] for row in summary["reasons"]} == {
+        "authors": 1,
+        "title": 1,
+        "Unlisted media file": 1,
+    }
+    activity = (await client.get("/api/activity/page")).json()["items"]
+    latest = next(item for item in activity if item["id"] == str(operation))
+    assert latest["context"] == {"href": "/review", "label": "Review library items"}
     messages = [record.getMessage() for record in caplog.records]
-    assert "Audiobookshelf item two could not be read (Invalid contributor names)" in messages
-    assert "Audiobookshelf item three could not be read (title)" in messages
+    assert "Audiobookshelf item two was read without some fields (authors)" in messages
+    assert "Audiobookshelf item four could not be read (Unlisted media file)" in messages
     assert not any("/private/" in message for message in messages)
+
+    work_id = before["one"]["work_ids"][0]
+    three = assets["three"]
+    linked = await client.post(
+        f"/api/library/assets/{three['id']}/match",
+        json={"work_id": work_id, "expected_revision": three["match_revision"]},
+    )
+    assert linked.status_code == 204, linked.text
+    assert (await client.get("/api/library/review?kind=needs-matching")).json()["total"] == 0
+
+    # The manual match stands, but the missing title stays visible until the backend has one.
+    fixture.items["two"]["media"]["metadata"]["authors"] = [{"name": "Alex Morgan"}]
+    fixture.items["four"] = book("four")
+    await sync(client, connection, fixture, "repaired-items")
+    review = (await client.get("/api/library/review")).json()
+    assert [row["asset"]["title"] for row in review["items"]] == ["Untagged Folder"]
+    fixture.items["four"]["libraryFiles"] = []
+    await sync(client, connection, fixture, "broken-again")
+    assert (await client.get("/api/library/review?kind=read-issue")).json()["total"] == 2
+    del fixture.items["four"]
+    await sync(client, connection, fixture, "removed-item")
+    assert (await client.get("/api/library/review/summary")).json()["total"] == 1
 
 
 async def test_http_errors_redact_and_do_not_follow_redirects():

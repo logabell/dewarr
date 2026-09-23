@@ -1,9 +1,10 @@
 import { expect, test } from "./fixtures";
 
-test("one bookshelf preserves filters and redirects retired review navigation", async ({
+test("one bookshelf preserves filters and keeps library review for admins", async ({
   page,
 }) => {
   const requests: URL[] = [];
+  let role = "admin";
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     if (!url.pathname.startsWith("/api/")) return route.continue();
@@ -15,10 +16,13 @@ test("one bookshelf preserves filters and redirects retired review navigation", 
         user: {
           id: "reader",
           display_name: "Reader",
-          role: "admin",
+          role,
           onboarding_status: "complete",
         },
       };
+    if (url.pathname === "/api/library/review") data = { items: [], total: 0 };
+    if (url.pathname === "/api/library/review/summary")
+      data = { total: 0, needs_matching: 0, read_issues: 0, reasons: [] };
     if (url.pathname === "/api/library/libraries") data = [];
     if (
       url.pathname === "/api/library/books" ||
@@ -64,9 +68,25 @@ test("one bookshelf preserves filters and redirects retired review navigation", 
   await expect(
     page.getByRole("searchbox", { name: "Search your library" }),
   ).toHaveValue("Harbor");
-  // The retired review route now returns to the consolidated library.
+  await page.goto("/review");
+  await expect(
+    page.getByRole("heading", { name: "Library review" }),
+  ).toBeVisible();
+  await expect(page.getByText("All caught up")).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Review", exact: true }),
+  ).toBeVisible();
+  role = "member";
   await page.goto("/review");
   await expect(page).toHaveURL(/\/library$/);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: /^Review/ }),
+  ).toHaveCount(0);
+  role = "admin";
   expect(requests.some((url) => url.pathname === "/api/library/books")).toBe(
     true,
   );

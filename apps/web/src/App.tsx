@@ -11,6 +11,7 @@ import {
   ListPlus,
   RefreshCw,
   ChevronDown,
+  ListChecks,
   LogOut,
   Search,
   Settings,
@@ -27,6 +28,7 @@ import { api, ApiError, result, setCsrf } from "./api/client";
 import type { Auth } from "./api/client";
 import { Loading, Notice } from "./components";
 import { usePendingApprovals } from "./hooks/usePendingApprovals";
+import { useLibraryReviewCount } from "./hooks/useLibraryReviewCount";
 import { canManageOwnRequests } from "./permissions";
 
 const AddDiscoveryList = lazy(() => import("./pages/AddDiscoveryList"));
@@ -49,6 +51,7 @@ const SourceArtifact = lazy(() => import("./pages/SourceArtifact"));
 const MyLibrary = lazy(() => import("./pages/MyLibrary"));
 const ProviderSearch = lazy(() => import("./pages/ProviderSearch"));
 const ImportReview = lazy(() => import("./pages/ImportReview"));
+const LibraryReview = lazy(() => import("./pages/LibraryReview"));
 const Recovery = lazy(() => import("./pages/Recovery"));
 
 export default function App() {
@@ -389,6 +392,8 @@ function Shell({ auth }: { auth: Auth }) {
     auth.user.role === "admin" || permissions.includes("manage_requests");
   const pendingApprovals = usePendingApprovals(canApprove);
   const waiting = pendingApprovals.data?.total ?? 0;
+  const admin = auth.user.role === "admin";
+  const reviewing = useLibraryReviewCount(admin).data?.total ?? 0;
   const logout = useMutation({
     mutationFn: async () => result(await api.POST("/api/auth/logout")),
     onSuccess: () => {
@@ -442,6 +447,18 @@ function Shell({ auth }: { auth: Auth }) {
             <BookOpen size={19} />
             My Library
           </NavLink>
+          {admin && (
+            <NavLink to="/review">
+              <ListChecks size={19} />
+              Review
+              {reviewing > 0 && (
+                <span className="nav-count">
+                  {reviewing > 99 ? "99+" : reviewing}
+                  <span className="sr-only"> library items to review</span>
+                </span>
+              )}
+            </NavLink>
+          )}
           <NavLink to={waiting > 0 ? "/requests?status=pending" : "/requests"}>
             <Download size={19} />
             Requests
@@ -676,7 +693,13 @@ function Shell({ auth }: { auth: Auth }) {
               />
               <Route
                 path="/review"
-                element={<Navigate to="/library" replace />}
+                element={
+                  auth.user.role === "admin" ? (
+                    <LibraryReview />
+                  ) : (
+                    <Navigate to="/library" replace />
+                  )
+                }
               />
               <Route
                 path="/connections"

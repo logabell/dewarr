@@ -8,17 +8,28 @@ or watch is how completed downloads show up. Playback stays in Grimmory.
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from pathlib import PurePosixPath
 
 import httpx
 from pydantic import BaseModel, Field
 
-from app.adapters.audiobookshelf import ABSFile, ABSItem, backend_path, external_id
+from app.adapters.audiobookshelf import (
+    ABSFile,
+    ABSItem,
+    backend_path,
+    external_id,
+    folder_title,
+    names,
+    parse_reason,
+)
 from app.adapters.contracts import AdapterError, Capabilities, FailureKind
 from app.adapters.http import JsonEndpoint
 from app.domain.catalog_language import catalog_language
 from app.importing.metadata import valid_isbn
+
+logger = logging.getLogger(__name__)
 
 EBOOK_TYPES = {
     "PDF": "pdf",
@@ -138,27 +149,35 @@ def _hardcover(metadata: dict) -> str | None:
     return None
 
 
-def _authors(metadata: dict) -> list[str]:
-    raw = metadata.get("authors") or []
-    if not isinstance(raw, list):
-        raise ValueError("Invalid authors")
-    return [name.strip() for name in raw if isinstance(name, str) and name.strip()]
+def _authors(metadata: dict) -> tuple[list[str], bool]:
+    kept, dropped = names(metadata.get("authors") or [])
+    return [name.strip() for name in kept], dropped
 
 
-def unreadable_book(value: dict) -> ABSItem:
+def _book_folder(value: dict) -> str | None:
+    primary = value.get("primaryFile") if isinstance(value.get("primaryFile"), dict) else {}
+    path = primary.get("filePath")
+    if not isinstance(path, str):
+        return None
+    return path if primary.get("folderBased") is True else str(PurePosixPath(path).parent)
+
+
+def unreadable_book(value: dict, reason: str) -> ABSItem:
     metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
     title = metadata.get("title") or value.get("title")
     if not isinstance(title, str) or not title.strip():
-        title = "Unread book"
+        title = folder_title(_book_folder(value)) or "Unread book"
     library_id = value.get("libraryId")
     return ABSItem(
         id=external_id(str(value["id"])),
         library_id=external_id(str(library_id)) if library_id is not None else "unknown",
         title=title.strip()[:600],
-        authors=[],
-        narrators=[],
+        authors=_authors(metadata)[0],
+        narrators=_narrators(metadata.get("narrator")),
+        path=_book_folder(value),
         invalid=True,
         unreadable=True,
+        read_issues=[reason],
     )
 
 
@@ -237,10 +256,10 @@ def parse_book(value: dict, *, tracks: list | None = None) -> ABSItem:
             and supplementary_paths
             or (audio and ebook and all(file.format == "pdf" for file in ebook))
         )
-        authors = _authors(metadata)
-        title = metadata.get("title") or value.get("title")
-        if not isinstance(title, str) or not title.strip():
-            raise ValueError("Missing title")
+        issues = []
+        authors, dropped = _authors(metadata)
+        if dropped:
+            issues.append("authors")
         identifiers = {}
         if isbn := _isbn(metadata):
             identifiers["isbn"] = isbn
@@ -260,10 +279,26 @@ def parse_book(value: dict, *, tracks: list | None = None) -> ABSItem:
         if isinstance(library_path.get("path"), str):
             backend_path(library_path["path"])
         backend_path(folder)
+        title = metadata.get("title") or value.get("title")
+        if not isinstance(title, str) or not title.strip():
+            issues.append("title")
+            title = folder_title(folder) or "Untitled book"
         language = metadata.get("language")
         language = catalog_language(language) if isinstance(language, str) else None
         if language and len(language) > 20:
             language = language[:20]
+        for key, kind, issue in (
+            ("narrator", str, "narrators"),
+            ("language", str, "language"),
+            ("description", str, "description"),
+            ("abridged", bool, "abridged"),
+            ("publishedDate", str, "year"),
+        ):
+            if metadata.get(key) is not None and not isinstance(metadata[key], kind):
+                issues.append(issue)
+        published = metadata.get("publishedDate")
+        if isinstance(published, str) and published.strip() and _year(published) is None:
+            issues.append("year")
         return ABSItem(
             id=external_id(str(value["id"])),
             library_id=external_id(str(value["libraryId"])),
@@ -286,6 +321,7 @@ def parse_book(value: dict, *, tracks: list | None = None) -> ABSItem:
             full_audio=full_audio,
             full_ebook=full_ebook and not ebook_supplementary,
             ebook_supplementary=ebook_supplementary,
+            read_issues=issues,
         )
     except (KeyError, TypeError, ValueError, AdapterError) as error:
         raise AdapterError(
@@ -653,12 +689,20 @@ class Grimmory(JsonEndpoint):
     async def _one_book(self, book: dict) -> ABSItem:
         try:
             tracks = await self._tracks(book)
-            return parse_book(book, tracks=tracks)
+            item = parse_book(book, tracks=tracks)
         except AdapterError as error:
             # A malformed row stays in the census. Auth and transport failures still stop the sync.
             if error.kind != FailureKind.PARSER:
                 raise
-            return unreadable_book(book)
+            item = unreadable_book(book, parse_reason(error))
+        if item.read_issues:
+            logger.warning(
+                "Grimmory book %s %s (%s)",
+                item.id,
+                "could not be read" if item.unreadable else "was read without some fields",
+                ", ".join(item.read_issues),
+            )
+        return item
 
     async def _book_details(self, ids: list[str]) -> list[dict]:
         """Read full books. The paged list omits folder grouping and edition ids."""
