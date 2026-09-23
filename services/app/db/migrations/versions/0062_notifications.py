@@ -220,6 +220,8 @@ BEGIN
  ELSIF TG_TABLE_NAME = 'operations' THEN
    IF NEW.status IS NOT DISTINCT FROM old_data->>'status' OR NEW.kind LIKE 'recovery.%'
       OR NEW.kind IN ('organization.publish', 'acquisition.download')
+      OR (NEW.status='held' AND (NEW.payload ? 'waiting_for_release'
+          OR NEW.kind='lists.release-wait'))
       THEN RETURN NEW; END IF;
    IF NEW.status='failed' THEN kind := 'operation.failed';
    ELSIF NEW.status IN ('held','needs-review') THEN kind := 'operation.held';

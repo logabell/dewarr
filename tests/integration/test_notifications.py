@@ -346,3 +346,28 @@ async def test_list_baseline_is_silent_and_new_match_notifies(client, admin, dat
     assert len(sent) == 1
     assert sent[0]["events"][0]["type"] == "discovery.list"
     assert "New discovery" in sent[0]["events"][0]["message"]
+
+
+async def test_expected_release_wait_does_not_notify_as_review(client, admin, database, sent):
+    await channel(client, ["operation.held"])
+    async with database() as db, db.begin():
+        db.add_all(
+            [
+                Operation(
+                    owner_id=UUID(admin["id"]),
+                    kind="acquisition.quick-add",
+                    idempotency_key="wait-quick",
+                    status="held",
+                    payload={"waiting_for_release": None},
+                ),
+                Operation(
+                    owner_id=UUID(admin["id"]),
+                    kind="lists.release-wait",
+                    idempotency_key="wait-follow",
+                    status="held",
+                    payload={"waiting_for_release": "2027-01-01"},
+                ),
+            ]
+        )
+    await tick()
+    assert not sent
