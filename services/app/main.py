@@ -36,6 +36,7 @@ from app.api import (
     integrations,
     library,
     library_folders,
+    library_review,
     list_comparisons,
     list_csv,
     list_discovery,
@@ -90,7 +91,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Dewarr", version="0.2.1", lifespan=lifespan)
+    app = FastAPI(title="Dewarr", version="0.2.2", lifespan=lifespan)
     app.include_router(application_release.router, prefix="/api")
 
     @app.exception_handler(RequestValidationError)
@@ -165,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(list_policies.router, prefix="/api")
     app.include_router(integrations.router, prefix="/api")
     app.include_router(library.router, prefix="/api")
+    app.include_router(library_review.router, prefix="/api")
     app.include_router(metadata.router, prefix="/api")
     app.include_router(identity.router, prefix="/api")
     app.include_router(requests.router, prefix="/api")

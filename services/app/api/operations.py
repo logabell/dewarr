@@ -127,9 +127,12 @@ async def activity_contexts(db, user, rows):
                 href=f"/books/{identifier}{tab}", label=f"Open book: {title}"
             )
         elif row.kind == "library.sync" and user.role == "admin":
-            contexts[row.id] = ActivityContext(
-                href="/connections", label="Review library connections"
-            )
+            if row.status == "completed" and row.review_total:
+                contexts[row.id] = ActivityContext(href="/review", label="Review library items")
+            else:
+                contexts[row.id] = ActivityContext(
+                    href="/connections", label="Review library connections"
+                )
     return contexts
 
 
@@ -171,6 +174,7 @@ async def activity_page(
                 Operation.updated_at,
                 context_reference(LIST_CONTEXTS).label("list_reference"),
                 context_reference(WORK_CONTEXTS).label("work_reference"),
+                Operation.payload["review"]["total"].as_integer().label("review_total"),
             )
             .where(*where)
             .order_by(Operation.created_at.desc(), Operation.id)

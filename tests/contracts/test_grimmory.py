@@ -1,11 +1,15 @@
 import json
 from copy import deepcopy
+from unittest.mock import patch
+from uuid import UUID
 
 import httpx
 import pytest
 
 from app.adapters.contracts import AdapterError, FailureKind
-from app.adapters.grimmory import Grimmory, parse_book
+from app.adapters.grimmory import Grimmory, parse_book, unreadable_book
+from app.db.models import Operation
+from app.domain.inventory import synchronize
 from app.importing.backend import verify_backend
 from app.importing.execution import _size_matches
 from app.importing.publication import PublicationError
@@ -315,10 +319,10 @@ class GrimmoryFixture:
             "metadataSource": self.metadata_source,
         }
 
-    def client(self):
+    def client(self, endpoint="http://grimmory.test", secrets=None):
         return Grimmory(
-            "http://grimmory.test",
-            {"username": "reader", "password": "secret"},
+            endpoint,
+            secrets or {"username": "reader", "password": "secret"},
             transport=httpx.MockTransport(self.handle),
         )
 
@@ -423,6 +427,127 @@ async def test_one_unreadable_book_does_not_abort_the_page():
     assert total == 3
     assert {item.id for item in readable} == {"1", "3"}
     assert [item.id for item in unreadable] == ["4"]
+    # The placeholder still says what Grimmory knows, so an admin can find the book.
+    assert unreadable[0].title == "The First Harbor"
+    assert unreadable[0].authors == ["Alex Morgan"]
+    assert unreadable[0].read_issues == ["Incomplete file"]
+
+
+def test_bad_book_fields_are_dropped_and_named():
+    untitled = book(audio=True, ebook=False)
+    untitled["metadata"].update(
+        title="  ",
+        authors=["Alex Morgan", {"name": "Jordan Lee"}],
+        narrator=["Jordan Lee"],
+        language=12,
+        description={"html": "<p>Story</p>"},
+        abridged="no",
+        publishedDate="sometime",
+    )
+    parsed = parse_book(untitled)
+    assert not parsed.unreadable and parsed.full_audio
+    assert parsed.title == "1"
+    assert parsed.authors == ["Alex Morgan"]
+    assert parsed.narrators == [] and parsed.language is None
+    assert parsed.description is None and parsed.abridged is None and parsed.year is None
+    assert parsed.read_issues == [
+        "authors",
+        "title",
+        "narrators",
+        "language",
+        "description",
+        "abridged",
+        "year",
+    ]
+    blank = book()
+    blank["metadata"]["authors"] = ["", "Alex Morgan"]
+    assert parse_book(blank).read_issues == []
+    assert parse_book(book()).read_issues == []
+
+
+async def test_grimmory_books_with_bad_metadata_are_kept_for_review(
+    client, admin, database, caplog
+):
+    fixture = GrimmoryFixture()
+    with patch("app.api.integrations.Grimmory", fixture.client):
+        response = await client.post(
+            "/api/integrations",
+            json={
+                "kind": "grimmory",
+                "name": "Home Grimmory",
+                "base_url": "http://grimmory.test",
+                "username": "reader",
+                "password": "secret",
+            },
+        )
+    assert response.status_code == 201, response.text
+    connection = response.json()["id"]
+
+    async def sync(key):
+        response = await client.post(
+            f"/api/integrations/{connection}/sync", headers={"Idempotency-Key": key}
+        )
+        assert response.status_code == 202, response.text
+        operation = UUID(response.json()["id"])
+        await synchronize(operation, client_factory=fixture.client)
+        async with database() as db:
+            return await db.get(Operation, operation)
+
+    def by_book(page):
+        return {asset["open_url"].rsplit("/", 1)[-1]: asset for asset in page["items"]}
+
+    first = await sync("grimmory-readable")
+    assert first.status == "completed" and first.message == "Synced 2 Grimmory libraries"
+    before = by_book((await client.get("/api/library/assets")).json())
+    assert before["3"]["work_ids"]
+
+    fixture.catalog[2]["metadata"]["authors"] = [{"name": "Alex Morgan"}]
+    untitled = book(5)
+    untitled["metadata"]["title"] = None
+    untitled["primaryFile"] = file("/books/Salt Roads/salt.epub")
+    broken = book(6)
+    broken["primaryFile"]["filePath"] = "notes.epub"
+    fixture.catalog += [untitled, broken]
+    finished = await sync("grimmory-malformed")
+    assert finished.status == "completed"
+    assert finished.message == "Synced 2 Grimmory libraries. 3 items need review"
+    assert finished.payload["review"] == {"total": 3, "needs_matching": 1, "read_issues": 3}
+    assets = by_book((await client.get("/api/library/assets")).json())
+    # The earlier match survives an author list Dewarr can no longer read.
+    assert assets["3"]["work_ids"] == before["3"]["work_ids"]
+    assert assets["3"]["read_issues"] == ["authors"]
+    assert assets["5"]["title"] == "Salt Roads"
+    assert assets["5"]["match_status"] == "needs-review" and not assets["5"]["work_ids"]
+    assert "6" not in assets
+    review = (await client.get("/api/library/review?kind=read-issue")).json()
+    unread = next(row["read_issue"] for row in review["items"] if row["kind"] == "read-issue")
+    assert unread["reasons"] == ["Incomplete file"]
+    assert unread["open_url"] == "http://grimmory.test/book/6"
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Grimmory book 3 was read without some fields (authors)" in messages
+    assert "Grimmory book 6 could not be read (Incomplete file)" in messages
+
+    fixture.catalog[2]["metadata"]["authors"] = ["Alex Morgan"]
+    broken["primaryFile"] = file("/books/6/story.epub")
+    await sync("grimmory-repaired")
+    summary = (await client.get("/api/library/review/summary")).json()
+    assert summary["total"] == 1 and summary["needs_matching"] == 1
+    assert "6" in by_book((await client.get("/api/library/assets")).json())
+
+
+def test_unreadable_book_keeps_its_folder_name():
+    broken = book(5)
+    del broken["metadata"]["title"]
+    broken["primaryFile"] = {"filePath": "/books/Salt Roads/salt.epub", "bookType": "EPUB"}
+    broken["alternativeFormats"] = "not a list"
+    with pytest.raises(AdapterError):
+        parse_book(broken)
+    placeholder = unreadable_book(broken, "Invalid file list")
+    assert placeholder.unreadable and placeholder.invalid
+    assert placeholder.title == "Salt Roads"
+    assert placeholder.authors == ["Alex Morgan"]
+    assert placeholder.path == "/books/Salt Roads"
+    assert placeholder.read_issues == ["Invalid file list"]
 
 
 async def test_expired_session_logs_in_once_and_retries():

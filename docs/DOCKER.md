@@ -42,6 +42,18 @@ Use the same paths in Dewarr, qBittorrent, and your library server (Audiobookshe
 
 Choose those folders in Settings and verify your library routes. If Audiobookshelf sees `/audiobooks` while Dewarr sees `/data/audiobooks`, set that mapping in Dewarr. If qBittorrent sees a different path for the download folder, map that path in **Settings → Download clients**. A shared parent mount allows hardlinks when the filesystem supports them. When the download and library folders are on different filesystems, Dewarr copies the files into the library instead. A library folder can instead ask qBittorrent to rename the seeding files into that folder, so the seeding file and the library file are the same copy. That option stays off unless you turn it on.
 
+### Network shares (NFS and SMB)
+
+NFS and SMB/CIFS libraries work when the staging folder is on the same mounted share as the library. These filesystems do not support the atomic no-replace rename flag, so Dewarr uses a fallback that still never overwrites an existing book or journal. The route test checks that fallback on your actual mount.
+
+SMB/CIFS mounts need a few options, because the share, not Linux, decides ownership and permissions:
+
+- `uid=<PUID>,gid=<PGID>,dir_mode=0700`: the staging folder must be owned by Dewarr's user and private. The route test names the exact uid it expects. These options apply to the whole mount, so containers sharing it (qBittorrent, Audiobookshelf) need the same `PUID`.
+- `serverino` (the default): Dewarr tracks files by inode number. With `noserverino` those numbers can change between checks. The route test warns when it sees this.
+- `nobrl` on older kernels, if the route test reports that the staging filesystem does not support file locks.
+
+Shares without hardlink support, such as many NAS SMB exports, fall back to copying.
+
 ## Existing PostgreSQL
 
 Remove the `postgres` service and Dewarr's `depends_on` section, then set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` to your existing database. Dewarr waits for the database and applies migrations before starting.
@@ -80,7 +92,7 @@ docker compose pull
 docker compose up -d
 ```
 
-The app stops both services together and runs migrations before restarting. If either service fails, the container exits so Docker can restart it. For manual `docker run` installations, pull the image, stop/remove only the Dewarr container, and recreate it using the same command and volumes.
+The app stops both services together and runs migrations before restarting. If either service fails, the container exits so Docker can restart it. `pull` and `up -d` only recreate Dewarr, so PostgreSQL keeps its existing network attachment. If you renamed the Compose network or moved Dewarr into another stack since PostgreSQL was created, recreate both together with `docker compose up -d --force-recreate dewarr postgres`. To share a network between Compose projects, create it once with `docker network create <name>` and declare it `external: true` in each project. For manual `docker run` installations, pull the image, stop/remove only the Dewarr container, and recreate it using the same command and volumes.
 
 ## Backups
 
@@ -114,7 +126,7 @@ Changing `POSTGRES_PASSWORD` in Compose does not change an existing database pas
 
 - **Cannot sign in:** make `PUBLIC_URL` exactly match the browser address. Identity provider sign-in uses that same address for its redirect URL; see [OpenID Connect](OIDC.md). Plex sign-in uses it the same way; see [Plex](PLEX.md).
 - **Permission denied:** check `PUID`, `PGID`, and shared-folder ownership.
-- **Database unavailable:** check the database host and matching passwords.
+- **Database unavailable:** the log names the failed step. If `DB_HOST` does not resolve, Dewarr and PostgreSQL are not on the same Docker network. Check with `docker network inspect <network>`, then run `docker compose down` followed by `docker compose up -d` to recreate the containers and network. Your data is kept unless you add `-v`. A rejected password means the value differs from the one the database was created with.
 - **Existing database / missing key:** restore the original key to `config/app_key`.
 - **Migrations waiting:** stop any old API/worker containers using the same database.
 - **Inspect startup:** run `docker compose logs --tail=100 dewarr`.

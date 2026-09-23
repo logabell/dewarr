@@ -544,21 +544,14 @@ button.help-button:hover {
   border-radius: 10px;
   position: relative;
 }
-.onboarding-card > h2 {
-  font-size: 20px;
+.onboarding-title {
   margin: 6px 0 18px;
+}
+.onboarding-title h2 {
+  font-size: 20px;
 }
 .onboarding-card > .eyebrow {
   font-size: 10px;
-}
-.onboarding-context {
-  position: absolute;
-  right: 18px;
-  top: 44px;
-}
-.onboarding-context .setting-help-content {
-  left: auto;
-  right: 0;
 }
 .onboarding-actions {
   margin-top: 16px;
@@ -568,12 +561,6 @@ button.help-button:hover {
 .onboarding-save-note {
   margin-top: 12px;
   font-size: 11px;
-}
-.onboarding-skip {
-  margin: 16px 0;
-}
-.onboarding-skip > span {
-  display: none;
 }
 @container (max-width: 520px) {
   .naming-workspace {
@@ -1141,9 +1128,8 @@ button.help-button:hover {
   border-top: 0;
   padding-top: 0;
 }
-.settings-section-body .reading-accounts > section:last-child {
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
+.settings-section-body .reading-accounts > section:first-of-type > details {
+  border-top: 0;
 }
 .settings-section-body .naming-options {
   gap: 12px;
@@ -1833,7 +1819,7 @@ button.help-button:hover {
   max-width: none;
 }
 .settings-section-body .metadata-connection > .setting-subheading {
-  margin-bottom: 0;
+  margin-bottom: 4px;
 }
 .settings-section-body
   .metadata-connection
@@ -1842,8 +1828,30 @@ button.help-button:hover {
   margin: 0 0 0 auto;
   text-transform: none;
 }
+.setting-help-content .help-heading {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.setting-help-content .help-scope-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.setting-help-content .help-scope-list code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #1a2334;
+  font-size: 11px;
+}
 .settings-section-body .metadata-form {
   gap: 12px;
+}
+.settings-section-body .metadata-actions > .metadata-token-link {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
 }
 .settings-section-body .metadata-form > .metadata-actions,
 .settings-section-body .metadata-defaults > .metadata-actions {
@@ -2619,17 +2627,6 @@ button.help-button:hover {
   font-size: 12px;
   color: var(--muted);
   margin: 8px 0;
-}
-.library-folder-guide {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.library-folder-guide .button-row {
-  gap: 20px;
 }
 @media (max-width: 600px) {
   .media-folder-automation {

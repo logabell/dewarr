@@ -2,7 +2,7 @@ import SettingHelp from "../components/SettingHelp";
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, Check, ArrowRight } from "lucide-react";
+import { Check, ArrowRight } from "lucide-react";
 import { api, result, type Auth } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
@@ -114,7 +114,7 @@ export default function GettingStarted({ role }: { role: string }) {
         : progress.data?.skipped || [],
     });
   }
-  function leave(status: "completed" | "deferred" | "skipped") {
+  function leave(status: "completed" | "deferred") {
     update.mutate({
       status,
       step: current,
@@ -130,7 +130,8 @@ export default function GettingStarted({ role }: { role: string }) {
     <div className="onboarding-page">
       <header className="onboarding-header">
         <span className="brand">
-          <BookOpen size={28} /> Dewarr
+          <img src="/assets/dewarr.png" width="32" height="32" alt="" />
+          <span>Dewarr</span>
         </span>
         <button disabled={update.isPending} onClick={() => leave("deferred")}>
           Finish later
@@ -175,10 +176,10 @@ export default function GettingStarted({ role }: { role: string }) {
             <p className="eyebrow">
               STEP {current + 1} OF {ids.length}
             </p>
-            <h2 ref={heading} tabIndex={-1}>
-              {section?.title || "Ready to go"}
-            </h2>
-            <div className="onboarding-context">
+            <div className="onboarding-title">
+              <h2 ref={heading} tabIndex={-1}>
+                {section?.title || "Ready to go"}
+              </h2>
               <SettingHelp label="this setup step">
                 {descriptions[id]}
               </SettingHelp>
@@ -308,12 +309,6 @@ export default function GettingStarted({ role }: { role: string }) {
           </div>
         </div>
       )}
-      <footer className="onboarding-skip">
-        <button disabled={update.isPending} onClick={() => leave("skipped")}>
-          Skip setup
-        </button>
-        <span>You can return from Settings.</span>
-      </footer>
     </div>
   );
 }

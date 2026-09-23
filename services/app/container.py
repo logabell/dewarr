@@ -11,7 +11,7 @@ from pathlib import Path
 
 import psycopg
 from cryptography.fernet import Fernet
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, make_url
 
 LOG = logging.getLogger("dewarr")
 MAINTENANCE_LOCK = 720041
@@ -68,18 +68,58 @@ def prepare_user(config: Path) -> None:
     os.umask(0o022)
 
 
+DATABASE_HINTS = (
+    (
+        ("failed to resolve host", "could not translate host name"),
+        "DB_HOST {host} does not resolve; attach Dewarr and PostgreSQL to the same Docker network",
+    ),
+    (
+        ("connection refused",),
+        "nothing accepted connections at {host}:{port}; check DB_PORT and that PostgreSQL runs",
+    ),
+    (
+        ("timeout expired",),
+        "{host}:{port} did not answer; check the Docker network and any firewall",
+    ),
+    (("password authentication failed",), "PostgreSQL rejected DB_PASSWORD for DB_USER {user}"),
+    (('role "',), "DB_USER {user} does not exist in PostgreSQL"),
+    (('database "',), "DB_NAME {database} does not exist in PostgreSQL"),
+)
+
+
+def describe_database_error(error: psycopg.OperationalError, url: str) -> str:
+    target = make_url(url)
+    detail = " ".join(str(error).split()) or type(error).__name__
+    if target.password:
+        detail = detail.replace(target.password, "***")
+    lowered = detail.lower()
+    for needles, hint in DATABASE_HINTS:
+        if any(needle in lowered for needle in needles):
+            summary = hint.format(
+                host=target.host,
+                port=target.port or 5432,
+                user=target.username,
+                database=target.database,
+            )
+            return f"PostgreSQL unavailable: {summary} ({detail})"
+    return f"PostgreSQL unavailable at {target.host}:{target.port or 5432} ({detail})"
+
+
 def connect_database(stop: threading.Event, timeout: float = 60):
     # The key may not exist yet, so do not load Settings before initialization.
     url = os.environ["BOOK_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
     deadline = time.monotonic() + timeout
+    reported = None
     while not stop.is_set():
         try:
             return psycopg.connect(url, autocommit=True, connect_timeout=5)
-        except psycopg.OperationalError:
+        except psycopg.OperationalError as error:
+            message = describe_database_error(error, url)
             if time.monotonic() >= deadline:
-                raise RuntimeError(
-                    "PostgreSQL unavailable; check DB_HOST and DB_PASSWORD"
-                ) from None
+                raise RuntimeError(message) from None
+            if message != reported:
+                LOG.warning("Waiting for database. %s", message)
+                reported = message
             stop.wait(1)
     raise InterruptedError
 
@@ -204,10 +244,14 @@ def main() -> int:
     except RuntimeError as error:
         LOG.error("%s", error)
         return 1
-    except (ValueError, OSError, psycopg.Error):
+    except psycopg.OperationalError as error:
+        LOG.error("%s", describe_database_error(error, os.environ["BOOK_DATABASE_URL"]))
+        return 1
+    except (ValueError, OSError, psycopg.Error) as error:
         # Avoid logging database URLs or credential values from configuration validation.
         LOG.error(
-            "Startup failed; check database access, /config permissions, and the saved app key"
+            "Startup failed (%s); check database access, /config permissions and the saved app key",
+            type(error).__name__,
         )
         return 1
 

@@ -2659,6 +2659,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/library/review": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Review */
+    get: operations["review_api_library_review_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/library/review/summary": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Summary */
+    get: operations["summary_api_library_review_summary_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/metadata/account": {
     parameters: {
       query?: never;
@@ -5238,6 +5272,8 @@ export interface components {
       collection_work_id?: string | null;
       /** Contents */
       contents?: components["schemas"]["ContainedBookView"][];
+      /** Read Issues */
+      read_issues?: string[];
     };
     /** AttemptPage */
     AttemptPage: {
@@ -9970,6 +10006,40 @@ export interface components {
       /** Query Keys */
       query_keys?: string[];
     };
+    /** ReadIssueView */
+    ReadIssueView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Library Id
+       * Format: uuid
+       */
+      library_id: string;
+      /** Library Name */
+      library_name: string;
+      /** Server Kind */
+      server_kind: string;
+      /** External Id */
+      external_id: string;
+      /** Title */
+      title: string;
+      /** Authors */
+      authors: string[];
+      /** Path */
+      path: string | null;
+      /** Reasons */
+      reasons: string[];
+      /**
+       * Last Seen At
+       * Format: date-time
+       */
+      last_seen_at: string;
+      /** Open Url */
+      open_url: string;
+    };
     /** ReaderDetails */
     ReaderDetails: {
       /** External Id */
@@ -10043,6 +10113,13 @@ export interface components {
       /** Account Id */
       account_id: string | null;
       subscription: components["schemas"]["SubscriptionView"];
+    };
+    /** ReasonCount */
+    ReasonCount: {
+      /** Reason */
+      reason: string;
+      /** Count */
+      count: number;
     };
     /** ReasonView */
     ReasonView: {
@@ -10676,16 +10753,26 @@ export interface components {
        */
       decision: "keep" | "separate";
     };
-    /** ReviewPage */
-    ReviewPage: {
-      /** Items */
-      items: components["schemas"]["ReviewView"][];
+    /** ReviewItem */
+    ReviewItem: {
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "asset" | "read-issue";
+      asset?: components["schemas"]["AssetView"] | null;
+      read_issue?: components["schemas"]["ReadIssueView"] | null;
+    };
+    /** ReviewSummary */
+    ReviewSummary: {
       /** Total */
       total: number;
-      /** Offset */
-      offset: number;
-      /** Limit */
-      limit: number;
+      /** Needs Matching */
+      needs_matching: number;
+      /** Read Issues */
+      read_issues: number;
+      /** Reasons */
+      reasons: components["schemas"]["ReasonCount"][];
     };
     /** ReviewView */
     ReviewView: {
@@ -12455,6 +12542,17 @@ export interface components {
       /** Members */
       members: components["schemas"]["GroupMember"][];
     };
+    /** ReviewPage */
+    app__api__download_reviews__ReviewPage: {
+      /** Items */
+      items: components["schemas"]["ReviewView"][];
+      /** Total */
+      total: number;
+      /** Offset */
+      offset: number;
+      /** Limit */
+      limit: number;
+    };
     /** RevisionInput */
     app__api__identity__RevisionInput: {
       /** Expected Revision */
@@ -12474,6 +12572,17 @@ export interface components {
       work_id: string | null;
       /** Expected Revision */
       expected_revision?: string | null;
+    };
+    /** ReviewPage */
+    app__api__library_review__ReviewPage: {
+      /** Items */
+      items: components["schemas"]["ReviewItem"][];
+      /** Total */
+      total: number;
+      /** Offset */
+      offset: number;
+      /** Limit */
+      limit: number;
     };
     /** RevisionInput */
     app__api__list_policies__RevisionInput: {
@@ -17980,6 +18089,61 @@ export interface operations {
       };
     };
   };
+  review_api_library_review_get: {
+    parameters: {
+      query?: {
+        kind?: "all" | "needs-matching" | "read-issue";
+        library_id?: string | null;
+        q?: string;
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["app__api__library_review__ReviewPage"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  summary_api_library_review_summary_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewSummary"];
+        };
+      };
+    };
+  };
   get_account_api_metadata_account_get: {
     parameters: {
       query?: never;
@@ -19319,7 +19483,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["ReviewPage"];
+          "application/json": components["schemas"]["app__api__download_reviews__ReviewPage"];
         };
       };
       /** @description Validation Error */

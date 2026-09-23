@@ -316,9 +316,6 @@ input:disabled {
   height: var(--control-height);
   min-height: var(--control-height);
 }
-.library-folder-guide .button-row {
-  gap: 20px;
-}
 .add-server-options > button {
   justify-content: flex-start;
   width: 100%;

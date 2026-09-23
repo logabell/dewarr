@@ -118,15 +118,12 @@ export default function MetadataSettings({
         <div className="setting-subheading">
           <h3>Hardcover</h3>
           <SettingHelp label="Hardcover">
-            Optional. Open Library works without an account. Your token is
-            private to your account. Create it with these scopes so discovery,
-            lists, reviews, and list write-back all work:
-            {hardcoverScopes.map(([scope, reason]) => (
-              <span key={scope}>
-                <br />
-                {scope} — {reason}
-              </span>
-            ))}
+            <span className="help-heading">Minimum API permissions</span>
+            <span className="help-scope-list">
+              {hardcoverScopes.map(([scope]) => (
+                <code key={scope}>{scope}</code>
+              ))}
+            </span>
           </SettingHelp>
           {account.data && (
             <span className="connection-state">
@@ -134,12 +131,6 @@ export default function MetadataSettings({
             </span>
           )}
         </div>
-        <p className="muted">
-          <a href={hardcoverTokenUrl} target="_blank" rel="noreferrer">
-            Create a Hardcover API token
-          </a>{" "}
-          with {hardcoverScopes.map(([scope]) => scope).join(", ")} selected.
-        </p>
         <Notice
           error={account.error || save.error || test.error || suggestions.error}
         />
@@ -194,6 +185,14 @@ export default function MetadataSettings({
                     </button>
                   </>
                 )}
+                <a
+                  className="metadata-token-link"
+                  href={hardcoverTokenUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Create a token ↗
+                </a>
               </div>
             </form>
             {account.data.configured && account.data.enabled && (

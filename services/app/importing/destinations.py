@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -269,13 +270,18 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             if seeding_rename
             else "Hardlink route unavailable; correct the mounts or explicitly choose copy mode"
         )
+        if ok and report.get("warnings"):
+            message = " ".join([message, *report["warnings"]])
     except (OSError, ValueError, AdapterError) as error:
         report, ok, copy_fallback = {}, False, False
-        message = (
-            str(error)[:300]
-            if isinstance(error, (InspectionError, AdapterError))
-            else ("Destination probe failed; check paths, permissions and filesystem support")
-        )
+        if isinstance(error, (InspectionError, AdapterError)):
+            message = str(error)[:300]
+        else:
+            code = errno.errorcode.get(error.errno) if isinstance(error, OSError) else None
+            message = (
+                f"Destination probe failed{f' ({code})' if code else ''}; "
+                "check paths, permissions and filesystem support"
+            )
     async with session_factory()() as db, db.begin():
         operation = await db.get(Operation, operation_id)
         destination = await db.scalar(

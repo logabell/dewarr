@@ -50,9 +50,10 @@ export default function Destinations({
     <div className="library-folder-settings">
       {!embedded && <h1>Library folders</h1>}
       <p className="muted">
-        Choose an Audiobookshelf or Grimmory folder for each format. Your naming
-        rules build the folders inside it. Hardlinks and copies leave the
-        original download available for seeding.
+        Choose an Audiobookshelf or Grimmory folder for each format. Hardlinks
+        are enabled, so imports share the download’s disk space and keep it
+        seeding. When the download and library are on different filesystems,
+        files are copied instead.
       </p>
       <Notice error={query.error} />
       {query.isPending ? (
@@ -147,18 +148,6 @@ export default function Destinations({
           </div>
         )
       )}
-      <div className="library-folder-guide">
-        <p>
-          <strong>Hardlinks save space</strong> when the download and library
-          share a filesystem. You can copy into the library, or rename the
-          seeding copy in qBittorrent so the library file and the seeding file
-          are the same copy.
-        </p>
-        <div className="button-row">
-          <Link to="/settings#naming">Edit file naming →</Link>
-          <Link to="/settings#downloaders">Download paths &amp; mapping →</Link>
-        </div>
-      </div>
       {editing && (
         <FolderPicker
           medium={editing}

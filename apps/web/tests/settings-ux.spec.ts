@@ -35,7 +35,9 @@ test("settings use compact controls and naming presets persist with planner prev
       path: testInfo.outputPath("onboarding-mobile.png"),
       fullPage: true,
     });
-    await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Finish later", exact: true })
+      .click();
   } else
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -64,11 +66,13 @@ test("settings use compact controls and naming presets persist with planner prev
   await catalog
     .getByRole("button", { name: "About Hardcover", exact: true })
     .focus();
-  await expect(catalog.getByRole("tooltip")).toContainText("Open Library");
+  await expect(catalog.getByRole("tooltip")).toContainText(
+    "Minimum API permissions",
+  );
   await expect(catalog.getByRole("tooltip")).toContainText("read:catalog");
   await expect(catalog.getByRole("tooltip")).toContainText("write:lists");
   await expect(
-    catalog.getByRole("link", { name: "Create a Hardcover API token" }),
+    catalog.getByRole("link", { name: "Create a token" }),
   ).toHaveAttribute(
     "href",
     /scope=read:catalog\+read:me:content\+read:lists\+read:library:public\+read:users\+write:lists/,

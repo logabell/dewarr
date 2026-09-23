@@ -2579,11 +2579,17 @@ img.detail-cover {
   padding: clamp(20px, 3vw, 36px);
   min-width: 0;
 }
-.onboarding-card > h2 {
-  font-size: 26px;
+.onboarding-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 12px 0;
 }
-.onboarding-card > h2:focus {
+.onboarding-title h2 {
+  font-size: 26px;
+  margin: 0;
+}
+.onboarding-title h2:focus {
   outline: none;
 }
 .onboarding-step-description {
@@ -2618,21 +2624,6 @@ img.detail-cover {
   margin-top: 24px;
   color: var(--muted);
   font-size: 12px;
-}
-.onboarding-skip {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 32px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.onboarding-skip button {
-  background: transparent;
-  border-color: transparent;
-  color: var(--accent);
 }
 .onboarding-finish {
   display: grid;
@@ -2761,9 +2752,6 @@ img.detail-cover {
   }
   .onboarding-actions button {
     font-size: 12px;
-  }
-  .onboarding-skip {
-    margin-bottom: 12px;
   }
 }
 
