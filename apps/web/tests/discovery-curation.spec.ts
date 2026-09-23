@@ -42,7 +42,7 @@ test("awards, filtering, pinning and persisted layout form one discovery flow", 
   await expect(
     page.getByRole("link", { name: "View My Friends", exact: true }),
   ).toBeVisible();
-  const nav = await page.locator(".explore-tabs").boundingBox();
+  const nav = await page.locator(".page-tabs").boundingBox();
   expect(nav!.height).toBeLessThan(70);
   const covers = page
     .getByRole("region", { name: "Fiction", exact: true })

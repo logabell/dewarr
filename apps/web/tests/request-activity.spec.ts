@@ -98,7 +98,8 @@ test("activity requests preserve independent reasons and route missing media to 
     exact: true,
   });
   await expect(card).toBeVisible();
-  await expect(card).toContainText("Audiobook · Wanted");
+  await expect(card).toContainText("Audiobook");
+  await expect(card.getByText("Wanted", { exact: true })).toBeVisible();
   await card.getByText("Details", { exact: true }).click();
   await expect(card).toContainText("Effective request scope");
   await card.getByText("Details", { exact: true }).click();
@@ -128,7 +129,13 @@ test("activity requests preserve independent reasons and route missing media to 
     ),
   ).toBe(true);
   await card
-    .getByRole("button", { name: "Withdraw your request", exact: true })
+    .getByRole("button", {
+      name: "Actions for Activity Journey Alpha",
+      exact: true,
+    })
+    .click();
+  await card
+    .getByRole("menuitem", { name: "Withdraw your request", exact: true })
     .click();
   await expect(
     card.getByText("Your request · Withdrawn", { exact: true }),
@@ -137,15 +144,25 @@ test("activity requests preserve independent reasons and route missing media to 
     card.getByRole("link", { name: "Choose release", exact: true }),
   ).toBeVisible();
   await card
-    .getByRole("button", { name: "Withdraw activity follow list", exact: true })
+    .getByRole("button", {
+      name: "Actions for Activity Journey Alpha",
+      exact: true,
+    })
+    .click();
+  await card
+    .getByRole("menuitem", {
+      name: "Withdraw activity follow list",
+      exact: true,
+    })
     .click();
   await expect(card).toHaveCount(0);
-  await page.getByRole("button", { name: "Withdrawn", exact: true }).click();
+  await page.getByRole("link", { name: "Withdrawn", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Withdrawn", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.getByRole("link", { name: "Withdrawn", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await requests.getByRole("article").last().scrollIntoViewIfNeeded();
-  await expect(card).toContainText("Audiobook · Withdrawn");
+  await expect(card).toContainText("Audiobook");
+  await expect(card.getByText("Withdrawn", { exact: true })).toBeVisible();
   await expect(
     card.getByRole("link", { name: "Choose release", exact: true }),
   ).toHaveCount(0);
@@ -178,21 +195,19 @@ test("activity requests preserve independent reasons and route missing media to 
   await page.setViewportSize({ width: 1440, height: 1000 });
   const filters = page.getByRole("navigation", { name: "Request filters" });
   const filterPositions = await filters
-    .getByRole("button")
-    .evaluateAll((buttons) =>
-      buttons.map((button) => button.getBoundingClientRect().top),
+    .getByRole("link")
+    .evaluateAll((links) =>
+      links.map((link) => link.getBoundingClientRect().top),
     );
   expect(new Set(filterPositions).size).toBe(1);
-  await filters
-    .getByRole("button", { name: "Downloading", exact: true })
-    .click();
+  await filters.getByRole("link", { name: "Downloading", exact: true }).click();
   await expect(
-    filters.getByRole("button", { name: "Downloading", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await filters.getByRole("button", { name: "Review", exact: true }).click();
+    filters.getByRole("link", { name: "Downloading", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await filters.getByRole("link", { name: "Review", exact: true }).click();
   await expect(
-    filters.getByRole("button", { name: "Review", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+    filters.getByRole("link", { name: "Review", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("region", { name: "Requests", exact: true }),
   ).toBeVisible();

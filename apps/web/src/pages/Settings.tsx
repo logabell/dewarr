@@ -16,9 +16,7 @@ export default function Settings({
     sections.find((section) => section.id === location.hash.slice(1)) ||
     sections[0];
   useEffect(() => {
-    const current = document.querySelector(
-      ".settings-tabs a[aria-current='page']",
-    );
+    const current = document.querySelector(".page-tabs a[aria-current='page']");
     const bar = current?.parentElement;
     if (!(current instanceof HTMLElement) || !bar) return;
     const left =
@@ -39,19 +37,17 @@ export default function Settings({
   return (
     <div className="settings-page settings-focused">
       <h1 className="sr-only">Settings</h1>
-      <div className="page-view-toolbar">
-        <nav className="settings-tabs" aria-label="Settings categories">
-          {sections.map((item) => (
-            <Link
-              key={item.id}
-              to={`/settings#${item.id}`}
-              aria-current={selected.id === item.id ? "page" : undefined}
-            >
-              {item.title}
-            </Link>
-          ))}
-        </nav>
-      </div>
+      <nav className="page-tabs" aria-label="Settings categories">
+        {sections.map((item) => (
+          <Link
+            key={item.id}
+            to={`/settings#${item.id}`}
+            aria-current={selected.id === item.id ? "page" : undefined}
+          >
+            {item.title}
+          </Link>
+        ))}
+      </nav>
       <section
         id={selected.id}
         className="settings-section"

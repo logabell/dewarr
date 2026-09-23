@@ -286,6 +286,27 @@ input:disabled {
 .list-refresh-menu > button:hover:not(:disabled) {
   background: var(--surface);
 }
+.request-menu-panel > :is(button, a) {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.request-menu-panel > :is(button, a):hover {
+  background: var(--surface);
+  color: inherit;
+}
+.request-menu-panel > [data-danger="true"] {
+  color: #ffc1c6;
+}
 
 /* Joined toggle choices retain a visible selected state without nested pills. */
 .segmented-control {

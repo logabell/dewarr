@@ -7,7 +7,6 @@
   --explore-accent: #a5b4fc;
 }
 .explore-header,
-.explore-tabs,
 .explore-view-heading,
 .explore-home-tools,
 .explore-detail-heading {
@@ -46,36 +45,6 @@
 .explore-search:hover {
   color: var(--explore-text);
   background: var(--surface);
-}
-.explore-navigation {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 26px;
-}
-.explore-tabs {
-  flex: 1;
-  min-width: 0;
-  justify-content: flex-start;
-  gap: 26px;
-  overflow-x: auto;
-  white-space: nowrap;
-  scrollbar-width: none;
-}
-.explore-tabs a {
-  color: var(--muted);
-  font-size: 14px;
-  padding: 10px 0 13px;
-  border-bottom: 2px solid transparent;
-  text-decoration: none;
-}
-.explore-tabs a[aria-current="page"] {
-  color: var(--explore-text);
-  border-bottom-color: var(--accent);
-}
-.explore-tabs a:hover {
-  color: var(--explore-text);
 }
 .explore-spotlight {
   position: relative;
@@ -510,13 +479,6 @@
   .explore-search span {
     display: none;
   }
-  .explore-tabs {
-    gap: 22px;
-    margin-bottom: 20px;
-  }
-  .explore-tabs a {
-    font-size: 13px;
-  }
   .explore-spotlight {
     min-height: 230px;
     padding: 24px;
@@ -633,15 +595,6 @@
     transition: none;
   }
 }
-/* Global app navigation is vertical; discovery navigation is explicitly horizontal. */
-.explore .explore-tabs {
-  flex-direction: row;
-  flex-wrap: nowrap;
-}
-.explore .explore-tabs a {
-  border-radius: 0;
-  flex: 0 0 auto;
-}
 .explore .explore-pages {
   flex-direction: row;
 }
@@ -676,12 +629,6 @@
   margin-bottom: 20px;
 }
 @media (max-width: 720px) {
-  .explore .explore-tabs {
-    gap: 18px;
-  }
-  .explore .explore-tabs a {
-    font-size: 12px;
-  }
   .explore-filters label {
     flex: 1 1 calc(50% - 6px);
     min-width: 0;

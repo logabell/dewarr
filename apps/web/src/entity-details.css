@@ -361,13 +361,6 @@
   font-size: 13px;
 }
 @media (max-width: 600px) {
-  .library-scopes {
-    overflow-x: auto;
-    flex-wrap: nowrap;
-  }
-  .library-scopes a {
-    flex-shrink: 0;
-  }
   .library-group-shelf .section-heading {
     align-items: start;
     gap: 12px;

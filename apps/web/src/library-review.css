@@ -4,27 +4,8 @@
   --review-raised: #1c293d;
   min-width: 0;
 }
-.library-review > .page-heading {
-  margin-bottom: 22px;
-}
-.library-review > .page-heading h1 {
-  margin: 0;
-}
-.library-review > .page-heading .muted {
-  max-width: 64ch;
-  margin: 6px 0 0;
-  font-size: 14px;
-  line-height: 1.5;
-}
-.review-tabs {
-  margin-bottom: 18px;
-}
-.library-review :is(.settings-tabs, .settings-subtabs) a:hover {
+.library-review :is(.page-tabs, .settings-subtabs) a:hover {
   background: transparent;
-}
-.review-tabs .requests-tab-count {
-  display: inline-block;
-  line-height: 18px;
 }
 .review-toolbar {
   display: flex;

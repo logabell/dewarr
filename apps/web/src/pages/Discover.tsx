@@ -93,8 +93,8 @@ function DiscoverNavigation({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="explore-navigation">
-      <nav className="explore-tabs" aria-label="Discover navigation">
+    <div className="page-tabs-bar">
+      <nav className="page-tabs" aria-label="Discover navigation">
         {views.map(([key, label]) => (
           <Link
             key={key}
@@ -105,7 +105,7 @@ function DiscoverNavigation({
           </Link>
         ))}
       </nav>
-      {children}
+      {children && <div className="page-tabs-tools">{children}</div>}
     </div>
   );
 }

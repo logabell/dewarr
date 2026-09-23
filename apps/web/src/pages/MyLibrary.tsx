@@ -75,8 +75,8 @@ export default function MyLibrary({
   return (
     <>
       <h1 className="sr-only">My Library</h1>
-      <div className="page-view-toolbar">
-        <nav className="library-scopes" aria-label="Library shelves">
+      <div className="page-tabs-bar">
+        <nav className="page-tabs" aria-label="Library shelves">
           <Link
             to="/library"
             aria-current={!saved && !groupView ? "page" : undefined}
@@ -103,9 +103,11 @@ export default function MyLibrary({
           </Link>
         </nav>
         {admin && (
-          <Link className="page-view-action" to="/settings#libraries">
-            Manage connections
-          </Link>
+          <div className="page-tabs-tools">
+            <Link className="page-view-action" to="/settings#libraries">
+              Manage connections
+            </Link>
+          </div>
         )}
       </div>
       {groupView ? (

@@ -113,16 +113,8 @@ export default function LibraryReview() {
   const reasons = summary.data?.reasons ?? [];
   return (
     <div className="library-review">
-      <div className="page-heading">
-        <div>
-          <h1>Library review</h1>
-          <p className="muted">
-            Books from your connected libraries that Dewarr couldn't match or
-            read. Link each one to the right book so it counts as owned.
-          </p>
-        </div>
-      </div>
-      <nav className="settings-tabs review-tabs" aria-label="Review filter">
+      <h1 className="sr-only">Review</h1>
+      <nav className="page-tabs" aria-label="Review filter">
         {KINDS.map(({ id, label, count }) => {
           const total = summary.data ? count(summary.data) : 0;
           const next = new URLSearchParams(params);

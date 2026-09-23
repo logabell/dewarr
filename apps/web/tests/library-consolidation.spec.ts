@@ -70,7 +70,7 @@ test("one bookshelf preserves filters and keeps library review for admins", asyn
   ).toHaveValue("Harbor");
   await page.goto("/review");
   await expect(
-    page.getByRole("heading", { name: "Library review" }),
+    page.getByRole("navigation", { name: "Review filter" }),
   ).toBeVisible();
   await expect(page.getByText("All caught up")).toBeVisible();
   await expect(

@@ -1169,43 +1169,32 @@ button.help-button:hover {
 }
 
 /* Focused settings: one category and one editable section at a time. */
-.settings-tabs,
 .settings-subtabs {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
-  gap: 24px;
+  gap: 20px;
   overflow-x: auto;
   max-width: 100%;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
-.settings-tabs a,
 .settings-subtabs a {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   padding: 12px 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   white-space: nowrap;
   text-decoration: none;
 }
-.settings-tabs a:hover,
 .settings-subtabs a:hover {
   color: #fff;
 }
-.settings-tabs a[aria-current],
 .settings-subtabs a[aria-current] {
   color: var(--accent);
   border-bottom-color: var(--accent);
-}
-.settings-subtabs {
-  gap: 20px;
-  margin-bottom: 16px;
-}
-.settings-subtabs a {
-  font-size: 13px;
 }
 .settings-focused .settings-section {
   border: 0;
@@ -1254,9 +1243,6 @@ button.help-button:hover {
   accent-color: var(--accent);
 }
 @media (max-width: 640px) {
-  .settings-tabs {
-    gap: 20px;
-  }
   .settings-empty {
     padding: 16px;
   }

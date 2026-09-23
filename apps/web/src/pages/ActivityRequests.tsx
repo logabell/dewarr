@@ -1,6 +1,21 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Headphones } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  ChevronRight,
+  ClipboardCheck,
+  Download,
+  Ellipsis,
+  ExternalLink,
+  Eye,
+  Headphones,
+  RefreshCw,
+  Search,
+  Undo2,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
@@ -40,17 +55,133 @@ function mediumLabel(slot: string) {
   return "Ebook";
 }
 
-function chipState(label: string, target: Target) {
+function chipState(label: string) {
   if (label === "In library") return "satisfied";
-  if (
-    label === "Pending" ||
-    label === "Importing" ||
-    label === "Paused" ||
-    label === "Check inventory"
-  )
+  if (label === "Downloading" || label === "Importing") return "downloading";
+  if (label === "Pending" || label === "Paused" || label === "Check inventory")
     return "paused";
   if (label === "Declined" || label === "Withdrawn") return "cancelled";
-  return target.state;
+  return "wanted";
+}
+
+function targetNotes(label: string, target: Target) {
+  const redundant = new Set([
+    label,
+    "Request declined",
+    "Waiting for approval",
+  ]);
+  const parts = [
+    target.message,
+    target.attempt_message,
+    target.repair_message,
+    target.review_message,
+    ...(target.transfer_notes ?? []),
+  ].filter((part): part is string => !!part && !redundant.has(part));
+  return [...new Set(parts)];
+}
+
+type RowAction = {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+  danger?: boolean;
+  onSelect?: () => void;
+};
+
+function ActionMenu({
+  label,
+  items,
+  disabled,
+}: {
+  label: string;
+  items: RowAction[];
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    root.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+    function onPointer(event: PointerEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.current?.focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      if (!root.current?.contains(event.target as Node)) return;
+      const entries = [
+        ...(root.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ??
+          []),
+      ];
+      if (!entries.length) return;
+      const index = entries.indexOf(document.activeElement as HTMLElement);
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      entries[(index + step + entries.length) % entries.length]?.focus();
+      event.preventDefault();
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  if (!items.length) return null;
+  return (
+    <div className="request-menu" ref={root}>
+      <button
+        ref={trigger}
+        type="button"
+        className="control-icon"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Ellipsis size={16} aria-hidden />
+      </button>
+      {open && (
+        <div className="request-menu-panel" role="menu" aria-label={label}>
+          {items.map((item) => {
+            const Icon = item.icon;
+            return item.href ? (
+              <Link
+                key={item.key}
+                role="menuitem"
+                to={item.href}
+                onClick={() => setOpen(false)}
+              >
+                <Icon size={14} aria-hidden />
+                {item.label}
+              </Link>
+            ) : (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                data-danger={item.danger ? "true" : undefined}
+                disabled={disabled}
+                onClick={() => {
+                  setOpen(false);
+                  item.onSelect?.();
+                }}
+              >
+                <Icon size={14} aria-hidden />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function requester(request: Request) {
@@ -292,6 +423,94 @@ function RequestCover({ title, url }: { title: string; url?: string | null }) {
   );
 }
 
+function targetActions(
+  request: Request,
+  target: Target,
+  canManage: boolean,
+  onTransfer: (attemptId: string, cancel: boolean) => void,
+  onClaim: (target: Target) => void,
+) {
+  const qualify = (label: string) =>
+    request.targets.length > 1
+      ? `${label} · ${mediumLabel(target.slot)}`
+      : label;
+  const actions: RowAction[] = [];
+  if (target.next_action === "search" && request.can_open_book)
+    actions.push({
+      key: `search-${target.slot}`,
+      label: "Choose release",
+      icon: Search,
+      href: `/books/${request.work_id}?tab=sources&request=${request.id}&slot=${target.slot}`,
+    });
+  if (
+    target.needs_review &&
+    target.can_claim &&
+    target.attempt_id &&
+    target.review_revision
+  ) {
+    const label = target.review_retry
+      ? "Retry"
+      : target.review_reassignment
+        ? "Reassign"
+        : "Review";
+    actions.push({
+      key: `claim-${target.slot}`,
+      label: qualify(label),
+      icon: ClipboardCheck,
+      onSelect: () => onClaim(target),
+    });
+  }
+  if (canManage && target.can_cancel && target.attempt_id)
+    actions.push({
+      key: `cancel-${target.slot}`,
+      label: target.shared_download
+        ? "Cancel for every book"
+        : qualify("Cancel download"),
+      icon: X,
+      danger: true,
+      onSelect: () => onTransfer(target.attempt_id!, true),
+    });
+  if (canManage && target.can_recheck && target.attempt_id)
+    actions.push({
+      key: `recheck-${target.slot}`,
+      label: qualify("Recheck"),
+      icon: RefreshCw,
+      onSelect: () => onTransfer(target.attempt_id!, false),
+    });
+  if (target.next_action === "selected-release" && target.source_artifact_id)
+    actions.push({
+      key: `release-${target.slot}`,
+      label: qualify("Release"),
+      icon: ExternalLink,
+      href: `/sources/artifacts/${target.source_artifact_id}`,
+    });
+  if (target.inspection_id)
+    actions.push({
+      key: `inspect-${target.slot}`,
+      label: qualify("Inspect"),
+      icon: Eye,
+      href: `/organization/inspections?inspection=${target.inspection_id}`,
+    });
+  return actions;
+}
+
+function ActionButton({ action, busy }: { action: RowAction; busy: boolean }) {
+  const Icon = action.icon;
+  if (action.href)
+    return (
+      <Link className="control-action" to={action.href}>
+        <Icon size={14} aria-hidden />
+        {action.label}
+      </Link>
+    );
+  return (
+    <button type="button" disabled={busy} onClick={action.onSelect}>
+      <Icon size={14} aria-hidden />
+      {action.label}
+    </button>
+  );
+}
+
 function RequestCard({
   request,
   canManage,
@@ -310,65 +529,142 @@ function RequestCard({
   onClaim: (target: Target) => void;
 }) {
   const when = shortDate(request.created_at);
+  const byline = [
+    request.authors?.length ? request.authors.join(", ") : request.description,
+    requester(request),
+    when,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const menu: RowAction[] = [];
+  if (request.can_decide)
+    menu.push({
+      key: "decline",
+      label: "Decline",
+      icon: X,
+      danger: true,
+      onSelect: () => onDecide("declined", false),
+    });
+  if (request.can_withdraw)
+    for (const reason of request.reasons.filter((item) => item.active))
+      menu.push({
+        key: `withdraw-${reason.id}`,
+        label: `Withdraw ${reason.label.toLowerCase()}`,
+        icon: Undo2,
+        onSelect: () => onWithdraw(reason.id),
+      });
+  const rows = request.targets.map((target) => {
+    const actions = targetActions(
+      request,
+      target,
+      canManage,
+      onTransfer,
+      onClaim,
+    );
+    const primary = actions[0];
+    if (actions.length > 1) menu.push(...actions.slice(1));
+    return { target, primary };
+  });
   return (
     <article
-      className="request-card"
+      className="request-row"
       aria-label={`${request.work_title} request`}
     >
       <RequestCover title={request.work_title} url={request.cover_url} />
-      <div className="request-card-main">
-        <h2>
-          {request.can_open_book ? (
-            <Link to={`/books/${request.work_id}`}>{request.work_title}</Link>
-          ) : (
-            request.work_title
-          )}
-        </h2>
-        <p className="muted">
-          {request.authors?.length
-            ? request.authors.join(", ")
-            : request.description}
-        </p>
-        <div className="request-card-targets">
-          {request.targets.map((target) => {
+      <div className="request-row-body">
+        <header className="request-row-head">
+          <div className="request-row-identity">
+            <h2>
+              {request.can_open_book ? (
+                <Link to={`/books/${request.work_id}`}>
+                  {request.work_title}
+                </Link>
+              ) : (
+                request.work_title
+              )}
+            </h2>
+            {byline && <p className="request-row-meta">{byline}</p>}
+          </div>
+          <div className="request-row-tools">
+            {request.can_decide && (
+              <button
+                type="button"
+                className="primary"
+                disabled={busy}
+                onClick={() => onDecide("approved", false)}
+              >
+                <Check size={14} aria-hidden />
+                Approve
+              </button>
+            )}
+            {request.can_start_download && (
+              <button
+                type="button"
+                className={request.can_decide ? undefined : "primary"}
+                disabled={busy}
+                onClick={() => onDecide("approved", true)}
+              >
+                <Download size={14} aria-hidden />
+                Download
+              </button>
+            )}
+            <ActionMenu
+              label={`Actions for ${request.work_title}`}
+              items={menu}
+              disabled={busy}
+            />
+          </div>
+        </header>
+        <div className="request-targets">
+          {rows.map(({ target, primary }) => {
             const label = statusLabel(request, target);
             const active =
               !!target.attempt_state &&
               liveDownloadStates.has(target.attempt_state);
+            const progress =
+              typeof target.progress === "number"
+                ? Math.max(0, Math.min(1, target.progress))
+                : null;
+            const notes = targetNotes(label, target);
             return (
-              <div className="request-card-target" key={target.slot}>
-                <span
-                  className="request-state"
-                  data-state={chipState(label, target)}
-                >
-                  {target.slot === "audio" ? (
-                    <Headphones size={12} aria-hidden />
-                  ) : (
-                    <BookOpen size={12} aria-hidden />
+              <div className="request-target" key={target.slot}>
+                <div className="request-target-line">
+                  <span className="request-medium">
+                    {target.slot === "audio" ? (
+                      <Headphones size={14} aria-hidden />
+                    ) : (
+                      <BookOpen size={14} aria-hidden />
+                    )}
+                    {mediumLabel(target.slot)}
+                  </span>
+                  <span
+                    className="request-status"
+                    data-state={chipState(label)}
+                  >
+                    {label}
+                  </span>
+                  {progress !== null && (
+                    <span className="request-percent">
+                      {Math.round(progress * 100)}%
+                    </span>
                   )}
-                  {mediumLabel(target.slot)} · {label}
-                </span>
-                {target.message && (
-                  <p className="muted request-card-note">{target.message}</p>
-                )}
-                {target.attempt_message &&
-                  target.attempt_message !== target.message && (
-                    <p className="muted request-card-note">
-                      {target.attempt_message}
-                    </p>
+                  {primary && (
+                    <div className="request-target-actions">
+                      <ActionButton action={primary} busy={busy} />
+                    </div>
                   )}
-                {target.repair_message && (
-                  <p className="muted request-card-note">
-                    {target.repair_message}
-                  </p>
+                </div>
+                {(active || progress !== null) && (
+                  <div className="request-progress">
+                    <progress
+                      max={1}
+                      {...(progress !== null ? { value: progress } : {})}
+                      aria-label={`${request.work_title} ${mediumLabel(target.slot).toLowerCase()} download progress`}
+                    />
+                  </div>
                 )}
-                {target.review_message && (
-                  <p className="muted request-card-note">
-                    {target.review_message}
-                  </p>
-                )}
-                {target.transfer_notes?.map((note) => (
-                  <p className="muted request-card-note" key={note}>
+                {notes.map((note) => (
+                  <p className="request-target-note" key={note}>
                     {note}
                   </p>
                 ))}
@@ -382,89 +678,6 @@ function RequestCard({
                     ))}
                   </ul>
                 )}
-                {active && (
-                  <div className="download-progress">
-                    <progress
-                      max={1}
-                      {...(typeof target.progress === "number"
-                        ? {
-                            value: Math.max(0, Math.min(1, target.progress)),
-                          }
-                        : {})}
-                      aria-label={`${request.work_title} download progress`}
-                    />
-                    {typeof target.progress === "number" && (
-                      <span className="muted">
-                        {Math.round(target.progress * 100)}% downloaded
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div className="request-card-actions">
-                  {target.next_action === "search" && request.can_open_book && (
-                    <Link
-                      to={`/books/${request.work_id}?tab=sources&request=${request.id}&slot=${target.slot}`}
-                    >
-                      Choose release
-                    </Link>
-                  )}
-                  {target.next_action === "selected-release" &&
-                    target.source_artifact_id && (
-                      <Link
-                        to={`/sources/artifacts/${target.source_artifact_id}`}
-                      >
-                        Release
-                      </Link>
-                    )}
-                  {canManage && target.can_cancel && target.attempt_id && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      aria-label={
-                        target.shared_download
-                          ? "Cancel for every book"
-                          : "Cancel download"
-                      }
-                      onClick={() => onTransfer(target.attempt_id!, true)}
-                    >
-                      {target.shared_download
-                        ? "Cancel for every book"
-                        : "Cancel"}
-                    </button>
-                  )}
-                  {canManage && target.can_recheck && target.attempt_id && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onTransfer(target.attempt_id!, false)}
-                    >
-                      Recheck
-                    </button>
-                  )}
-                  {target.needs_review &&
-                    target.can_claim &&
-                    target.attempt_id &&
-                    target.review_revision && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => onClaim(target)}
-                      >
-                        {target.review_retry
-                          ? "Retry"
-                          : target.review_reassignment
-                            ? "Reassign"
-                            : "Review"}
-                      </button>
-                    )}
-                  {target.inspection_id && (
-                    <Link
-                      to={`/organization/inspections?inspection=${target.inspection_id}`}
-                    >
-                      Inspect
-                    </Link>
-                  )}
-                </div>
                 {target.can_repair && target.attempt_id && (
                   <DownloadRepair attemptId={target.attempt_id} />
                 )}
@@ -472,73 +685,23 @@ function RequestCard({
             );
           })}
         </div>
-        <RequestDetails request={request} />
-      </div>
-      <div className="request-card-side">
-        <p className="request-card-who">
-          <span>{requester(request)}</span>
-          {when && <small>{when}</small>}
-        </p>
-        {(request.can_decide || request.can_start_download) && (
-          <div className="request-card-actions">
-            {request.can_decide && (
-              <button
-                type="button"
-                className="primary"
-                disabled={busy}
-                onClick={() => onDecide("approved", false)}
-              >
-                Approve
-              </button>
-            )}
-            {request.can_start_download && (
-              <button
-                type="button"
-                className={request.can_decide ? undefined : "primary"}
-                disabled={busy}
-                onClick={() => onDecide("approved", true)}
-              >
-                Download
-              </button>
-            )}
-            {request.can_decide && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onDecide("declined", false)}
-              >
-                Decline
-              </button>
-            )}
-          </div>
+        {!!request.reasons.length && (
+          <ul className="request-reasons">
+            {request.reasons.map((reason) => (
+              <li key={reason.id}>
+                <span className={reason.active ? undefined : "is-quiet"}>
+                  {reason.label}
+                  {reason.active ? "" : " · Withdrawn"}
+                  {reason.approval_status === "pending" &&
+                    " · Waiting for approval"}
+                  {reason.approval_status === "declined" && " · Declined"}
+                </span>
+                {reason.decision_note && <p>{reason.decision_note}</p>}
+              </li>
+            ))}
+          </ul>
         )}
-        <div className="request-reasons">
-          {request.reasons.map((reason) => (
-            <div className="request-reason" key={reason.id}>
-              <span className={reason.active ? undefined : "muted"}>
-                {reason.label}
-                {reason.active ? "" : " · Withdrawn"}
-                {reason.approval_status === "pending" &&
-                  " · Waiting for approval"}
-                {reason.approval_status === "declined" && " · Declined"}
-              </span>
-              {reason.decision_note && (
-                <p className="muted">{reason.decision_note}</p>
-              )}
-              {request.can_withdraw && reason.active && (
-                <button
-                  type="button"
-                  className="request-withdraw"
-                  disabled={busy}
-                  aria-label={`Withdraw ${reason.label.toLowerCase()}`}
-                  onClick={() => onWithdraw(reason.id)}
-                >
-                  Withdraw
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
+        <RequestDetails request={request} />
       </div>
     </article>
   );
@@ -551,7 +714,14 @@ function RequestDetails({ request }: { request: Request }) {
       className="request-preferences"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Details</summary>
+      <summary>
+        <ChevronRight
+          size={14}
+          aria-hidden
+          className="request-details-chevron"
+        />
+        Details
+      </summary>
       {open && (
         <div className="request-preferences-body">
           <EffectiveScope

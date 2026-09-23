@@ -3646,24 +3646,96 @@ img.detail-cover {
   }
 }
 
-.library-scopes {
+/* Page tabs: the underline used by Review, and every other top-level page. */
+.page-tabs-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 12px 24px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 22px;
+}
+.page-tabs {
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 24px;
+  margin: 0 0 24px;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 24px;
+  overflow-x: auto;
+  max-width: 100%;
+  scrollbar-width: none;
 }
-.library-scopes a {
-  border-radius: 0;
-  padding: 10px 0;
-  text-decoration: none;
-  color: var(--muted);
+.page-tabs::-webkit-scrollbar {
+  display: none;
+}
+.page-tabs-bar > .page-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  border-bottom: 0;
+}
+.page-tabs :is(a, button) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 0;
+  border: 0;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
 }
-.library-scopes a[aria-current="page"] {
-  color: inherit;
-  border-bottom-color: currentColor;
+.page-tabs-bar > .page-tabs :is(a, button) {
+  margin-bottom: -1px;
+}
+.page-tabs :is(a, button):hover {
+  background: transparent;
+  color: #fff;
+}
+.page-tabs :is(a, button)[aria-current="page"],
+.page-tabs :is(a, button)[aria-current="page"]:hover {
+  background: transparent;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.page-tabs .requests-tab-count {
+  margin-left: 0;
+}
+.page-tabs-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 16px;
+}
+.page-tabs-bar .page-view-action {
+  margin: 0;
+  padding: 0;
+}
+@media (max-width: 720px) {
+  .page-tabs {
+    gap: 18px;
+  }
+  .page-tabs :is(a, button) {
+    font-size: 13px;
+  }
+  .page-tabs-bar {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+  .page-tabs-tools {
+    order: -1;
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    padding-bottom: 8px;
+  }
 }
 
 .narrator-line {

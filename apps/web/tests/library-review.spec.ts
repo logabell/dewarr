@@ -142,7 +142,7 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav.getByRole("link", { name: /^Review/ })).toContainText("3");
   await expect(
-    page.getByRole("heading", { name: "Library review" }),
+    page.getByRole("navigation", { name: "Review filter" }),
   ).toBeVisible();
   const filters = page.getByRole("navigation", { name: "Review filter" });
   await expect(filters.getByRole("link", { name: /Everything/ })).toContainText(
