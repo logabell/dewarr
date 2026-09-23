@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import re
 from pathlib import PurePosixPath
 from typing import Any, Literal
@@ -9,6 +10,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.adapters.contracts import AdapterError, Capabilities, FailureKind
 from app.adapters.http import JsonEndpoint
+from app.domain.catalog_language import catalog_language
+
+logger = logging.getLogger(__name__)
 
 
 def external_id(value: Any) -> str:
@@ -126,6 +130,58 @@ def backend_path(value):
     return str(PurePosixPath(value))
 
 
+def _language(value):
+    """ABS keeps whatever the tags or metadata file said, such as "English (United States)"."""
+    if not isinstance(value, str):
+        return None
+    if len(value) > 20:
+        value = catalog_language(value)
+    return value if value is not None and len(value) <= 20 else None
+
+
+def unreadable_item(value: dict) -> ABSItem:
+    media = value.get("media") if isinstance(value.get("media"), dict) else {}
+    metadata = media.get("metadata") if isinstance(media.get("metadata"), dict) else {}
+    title = metadata.get("title")
+    if not isinstance(title, str) or not title.strip():
+        title = "Unread item"
+    return ABSItem(
+        id=external_id(value.get("id")),
+        library_id=external_id(value.get("libraryId")),
+        title=title.strip()[:600],
+        authors=[],
+        narrators=[],
+        invalid=True,
+        unreadable=True,
+    )
+
+
+def _parse_reason(error: AdapterError) -> str:
+    """Field names only. Values can hold private titles and file paths."""
+    cause = error.__cause__
+    if isinstance(cause, ValidationError):
+        return ", ".join(".".join(map(str, detail["loc"])) for detail in cause.errors())
+    if isinstance(cause, KeyError):
+        return f"missing {cause.args[0]!r}" if cause.args else "missing field"
+    if isinstance(cause, ValueError):
+        return str(cause)
+    return type(cause).__name__ if cause else str(error)
+
+
+def readable_item(value: Any) -> ABSItem:
+    if not isinstance(value, dict):
+        raise AdapterError(FailureKind.PARSER, "Audiobookshelf returned an invalid item list.")
+    try:
+        return parse_item(value)
+    except AdapterError as error:
+        # A malformed row stays in the census so one book cannot hold the whole library.
+        item = unreadable_item(value)
+        logger.warning(
+            "Audiobookshelf item %s could not be read (%s)", item.id, _parse_reason(error)
+        )
+        return item
+
+
 def parse_item(value: dict) -> ABSItem:
     try:
         media = value["media"]
@@ -144,7 +200,7 @@ def parse_item(value: dict) -> ABSItem:
             return ABSFile(
                 path=source["path"],
                 size=source["size"],
-                format=(file.get("ebookFormat") or source.get("ext", "")).lstrip(".").lower(),
+                format=(file.get("ebookFormat") or source.get("ext") or "").lstrip(".").lower(),
                 inode=str(file["ino"]) if file.get("ino") is not None else None,
                 modified=source.get("mtimeMs"),
                 playback_index=file.get("index")
@@ -198,7 +254,7 @@ def parse_item(value: dict) -> ABSItem:
             title=metadata["title"],
             authors=authors,
             narrators=narrators,
-            language=metadata.get("language"),
+            language=_language(metadata.get("language")),
             description=metadata.get("descriptionPlain"),
             year=int(year) if re.fullmatch(r"\d{4}", year) else None,
             abridged=metadata.get("abridged"),
@@ -211,7 +267,7 @@ def parse_item(value: dict) -> ABSItem:
             full_ebook=full_ebook,
             ebook_supplementary=ebook_supplementary,
         )
-    except (KeyError, TypeError, ValueError, ValidationError) as error:
+    except (KeyError, TypeError, ValueError, AttributeError, ValidationError) as error:
         raise AdapterError(
             FailureKind.PARSER, "Audiobookshelf item metadata or file evidence is incomplete."
         ) from error
@@ -405,7 +461,7 @@ class Audiobookshelf(JsonEndpoint):
         values = response.get("libraryItems")
         if not isinstance(values, list) or len(values) != len(ids):
             raise AdapterError(FailureKind.UNCERTAIN, "Library item details changed during sync.")
-        items = [parse_item(value) for value in values]
+        items = [readable_item(value) for value in values]
         if {item.id for item in items} != set(ids):
             raise AdapterError(
                 FailureKind.UNCERTAIN, "Library item details did not match the requested page."
@@ -413,7 +469,7 @@ class Audiobookshelf(JsonEndpoint):
         return items
 
     async def item(self, item_id: str) -> ABSItem:
-        return parse_item(
+        return readable_item(
             await self.request("GET", f"api/items/{external_id(item_id)}", params={"expanded": 1})
         )
 

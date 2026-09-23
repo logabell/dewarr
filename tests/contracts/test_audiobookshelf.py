@@ -171,6 +171,43 @@ def test_media_evidence_and_invalid_payloads():
     assert configured_url("http://localhost:13378/abs/") == "http://localhost:13378/abs"
 
 
+def test_tag_metadata_outside_the_catalog_shape_is_still_read():
+    regional = book()
+    regional["media"]["metadata"]["language"] = "English (United States)"
+    assert parse_item(regional).language is None
+    named = book()
+    named["media"]["metadata"]["language"] = "   English           spoken   "
+    assert parse_item(named).language == "english spoken"
+    unlabeled = book()
+    unlabeled["media"]["metadata"]["language"] = ["en"]
+    assert parse_item(unlabeled).language is None
+    no_extension = book(ebook="epub")
+    del no_extension["media"]["ebookFile"]["ebookFormat"]
+    no_extension["media"]["ebookFile"]["metadata"]["ext"] = None
+    assert parse_item(no_extension).ebook[0].format == ""
+
+
+async def test_one_malformed_item_does_not_hold_the_library(client, admin, database, caplog):
+    connection = await connect(client)
+    fixture = ABSFixture({"one": book("one"), "two": book("two", narrator="Casey Reed")})
+    await sync(client, connection, fixture, "readable-inventory")
+    assert (await client.get("/api/library/assets")).json()["total"] == 2
+    fixture.items["two"]["media"]["metadata"]["authors"] = [{"name": None}]
+    fixture.items["three"] = book("three")
+    fixture.items["three"]["media"]["metadata"]["title"] = ""
+    operation = await sync(client, connection, fixture, "one-malformed-item")
+    async with database() as db:
+        assert (await db.get(Operation, operation)).status == "completed"
+    assets = (await client.get("/api/library/assets")).json()["items"]
+    # The unreadable item keeps its last observation. The new one waits for a readable scan.
+    assert sorted(asset["open_url"].rsplit("/", 1)[-1] for asset in assets) == ["one", "two"]
+    assert {asset["state"] for asset in assets} == {"present"}
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Audiobookshelf item two could not be read (Invalid contributor names)" in messages
+    assert "Audiobookshelf item three could not be read (title)" in messages
+    assert not any("/private/" in message for message in messages)
+
+
 async def test_http_errors_redact_and_do_not_follow_redirects():
     calls = []
 
