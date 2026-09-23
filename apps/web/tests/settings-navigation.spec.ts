@@ -179,12 +179,10 @@ for (const role of ["admin", "member", "viewer"]) {
       await page.reload();
       await expect(
         page.getByRole("progressbar", {
-          name: "The Long Way Home download progress",
+          name: "The Long Way Home audiobook download progress",
         }),
       ).toHaveAttribute("value", "0.25");
-      await expect(
-        page.getByText("25% downloaded", { exact: true }),
-      ).toBeVisible();
+      await expect(page.getByText("25%", { exact: true })).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("queue-mobile.png") });
       await page.setViewportSize({ width: 1440, height: 1000 });
       await page.screenshot({ path: testInfo.outputPath("queue-desktop.png") });
