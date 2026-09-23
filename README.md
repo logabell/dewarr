@@ -25,6 +25,8 @@ Early release. Automatic downloads are off by default. Goodreads RSS imports can
 
 Run **Dewarr + PostgreSQL**. Dewarr handles migrations and background jobs automatically. No Git, Python, setup script, or `.env` file is required.
 
+`latest` tracks stable releases; use a `vX.Y.Z` tag to pin a release. The optional `edge` tag follows checked builds of main.
+
 Choose an option below. Set both database passwords to the same value. For access from another computer, change `PUBLIC_URL` to `http://your-server:8000`.
 
 <details open>

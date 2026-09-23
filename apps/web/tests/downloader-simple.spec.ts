@@ -2,6 +2,14 @@ import { expect, test } from "./fixtures";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+test.afterEach(() => {
+  execFileSync("uv", ["run", "python", "scripts/e2e_downloader_cleanup.py"], {
+    cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+    stdio: "pipe",
+    timeout: 10_000,
+  });
+});
+
 test("qBittorrent setup only needs an address and category", async ({
   page,
 }, testInfo) => {
