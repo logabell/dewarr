@@ -187,6 +187,11 @@ async def advance(db, row, today, now):
     work = await canonical_work(db, row.work_id)
     info = (await availability_for(db, user, [work.id])).get(work.id)
     operation = await db.get(Operation, row.operation_id) if row.operation_id else None
+    if operation and operation.kind == "lists.release-wait":
+        from app.domain.follows import release_ready
+
+        await release_ready(db, row, operation, now)
+        return
     in_flight = bool(operation and operation.status in {"queued", "running"})
     failed = bool(
         operation and operation.status == "held" and "waiting_for_release" not in operation.payload

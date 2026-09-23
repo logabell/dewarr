@@ -9,15 +9,25 @@ import { BookCard, Loading, Notice } from "../components";
 import BookCover from "../components/BookCover";
 import DetailTabs from "../components/DetailTabs";
 
+import FollowCatalog from "../components/FollowCatalog";
+
 const tabs = [
   ["books", "Books"],
   ["about", "About the author"],
 ] as const;
-export default function AuthorDetail() {
+export default function AuthorDetail({ canEdit }: { canEdit: boolean }) {
   const { externalId = "" } = useParams();
-  return <AuthorContent key={externalId} externalId={externalId} />;
+  return (
+    <AuthorContent key={externalId} externalId={externalId} canEdit={canEdit} />
+  );
 }
-function AuthorContent({ externalId }: { externalId: string }) {
+function AuthorContent({
+  externalId,
+  canEdit,
+}: {
+  externalId: string;
+  canEdit: boolean;
+}) {
   const [params] = useSearchParams();
   const tab = params.get("tab") === "about" ? "about" : "books";
   const [imageFailed, setImageFailed] = useState(false);
@@ -95,6 +105,13 @@ function AuthorContent({ externalId }: { externalId: string }) {
             <Link className="reader-action-link" to="?tab=about">
               Read biography →
             </Link>
+          )}
+          {canEdit && (
+            <FollowCatalog
+              kind="author"
+              externalId={externalId}
+              name={author.name}
+            />
           )}
           <div className="reader-outbound">
             <a

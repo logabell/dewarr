@@ -31,6 +31,20 @@ These six scopes cover discovery, list tracking, reviews, and list write-back. T
 
 Use the saved Hardcover API token, or add it in the reading-accounts step. Browse paginated **My lists** and **Lists I follow**, then select lists to track. The same scheduling, manual refresh, and tracking controls apply. Private lists are supported when the token grants `read:lists`. Existing verified-membership and opt-in writeback controls remain available within each local list and need `write:lists`. Connecting or following a list does not enable writeback or downloads.
 
+## Following authors and series
+
+Choose **Follow author** on a Hardcover author page or **Follow future additions** on a series page. **Following** manages these sources separately from reading-account lists. Catalogs refresh daily, with a manual refresh button. Dewarr reads the complete catalog twice and publishes only matching observations; errors and partial reads preserve the last successful catalog. Catalogs larger than 5,000 books need a narrower source.
+
+After the first verified catalog, preview a Browse, Manual, or Automatic policy. Choose ebook, audiobook, both, or either, plus a download profile. Future books only is the default. In Automatic mode, expand **Include current books** and select at most 25 back-catalog books per reviewed activation. The preview shows owned, missing, and excluded counts. Manual mode uses the existing reviewed list requests. No requests or downloads start merely from pressing Follow.
+
+Compilations, box sets, anthologies, and non-main-series titles are excluded by default. These classifications use Hardcover series flags, integer reading positions, titles, and tags; missing or inaccurate provider metadata can require a per-book exclusion. Optional filters restrict edition language and co-authored books. Follow policies request individual matching books even when a profile normally completes whole series, so the profile cannot bypass follow filters or expand a confirmed back catalog.
+
+New, unreleased books wait on the release calendar until their known release date before source search. Automatic follows require automation permission, approved import routes, and the installation's automatic-download setting. Requests still respect the reader's media permissions and approval rules. Multiple lists and follows retain separate reasons while compatible acquisitions share the existing reservation/download pipeline.
+
+Pause stops refresh and acquisition. Resume and filter changes require a fresh catalog and policy preview. Unfollow withdraws only that follow's reasons; local books and per-book exclusions remain, including if the reader follows the same source again. Author and series sources never write to Hardcover lists.
+
+Discovery notifications integrate with the separate notification service (NOR-30) through `app.notifications.events.record_event`. Initial baselines, failed observations, excluded books, and unchanged refreshes produce no discovery events. Without that service installed, follows and acquisition remain functional and a warning records unavailable notification delivery; discoveries made without the service are not backfilled. Migration `0063_catalog_follows` identifies these subscriptions so the notification service can suppress duplicate generic list events. When integrating the independently developed notification migration, join the `0062_notifications` and `0063_catalog_follows` migration heads before release.
+
 ## Checks and persistence
 
 New subscriptions queue their first check immediately and default to hourly checks. The existing durable worker schedules due lists every minute, with up to three minutes of stable per-list jitter. Frequency can be set between 30 minutes and 24 hours. Goodreads uses conditional requests when validators are available, a shared request budget, and delayed retries/backoff. Closing the browser does not stop the worker.

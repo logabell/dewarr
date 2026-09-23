@@ -37,7 +37,10 @@ async def followed(db, owner_id):
         .where(BookList.owner_id == owner_id, ListSubscription.provider == "hardcover")
         .order_by(BookList.created_at, BookList.id)
     ):
-        external = decrypt_secrets(subscription.encrypted_config).get("external_id")
+        config = decrypt_secrets(subscription.encrypted_config)
+        if config.get("source_kind"):
+            continue
+        external = config.get("external_id")
         if external:
             result.setdefault(external, (item, subscription))
     return result

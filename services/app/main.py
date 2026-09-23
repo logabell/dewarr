@@ -28,6 +28,7 @@ from app.api import (
     download_attempts,
     download_reviews,
     downloaders,
+    follows,
     identity,
     import_runs,
     imports,
@@ -156,6 +157,7 @@ def create_app() -> FastAPI:
     app.include_router(series.router, prefix="/api")
     app.include_router(series_requests.router, prefix="/api")
     app.include_router(lists.router, prefix="/api")
+    app.include_router(follows.router, prefix="/api")
     app.include_router(list_subscriptions.router, prefix="/api")
     app.include_router(list_writeback.router, prefix="/api")
     app.include_router(list_writeback_review.router, prefix="/api")

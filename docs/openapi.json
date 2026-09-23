@@ -5665,6 +5665,157 @@
         }
       }
     },
+    "/api/following": {
+      "get": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Following",
+        "operationId": "following_api_following_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogFollowView"
+                  },
+                  "type": "array",
+                  "title": "Response Following Api Following Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Follow",
+        "operationId": "follow_api_following_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogFollowInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogFollowView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/following/{list_id}": {
+      "patch": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Edit",
+        "operationId": "edit_api_following__list_id__patch",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogFollowView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Unfollow",
+        "operationId": "unfollow_api_following__list_id__delete",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/lists/{list_id}/subscription": {
       "get": {
         "tags": [
@@ -16283,6 +16434,13 @@
             "type": "array",
             "title": "Records"
           },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
+          },
           "total": {
             "type": "integer",
             "title": "Total"
@@ -18328,6 +18486,92 @@
           "reserved_bytes"
         ],
         "title": "CapacityView"
+      },
+      "CatalogFollowInput": {
+        "properties": {
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "series"
+            ],
+            "title": "Source Kind"
+          },
+          "external_id": {
+            "type": "integer",
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "External Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/FollowFilters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_kind",
+          "external_id",
+          "name"
+        ],
+        "title": "CatalogFollowInput"
+      },
+      "CatalogFollowView": {
+        "properties": {
+          "list_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "List Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "series"
+            ],
+            "title": "Source Kind"
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/FollowFilters"
+          },
+          "subscription": {
+            "$ref": "#/components/schemas/SubscriptionView"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_id",
+          "name",
+          "source_kind",
+          "external_id",
+          "filters",
+          "subscription",
+          "mode",
+          "active"
+        ],
+        "title": "CatalogFollowView"
       },
       "CatalogPreparationItem": {
         "properties": {
@@ -22213,6 +22457,74 @@
           "server_kind"
         ],
         "title": "FolderOption"
+      },
+      "FollowEdit": {
+        "properties": {
+          "expected_generation": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Generation"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/FollowFilters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_generation",
+          "enabled",
+          "filters"
+        ],
+        "title": "FollowEdit"
+      },
+      "FollowFilters": {
+        "properties": {
+          "compilations": {
+            "type": "boolean",
+            "title": "Compilations",
+            "default": false
+          },
+          "box_sets": {
+            "type": "boolean",
+            "title": "Box Sets",
+            "default": false
+          },
+          "anthologies": {
+            "type": "boolean",
+            "title": "Anthologies",
+            "default": false
+          },
+          "non_main_series": {
+            "type": "boolean",
+            "title": "Non Main Series",
+            "default": false
+          },
+          "coauthored": {
+            "type": "boolean",
+            "title": "Coauthored",
+            "default": true
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z]{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FollowFilters"
       },
       "FollowReadingList": {
         "properties": {
@@ -26910,6 +27222,17 @@
           "present": {
             "type": "boolean",
             "title": "Present"
+          },
+          "filter_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter Reason"
           },
           "first_seen_at": {
             "type": "string",
@@ -35539,6 +35862,21 @@
             "type": "string",
             "title": "Acquisition Mode",
             "default": "browse"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "author",
+                  "series"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
           }
         },
         "type": "object",

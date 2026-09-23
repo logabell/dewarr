@@ -26,13 +26,24 @@ from app.jobs.retry import ShelfRetry
 from app.security import decrypt_secrets, encrypt_secrets
 
 
-async def fetch_page(owner_id, generation, token, external_id, cursor):
+async def fetch_page(owner_id, generation, token, external_id, cursor, *, follow=None):
     try:
         async with asyncio.timeout(45):
             async with CatalogGateway(
                 "hardcover", f"{owner_id}:{generation}", token, cache=False
             ) as gateway:
-                return await Hardcover(gateway.request).list_page(external_id, cursor)
+                provider = Hardcover(gateway.request)
+                if follow:
+                    from app.adapters.hardcover_follows import FollowFilters, page
+
+                    return await page(
+                        provider.query,
+                        follow["source_kind"],
+                        external_id,
+                        cursor,
+                        FollowFilters.model_validate(follow.get("filters", {})),
+                    )
+                return await provider.list_page(external_id, cursor)
     except TimeoutError:
         raise AdapterError(
             FailureKind.TIMEOUT, "Hardcover list page timed out; previous memberships are preserved"
@@ -175,10 +186,17 @@ async def run(operation_id):
     delay = 0
     try:
         page = await fetch_page(
-            owner_id, generation, secret, config["external_id"], stage["cursor"] if stage else 0
+            owner_id,
+            generation,
+            secret,
+            config["external_id"],
+            stage["cursor"] if stage else 0,
+            **({"follow": config} if config.get("source_kind") else {}),
         )
         stage, complete = advance(stage, page)
-        records = books(stage) if complete else []
+        records = (
+            (stage["items"] if config.get("source_kind") else books(stage)) if complete else []
+        )
     except AdapterError as error:
         async with session_factory()() as db, db.begin():
             ctx = await context(db, operation_id)
@@ -215,6 +233,14 @@ async def run(operation_id):
         else:
             from app.api.list_subscriptions import remove_unneeded
 
+            previous = set(
+                await db.scalars(
+                    select(ListObservation.external_id).where(
+                        ListObservation.subscription_id == row.id
+                    )
+                )
+            )
+            had_baseline = row.baseline_at is not None
             added = await apply_records(db, row, owner, records)
             present = {r["external_id"] for r in records}
             removed = []
@@ -229,6 +255,12 @@ async def run(operation_id):
             await db.flush()
             for work_id in set(removed):
                 await remove_unneeded(db, owner, row, work_id)
+            if config.get("source_kind"):
+                from app.domain.follows import publish_metadata, record_discoveries
+
+                await publish_metadata(db, row, owner)
+                if had_baseline:
+                    await record_discoveries(db, row, owner, config, previous)
             now = datetime.now(UTC)
             row.encrypted_config = encrypt_secrets(
                 {
