@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
@@ -37,10 +37,24 @@ const labels: Record<string, string> = {
 };
 
 export default function OperationHistory({ actions }: { actions?: ReactNode }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
+  // In the URL so the open entry is still open after following its link and going back.
+  const expanded = params.get("operation");
+  function toggle(id: string) {
+    const next = new URLSearchParams(params);
+    if (expanded === id) next.delete("operation");
+    else next.set("operation", id);
+    navigate(
+      {
+        pathname: location.pathname,
+        search: next.toString(),
+        hash: location.hash,
+      },
+      { replace: true },
+    );
+  }
   const q = (params.get("q") || "").slice(0, 300);
   const status = (params.get("status") || "").slice(0, 40);
   const kind = (params.get("kind") || "").slice(0, 60);
@@ -185,7 +199,7 @@ export default function OperationHistory({ actions }: { actions?: ReactNode }) {
             aria-label="Reset activity view"
             onClick={() => {
               const next = new URLSearchParams(params);
-              for (const key of ["q", "status", "kind", "offset"])
+              for (const key of ["q", "status", "kind", "offset", "operation"])
                 next.delete(key);
               navigate({
                 pathname: location.pathname,
@@ -244,9 +258,7 @@ export default function OperationHistory({ actions }: { actions?: ReactNode }) {
                             aria-label={`Operation details: ${labels[item.kind] || item.kind}`}
                             aria-expanded={expanded === item.id}
                             aria-controls={`log-${item.id}`}
-                            onClick={() =>
-                              setExpanded(expanded === item.id ? null : item.id)
-                            }
+                            onClick={() => toggle(item.id)}
                           >
                             <ChevronRight size={14} aria-hidden="true" />
                           </button>
