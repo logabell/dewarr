@@ -57,6 +57,10 @@ async def database(migrated_database):
             )
         )
     queue = get_queue()
+    # A worker run would otherwise defer whichever cron jobs are due on the wall clock, and
+    # stopping it can then wait for the periodic deferrer's next tick. Tests call periodic
+    # entrypoints directly.
+    queue.periodic_registry.periodic_tasks = {}
     # Cancelling a worker waits for its running jobs with no limit by default, so a stuck
     # job would outlast a test's asyncio.wait_for and hang the whole run.
     queue.worker_defaults["shutdown_graceful_timeout"] = 30
