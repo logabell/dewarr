@@ -10,6 +10,7 @@ const Downloaders = lazy(() => import("./Downloaders"));
 const Preferences = lazy(() => import("./DownloadPreferences"));
 const Naming = lazy(() => import("./Organization"));
 const Recovery = lazy(() => import("./DownloadRecoverySettings"));
+const Quotas = lazy(() => import("./RequestQuotas"));
 const Accounts = lazy(() => import("./Accounts"));
 
 export function settingsSections(role: string, permissions: string[] = []) {
@@ -47,6 +48,7 @@ export function settingsSections(role: string, permissions: string[] = []) {
             title: "Libraries",
             content: <Libraries embedded />,
           },
+          { id: "quotas", title: "Request quotas", content: <Quotas /> },
           { id: "sources", title: "Download sources", content: <Sources /> },
           { id: "recovery", title: "Download recovery", content: <Recovery /> },
           {

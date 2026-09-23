@@ -65,11 +65,42 @@ The URL above is an example; create the database and use your own local credenti
 
 ### Release checks and test timing
 
-`Publish container` calls the reusable `Application checks` workflow and publishes only
-after every check succeeds. Main and release-tag pushes enter through the publish
-workflow, so they do not also launch a duplicate standalone check run. Pull requests,
-other branches, and manual check runs still run checks directly. A newer commit cancels
-obsolete checks on the same branch; different release tags remain independent.
+`Publish container` runs application checks and native AMD64/ARM64 container builds
+in parallel. Both final runtime images must start successfully against PostgreSQL,
+complete migrations, serve their bundled frontend, and contain the packaged catalog.
+Release channels change only after every application check, secret scan, and image
+smoke test passes. Pull requests, `dev` pushes, and manual check runs use the same
+checks and native image smoke tests without publishing. Feature branches are checked
+through their pull requests to avoid duplicate push/PR runs. A newer commit cancels
+obsolete checks on the same branch or pull request.
+
+Each successful main publish saves a `release-candidate` artifact for 90 days, binding
+the image digest to the exact source commit, repository, and package version. A matching
+version tag reuses that successful main run's candidate, promoting the same bytes without
+repeating builds or tests. If main is still running, the tag waits up to 12 minutes; if
+main failed, publication stops. Rerun the tag after repairing/rerunning main. A missing
+or expired candidate artifact takes the full checks/build path. API, identity, or manifest
+validation errors fail closed.
+
+Container channels have separate owners:
+
+- `edge` follows the current checked main commit; superseded main runs cannot update it.
+- `vX.Y.Z` identifies an immutable stable release. The Git tag must match the backend,
+  frontend, and npm lockfile versions. Prerelease versions are not supported by this workflow.
+- `latest` follows the newest stable Git release tag. Rerunning an older version does not
+  downgrade it. Main builds no longer update `latest` or a shared short-SHA tag.
+
+Only final channel updates are serialized. Promotion verifies that the registry manifest
+contains both tested architectures and that every updated tag resolves to the candidate
+digest. A version already pointing to another digest is rejected; publish a new version
+instead of replacing an existing release. Partial promotion can be retried with the same
+candidate. Internal `candidate-<run>-<attempt>` tags retain images for promotion; these are
+not installation channels.
+
+Docker uses a separate dependency layer and per-architecture build caches. Frontend
+compilation runs on the build host without emulation. Browser checks build the frontend
+once through `pretest:e2e`; downloader setup tests disable only their fake endpoints after
+each scenario so recovery scans do not wait on unreachable fixture addresses.
 
 Backend lint, schema, unit, and contract checks run separately from four integration
 shards. Each shard uses two pytest workers with independent databases. Shards partition

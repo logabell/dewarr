@@ -9,12 +9,14 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 
 from app.adapters.contracts import AdapterError, FailureKind
+from app.adapters.deluge import DelugeClient
 from app.adapters.nzbget import NzbClient
 from app.adapters.nzbget import verify_association as verify_nzb
 from app.adapters.qbittorrent import QbitClient, absolute_path, verify_association
 from app.adapters.sabnzbd import SabClient
 from app.adapters.sabnzbd import verify_association as verify_sab
 from app.adapters.torrent_descriptor import TorrentDescriptor
+from app.adapters.transmission import TransmissionClient
 from app.config import get_settings
 from app.db.models import (
     AcquisitionIntent,
@@ -796,6 +798,14 @@ async def run(identifier):
                 credentials.get("username", ""),
                 credentials.get("password", ""),
             )
+        elif kind == "transmission":
+            client = TransmissionClient(
+                endpoint, credentials.get("username", ""), credentials.get("password", "")
+            )
+        elif kind == "deluge":
+            client = DelugeClient(
+                endpoint, credentials.get("username", ""), credentials.get("password", "")
+            )
         else:
             client = QbitClient(endpoint, credentials["username"], credentials["password"])
         async with asyncio.timeout(NETWORK_SECONDS), client:
@@ -858,7 +868,10 @@ async def run(identifier):
                     category=frozen["downloader"]["category"],
                 )
             else:
-                observed = verify_association(
+                from app.adapters.torrent_rpc import verify_untagged
+
+                verify = verify_untagged if kind == "deluge" else verify_association
+                observed = verify(
                     states,
                     tag=tag,
                     hashes=hashes(selection),

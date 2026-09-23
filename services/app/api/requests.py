@@ -794,7 +794,16 @@ async def view(db, user, intent):
             TargetView(slot=slot, state="paused", message="Request access needs attention")
             for slot in spec.slots()
         ]
+    saved_targets = {
+        row.slot: row
+        for row in await db.scalars(
+            select(AcquisitionTarget).where(AcquisitionTarget.intent_id == intent.id)
+        )
+    }
     for target in targets:
+        saved = saved_targets.get(target.slot)
+        if saved and saved.quota_waiting and target.state != "satisfied":
+            target.state, target.message, target.next_action = "paused", saved.message, "none"
         await _decorate_target(db, user, intent, target)
     work_id = intent.work_id
     cover_url = None

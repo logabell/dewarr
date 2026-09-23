@@ -1069,8 +1069,18 @@ async def run(identifier):
                     and not operation.payload.get("recovery_selection_id")
                     and getattr(fresh, "source", None) == "slskd"
                 ):
+                    from app.domain.request_quotas import reserve_size
                     from app.domain.slskd_transfers import queue_folder
 
+                    quota_target = await db.scalar(
+                        select(AcquisitionTarget).where(
+                            AcquisitionTarget.intent_id == body.intent_id,
+                            AcquisitionTarget.slot == body.slot,
+                        )
+                    )
+                    await reserve_size(
+                        db, user, quota_target, rule["medium"], descriptor.content_bytes
+                    )
                     batch = str(uuid4())
                     try:
                         await queue_folder(fresh, batch)
@@ -1197,6 +1207,9 @@ async def run(identifier):
                     "completed" if isinstance(error, AlreadyAvailable) else "held",
                     str(error.detail) if isinstance(error, HTTPException) else str(error),
                 )
+                from app.domain.request_quotas import hold_selection
+
+                await hold_selection(db, operation, error)
     finally:
         if soulseek_batch and not accepted_batch:
             from app.domain.slskd_transfers import cancel_folder

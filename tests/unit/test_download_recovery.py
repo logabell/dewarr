@@ -28,7 +28,25 @@ def test_stall_clock_is_durable_and_uncertainty_resets_it():
     assert observe(health, None, policy, now + timedelta(hours=25)) == ({}, None)
 
 
-@pytest.mark.parametrize("status", ["pausedDL", "stoppedDL", "queuedDL", "checkingDL"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        "pausedDL",
+        "stoppedDL",
+        "queuedDL",
+        "checkingDL",
+        "0",
+        "1",
+        "2",
+        "3",
+        "5",
+        "Paused",
+        "Queued",
+        "Checking",
+        "Allocating",
+        "Moving",
+    ],
+)
 def test_user_paused_or_queued_transfer_is_not_stalled(status):
     now = datetime.now(UTC)
     item = state()

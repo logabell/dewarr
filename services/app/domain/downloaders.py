@@ -11,27 +11,42 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.adapters.contracts import AdapterError, FailureKind
+from app.adapters.deluge import DelugeClient
 from app.adapters.nzbget import NzbClient
 from app.adapters.qbittorrent import QbitClient, absolute_path
 from app.adapters.sabnzbd import SabClient
+from app.adapters.transmission import TransmissionClient
 from app.db.models import Integration
 from app.db.session import session_factory
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
 from app.security import decrypt_secrets
 
-DOWNLOAD_KINDS = {"qbittorrent", "sabnzbd", "nzbget"}
+TORRENT_KINDS = {"qbittorrent", "transmission", "deluge"}
+DOWNLOAD_KINDS = {*TORRENT_KINDS, "sabnzbd", "nzbget"}
 USENET_KINDS = {"sabnzbd", "nzbget"}
 
 
 def client_protocol(kind):
     if kind in USENET_KINDS:
         return "nzb"
-    if kind == "qbittorrent":
+    if kind in TORRENT_KINDS:
         return "torrent"
     if kind == "slskd":
         return "soulseek"
     return None
+
+
+def client_features(row):
+    operations = row.capabilities.get("operations", [])
+    return {
+        "attempt_tagging": row.kind == "qbittorrent" or "attempt-tagging" in operations,
+        "in_client_rename": row.kind == "qbittorrent",
+        "categories": row.kind != "deluge" or "categories" in operations,
+        "sequential_first_last": False,
+        "full_v2_hashes": row.kind == "qbittorrent",
+        "magnet_metadata": "magnet-metadata" in operations,
+    }
 
 
 SETTINGS_LOCK = "downloaders:settings"
@@ -226,6 +241,14 @@ async def test_connection(user_id, connection_id):
                 endpoint,
                 credentials.get("username", ""),
                 credentials.get("password", ""),
+            )
+        elif kind == "transmission":
+            client = TransmissionClient(
+                endpoint, credentials.get("username", ""), credentials.get("password", "")
+            )
+        elif kind == "deluge":
+            client = DelugeClient(
+                endpoint, credentials.get("username", ""), credentials.get("password", "")
             )
         else:
             client = QbitClient(endpoint, credentials["username"], credentials["password"])

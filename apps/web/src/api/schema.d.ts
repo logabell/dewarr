@@ -4010,6 +4010,75 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/request-quotas/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Mine */
+    get: operations["mine_api_request_quotas_me_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas/users": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Users */
+    get: operations["users_api_request_quotas_users_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Policies */
+    get: operations["policies_api_request_quotas_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas/{scope}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Save */
+    put: operations["save_api_request_quotas__scope__put"];
+    post?: never;
+    /** Inherit */
+    delete: operations["inherit_api_request_quotas__scope__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/sources/mam/connection": {
     parameters: {
       query?: never;
@@ -7143,7 +7212,7 @@ export interface components {
        * @default qbittorrent
        * @enum {string}
        */
-      kind: "qbittorrent" | "sabnzbd" | "nzbget";
+      kind: "qbittorrent" | "transmission" | "deluge" | "sabnzbd" | "nzbget";
       /**
        * Name
        * @default qBittorrent
@@ -7197,7 +7266,7 @@ export interface components {
        * Kind
        * @enum {string}
        */
-      kind: "qbittorrent" | "sabnzbd" | "nzbget";
+      kind: "qbittorrent" | "transmission" | "deluge" | "sabnzbd" | "nzbget";
       /** Name */
       name: string;
       /** Base Url */
@@ -7229,6 +7298,12 @@ export interface components {
        * @default false
        */
       dispatch_available: boolean;
+      /** Capabilities */
+      capabilities?: {
+        [key: string]: boolean;
+      };
+      /** Limitations */
+      limitations?: string[];
     };
     /** EditValues */
     EditValues: {
@@ -9887,19 +9962,6 @@ export interface components {
       /** Destination Revision */
       destination_revision: string;
     };
-    /** PolicyView */
-    PolicyView: {
-      /** Enabled */
-      enabled: boolean;
-      /** Generation */
-      generation: number;
-      /** Ready */
-      ready: boolean;
-      /** Can Enable */
-      can_enable: boolean;
-      /** Message */
-      message: string;
-    };
     /** PreReleaseCandidate */
     PreReleaseCandidate: {
       /** Title */
@@ -11401,6 +11463,18 @@ export interface components {
       /** Permissions */
       permissions: string[];
     };
+    /** Rules */
+    Rules: {
+      /** Windows */
+      windows?: components["schemas"]["Window"][];
+      /** Pending Cap */
+      pending_cap?: number | null;
+      /**
+       * Exempt Admin Approved
+       * @default false
+       */
+      exempt_admin_approved: boolean;
+    };
     /** RunView */
     RunView: {
       /**
@@ -12774,6 +12848,24 @@ export interface components {
       /** Size Bytes */
       size_bytes: number;
     };
+    /** Usage */
+    Usage: {
+      /** User Id */
+      user_id: string;
+      /** User Name */
+      user_name: string;
+      /** Source */
+      source: string;
+      /** Bypass */
+      bypass: boolean;
+      /** Pending */
+      pending: number;
+      /** Pending Remaining */
+      pending_remaining: number | null;
+      rules: components["schemas"]["Rules"];
+      /** Windows */
+      windows: components["schemas"]["WindowUsage"][];
+    };
     /** UserInput */
     UserInput: {
       /** Username */
@@ -12893,6 +12985,54 @@ export interface components {
       owned: boolean;
       /** Needs Review */
       needs_review: boolean;
+    };
+    /** Window */
+    Window: {
+      /**
+       * Medium
+       * @default combined
+       * @enum {string}
+       */
+      medium: "ebook" | "audio" | "combined";
+      /**
+       * Window
+       * @default week
+       * @enum {string}
+       */
+      window: "day" | "week" | "month";
+      /** Books */
+      books?: number | null;
+      /** Size Bytes */
+      size_bytes?: number | null;
+    };
+    /** WindowUsage */
+    WindowUsage: {
+      /**
+       * Medium
+       * @default combined
+       * @enum {string}
+       */
+      medium: "ebook" | "audio" | "combined";
+      /**
+       * Window
+       * @default week
+       * @enum {string}
+       */
+      window: "day" | "week" | "month";
+      /** Books */
+      books?: number | null;
+      /** Size Bytes */
+      size_bytes?: number | null;
+      /** Used Books */
+      used_books: number;
+      /** Used Bytes */
+      used_bytes: number;
+      /** Remaining Books */
+      remaining_books: number | null;
+      /** Remaining Bytes */
+      remaining_bytes: number | null;
+      /** Capacity Returns At */
+      capacity_returns_at?: string | null;
     };
     /** WorkInput */
     WorkInput: {
@@ -13095,6 +13235,19 @@ export interface components {
        */
       action: "apply_local" | "keep_remote";
     };
+    /** PolicyView */
+    app__api__automatic_imports__PolicyView: {
+      /** Enabled */
+      enabled: boolean;
+      /** Generation */
+      generation: number;
+      /** Ready */
+      ready: boolean;
+      /** Can Enable */
+      can_enable: boolean;
+      /** Message */
+      message: string;
+    };
     /** GroupingView */
     app__api__catalog_grouping__GroupingView: {
       /** Reason */
@@ -13197,6 +13350,12 @@ export interface components {
       basis: "audiobook" | "work" | "unknown";
       /** Mode */
       mode?: ("ebook" | "audio" | "both" | "either") | null;
+    };
+    /** PolicyView */
+    app__api__request_quotas__PolicyView: {
+      /** Scope */
+      scope: string;
+      rules: components["schemas"]["Rules"];
     };
     /** FollowInput */
     app__domain__community_lists__FollowInput: {
@@ -21282,7 +21441,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["PolicyView"];
+          "application/json": components["schemas"]["app__api__automatic_imports__PolicyView"];
         };
       };
       /** @description Validation Error */
@@ -21317,7 +21476,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["PolicyView"];
+          "application/json": components["schemas"]["app__api__automatic_imports__PolicyView"];
         };
       };
       /** @description Validation Error */
@@ -21502,6 +21661,142 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["CapacityView"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  mine_api_request_quotas_me_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Usage"];
+        };
+      };
+    };
+  };
+  users_api_request_quotas_users_get: {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Usage"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  policies_api_request_quotas_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["app__api__request_quotas__PolicyView"][];
+        };
+      };
+    };
+  };
+  save_api_request_quotas__scope__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        scope: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["Rules"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["app__api__request_quotas__PolicyView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  inherit_api_request_quotas__scope__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        scope: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {

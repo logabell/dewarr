@@ -58,6 +58,9 @@ async def graph_lock(db, *, exclusive=False):
 
 async def acquisition_lock(db, work_id: UUID):
     await graph_lock(db)
+    # Acquire admission before any work lock: batch requests can span many works.
+    # One transaction gate avoids quota/work lock inversions during parallel batches.
+    await transaction_lock(db, "request-quotas:admission")
     work = await canonical_work(db, work_id)
     await transaction_lock(db, "acquisition:" + str(work.id))
     return work

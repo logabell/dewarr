@@ -36,9 +36,10 @@ imported again.
 
 ## Integration notes
 
-Migration `0063_download_recovery` branches from `0061_part_combines`. When combined
-with NOR-30's independent `0062_notifications` migration, add an Alembic merge
-revision for both heads.
+Migration `0063_download_recovery` branches from `0061_part_combines` and is joined
+with `0062_request_quotas` by `0064_quotas_recovery`. When combined with NOR-30's
+independent `0062_notifications` migration, add an Alembic merge revision for that
+head and `0064_quotas_recovery`.
 
 Recovery records audit events transactionally. If NOR-30 is installed,
 `app.notifications.events.record_event` also receives deduplicated

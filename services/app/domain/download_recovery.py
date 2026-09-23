@@ -82,6 +82,18 @@ def observe(health, state, policy, now):
         "queuedDL",
         "checkingDL",
         "checkingResumeData",
+        # Transmission status codes and Deluge states use the shared observation
+        # model but retain their native stopped/queued/checking names.
+        "0",
+        "1",
+        "2",
+        "3",
+        "5",
+        "Paused",
+        "Queued",
+        "Checking",
+        "Allocating",
+        "Moving",
     }
     if paused:
         return {}, None
