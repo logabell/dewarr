@@ -38,6 +38,8 @@ test("restored connections review credentials and downloader paths while keeping
   );
   expect(backend).toBeTruthy();
   expect(downloader).toBeTruthy();
+  // A running app would react to the pause with its own navigation and abort the next goto.
+  await page.goto("about:blank");
   fixture("pause");
   try {
     await page.goto("/");

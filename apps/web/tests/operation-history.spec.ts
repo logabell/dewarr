@@ -131,7 +131,10 @@ test("operation history filters real curation records and preserves navigation s
   });
   await context.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(`/lists/${list.id}`);
+  await expect(page).toHaveURL(`/discover?view=yours&list=${list.id}`);
+  await expect(
+    page.getByRole("heading", { name: "Operation history reading list" }),
+  ).toBeVisible();
   await page.goBack();
   await expect(
     history.getByRole("searchbox", { name: "Search activity", exact: true }),

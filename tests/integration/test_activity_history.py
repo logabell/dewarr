@@ -152,7 +152,7 @@ async def test_contexts_use_current_visible_canonical_records_and_fail_closed(
         )
     data = await history(client)
     assert data["items"][0]["context"] == {
-        "href": f"/lists/{shared_id}",
+        "href": f"/discover?view=yours&list={shared_id}",
         "label": "Open list: Shared reading",
     }
     assert data["items"][2]["context"] == {

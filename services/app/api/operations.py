@@ -118,7 +118,7 @@ async def activity_contexts(db, user, rows):
         list_id, work_id = list_ids.get(row.id), work_ids.get(row.id)
         if list_id in lists:
             contexts[row.id] = ActivityContext(
-                href=f"/lists/{list_id}", label=f"Open list: {lists[list_id]}"
+                href=f"/discover?view=yours&list={list_id}", label=f"Open list: {lists[list_id]}"
             )
         elif work_id in works:
             identifier, title = works[work_id]
