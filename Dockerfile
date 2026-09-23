@@ -1,4 +1,5 @@
-FROM node:24.13.0-bookworm-slim@sha256:4660b1ca8b28d6d1906fd644abe34b2ed81d15434d26d845ef0aced307cf4b6f AS web
+# Static assets are identical for both runtime architectures; never compile them under QEMU.
+FROM --platform=$BUILDPLATFORM node:24.13.0-bookworm-slim@sha256:4660b1ca8b28d6d1906fd644abe34b2ed81d15434d26d845ef0aced307cf4b6f AS web
 WORKDIR /build
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci
@@ -9,6 +10,7 @@ FROM python:3.13.14-slim-bookworm@sha256:67a1e1f215ccda113cfc024e8639049257e88f2
 RUN pip install --no-cache-dir uv==0.11.32
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 COPY services/ ./services/
 COPY docs/notices/ ./docs/notices/
 RUN uv sync --frozen --no-dev --no-editable
