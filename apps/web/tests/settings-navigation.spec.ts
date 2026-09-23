@@ -107,14 +107,17 @@ for (const role of ["admin", "member", "viewer"]) {
     await expect(
       page.getByRole("heading", { name: "Background activity" }),
     ).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Downloading", exact: true })
+    const requestFilters = page.getByRole("navigation", {
+      name: "Request filters",
+    });
+    await requestFilters
+      .getByRole("link", { name: "Downloading", exact: true })
       .click();
     await expect(
       page.getByText("No downloads yet.", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Review", exact: true }),
+      requestFilters.getByRole("link", { name: "Review", exact: true }),
     ).toHaveCount(role === "admin" ? 1 : 0);
     await page.goto("/activity#downloads");
     await expect(page).toHaveURL(/\/requests#downloads$/);
