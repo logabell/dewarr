@@ -157,7 +157,11 @@ class RenameGuard:
             await self.db.begin()
             entry = await self.db.get(ImportEntry, self.entry_id)
             _, _, _, library = await context(self.db, entry, self.token, lock=True)
-            if await already_owned(self.db, entry.version_id, library.id):
+            run = await self.db.get(ImportRun, entry.run_id)
+            plan = await self.db.get(FrozenImportPlan, run.plan_id)
+            if await already_owned(
+                self.db, entry.version_id, library.id, inspection_id=plan.inspection_id
+            ):
                 raise AlreadyOwned("This version became available before publication")
             if observation:
                 await capacity.publication_capacity(self.db, entry, observation)

@@ -125,6 +125,16 @@ async def selection_authority(db, selection, *, wanted, configuration=None, disp
     await require_current(db, "selection", selection.id)
     user = await db.get(User, selection.owner_id)
     intent = await db.get(AcquisitionIntent, selection.intent_id)
+    from app.domain import release_blocklist
+
+    if wanted and await release_blocklist.blocked(
+        db,
+        intent.work_id,
+        selection.frozen["requirements"]["medium"],
+        selection.frozen["release"],
+        selection.frozen["descriptor"],
+    ):
+        raise HTTPException(409, "This release is blocklisted for this book and medium")
     if wanted:
         await evaluate(db, user, intent)
         await db.flush()
@@ -272,6 +282,11 @@ async def start(
             )
         )
         return existing
+    if selection.frozen.get("download_recovery"):
+        from app.domain.download_recovery import configuration, history
+
+        if len(await history(db, selection)) >= (await configuration(db)).attempt_cap:
+            raise HTTPException(409, "The replacement attempt limit has been reached")
     if not automatic and any(automatic_dispatch.consent(item) for item in members):
         raise HTTPException(409, "Automatic selections must use their authorized dispatch workflow")
     for item in members:
@@ -488,6 +503,21 @@ def transfer_stage(selection, state):
 
 
 async def finish_observation(db, attempt, selection, state):
+    from app.domain import download_recovery
+
+    policy = download_recovery.policy_for(await download_recovery.configuration(db), selection)
+    health, failure = download_recovery.observe(
+        attempt.recovery_observation, state, policy, datetime.now(UTC)
+    )
+    attempt.recovery_observation = health
+    if failure:
+        attempt.observation = state.model_dump(mode="json")
+        await download_recovery.failed(db, attempt, failure)
+        # A dead/error transfer is no longer an active Dewarr acquisition. Keep
+        # storage reservations when a stalled transfer is left running.
+        if state.state == "failed":
+            await capacity.release_slot(db, attempt)
+        return
     if not state:
         await record(
             db,
@@ -499,9 +529,19 @@ async def finish_observation(db, attempt, selection, state):
         return
     attempt.observation = state.model_dump(mode="json")
     next_state, message = transfer_stage(selection, state)
+    if (
+        next_state == "held"
+        and policy.enabled
+        and (state.completed or getattr(state, "reported_complete", False))
+    ):
+        await download_recovery.failed(db, attempt, message)
+        return
     await record(db, attempt, next_state, message, poll=next_state == "downloading")
     if state.state == "failed":
         await capacity.release_slot(db, attempt)
+    if next_state == "held" and state.state == "failed" and policy.enabled:
+        # Continue verified failure observations until the configured grace expires.
+        attempt.next_check_at = datetime.now(UTC) + timedelta(seconds=60)
     if next_state != "complete":
         return
     members = await download_memberships.for_attempt(db, attempt.id)
@@ -675,6 +715,12 @@ async def run(identifier):
     async with session_factory()() as db, db.begin():
         attempt, selection = await locked(db, identifier)
         if not attempt or attempt.state in TERMINAL:
+            return
+        from app.db.models import DownloadRecovery
+
+        if await db.scalar(
+            select(DownloadRecovery.id).where(DownloadRecovery.attempt_id == attempt.id).limit(1)
+        ):
             return
         now = datetime.now(UTC)
         if attempt.lease_until and attempt.lease_until > now:
@@ -885,6 +931,7 @@ async def run(identifier):
                 if transient
                 else "Download access, request or saved settings changed"
             )
+            attempt.recovery_observation = None
             await record(
                 db,
                 attempt,

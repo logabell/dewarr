@@ -140,7 +140,11 @@ async def require_selection(db, selection):
         db, selection.owner_id, proof.get("series_authority"), intent_id=selection.intent_id
     )
     pinned = (proof.get("series_authority") or {}).get("pack_origin")
-    if pinned and str(selection.artifact_id) != pinned["artifact_id"]:
+    if (
+        pinned
+        and not selection.frozen.get("download_recovery")
+        and str(selection.artifact_id) != pinned["artifact_id"]
+    ):
         raise HTTPException(409, "Additional pack books must use the originally selected torrent")
     operation = await db.get(Operation, UUID(proof["operation_id"]), populate_existing=True)
     if (

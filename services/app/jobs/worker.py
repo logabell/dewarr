@@ -66,6 +66,8 @@ async def recover_stalled_jobs() -> None:
                 "metadata.resolve-import",
                 "acquisition.evaluate",
                 "acquisition.download",
+                "acquisition.recover-download",
+                "acquisition.reject-download",
                 "acquisition.downloads.schedule",
                 "acquisition.reconcile",
                 "acquisition.fulfillment",

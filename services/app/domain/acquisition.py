@@ -29,12 +29,14 @@ from app.db.models import (
     AssetContains,
     AuditEvent,
     BookList,
+    DownloadRecovery,
     Integration,
     Library,
     LibraryAsset,
     ListEntry,
     Operation,
     ProviderObject,
+    ReportedDownloadAsset,
     Version,
     Work,
     WorkMetadataSource,
@@ -366,6 +368,11 @@ async def inventory_candidates(db, user, work_id):
             .join(AssetContains)
             .where(
                 AssetContains.work_id.in_(family_ids(work_id)),
+                LibraryAsset.id.not_in(
+                    select(ReportedDownloadAsset.asset_id).where(
+                        ReportedDownloadAsset.owner_id == user.id
+                    )
+                ),
                 or_(
                     owned_coverage(),
                     LibraryAsset.containment["valid"].as_boolean().is_(False),
@@ -664,6 +671,16 @@ async def evaluate(db, user, intent):
         target.satisfied_asset_id = outcome["asset_id"]
         if target.state != "wanted":
             await record_satisfaction(db, intent, target, previous_reservation_id)
+            continue
+        recovery = await db.scalar(
+            select(DownloadRecovery)
+            .join(AcquisitionSelection, AcquisitionSelection.id == DownloadRecovery.selection_id)
+            .where(AcquisitionSelection.target_id == target.id)
+            .order_by(DownloadRecovery.created_at.desc(), DownloadRecovery.id)
+            .limit(1)
+        )
+        if recovery and recovery.state in {"approval", "held"}:
+            target.state, target.message = "paused", recovery.message
             continue
         reservation = await reserve(db, user, intent, spec, slot)
         target.reservation_id = reservation.id

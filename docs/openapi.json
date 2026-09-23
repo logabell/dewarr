@@ -10992,6 +10992,23 @@
               "format": "uuid",
               "title": "Attempt Id"
             }
+          },
+          {
+            "name": "work_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Work Id"
+            }
           }
         ],
         "responses": {
@@ -11192,6 +11209,275 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RepairView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/approvals": {
+      "get": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Pending Approvals",
+        "operationId": "pending_approvals_api_acquisition_recovery_approvals_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecoveryApprovalView"
+                  },
+                  "type": "array",
+                  "title": "Response Pending Approvals Api Acquisition Recovery Approvals Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/settings": {
+      "get": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Settings",
+        "operationId": "settings_api_acquisition_recovery_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryConfiguration"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Save Settings",
+        "operationId": "save_settings_api_acquisition_recovery_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryConfiguration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/blocklist": {
+      "get": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Blocklist",
+        "operationId": "blocklist_api_acquisition_recovery_blocklist_get",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BlockView"
+                  },
+                  "title": "Response Blocklist Api Acquisition Recovery Blocklist Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/blocklist/{block_id}": {
+      "delete": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Remove Block",
+        "operationId": "remove_block_api_acquisition_recovery_blocklist__block_id__delete",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/reports": {
+      "post": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Report",
+        "operationId": "report_api_acquisition_recovery_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DownloadRecoveryView"
+                  },
+                  "type": "array",
+                  "title": "Response Report Api Acquisition Recovery Reports Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/{recovery_id}/approve": {
+      "post": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Approve",
+        "operationId": "approve_api_acquisition_recovery__recovery_id__approve_post",
+        "parameters": [
+          {
+            "name": "recovery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Recovery Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadRecoveryView"
                 }
               }
             }
@@ -16987,6 +17273,37 @@
             },
             "type": "array",
             "title": "Import Continuations"
+          },
+          "attempt_chain": {
+            "items": {
+              "$ref": "#/components/schemas/RecoveryStepView"
+            },
+            "type": "array",
+            "title": "Attempt Chain"
+          },
+          "recoveries": {
+            "items": {
+              "$ref": "#/components/schemas/RecoveryStatusView"
+            },
+            "type": "array",
+            "title": "Recoveries"
+          },
+          "can_report_problem": {
+            "type": "boolean",
+            "title": "Can Report Problem",
+            "default": false
+          },
+          "imported_asset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imported Asset Id"
           }
         },
         "type": "object",
@@ -17882,6 +18199,73 @@
           "counts"
         ],
         "title": "BatchView"
+      },
+      "BlockView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "work_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Work Id"
+          },
+          "medium": {
+            "type": "string",
+            "title": "Medium"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Actor Id"
+          },
+          "automatic": {
+            "type": "boolean",
+            "title": "Automatic"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "work_title": {
+            "type": "string",
+            "title": "Work Title"
+          },
+          "actor_name": {
+            "type": "string",
+            "title": "Actor Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "work_id",
+          "medium",
+          "source",
+          "title",
+          "reason",
+          "actor_id",
+          "automatic",
+          "created_at",
+          "work_title",
+          "actor_name"
+        ],
+        "title": "BlockView"
       },
       "BookData": {
         "properties": {
@@ -21115,6 +21499,60 @@
           "fulfillment"
         ],
         "title": "DownloadMemberView"
+      },
+      "DownloadRecoveryView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "replacement_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "selection_id",
+          "attempt_id",
+          "state",
+          "reason",
+          "message",
+          "replacement_id"
+        ],
+        "title": "DownloadRecoveryView"
       },
       "DownloaderChoice": {
         "properties": {
@@ -30415,6 +30853,95 @@
         ],
         "title": "RecoveryABSSettings"
       },
+      "RecoveryApprovalView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "replacement_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Id"
+          },
+          "work_title": {
+            "type": "string",
+            "title": "Work Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "selection_id",
+          "attempt_id",
+          "state",
+          "reason",
+          "message",
+          "replacement_id",
+          "work_title"
+        ],
+        "title": "RecoveryApprovalView"
+      },
+      "RecoveryConfiguration": {
+        "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/RecoveryPolicy"
+          },
+          "sources": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RecoveryPolicy"
+            },
+            "type": "object",
+            "maxProperties": 100,
+            "title": "Sources"
+          },
+          "attempt_cap": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Attempt Cap",
+            "default": 3
+          },
+          "approve_reports": {
+            "type": "boolean",
+            "title": "Approve Reports",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RecoveryConfiguration"
+      },
       "RecoveryPathMapping": {
         "properties": {
           "download_root": {
@@ -30437,6 +30964,49 @@
           "worker_path"
         ],
         "title": "RecoveryPathMapping"
+      },
+      "RecoveryPolicy": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "stall_hours": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 8760.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stall Hours",
+            "default": 24
+          },
+          "error_minutes": {
+            "type": "number",
+            "maximum": 10080.0,
+            "minimum": 0.0,
+            "title": "Error Minutes",
+            "default": 5
+          },
+          "cleanup": {
+            "type": "string",
+            "enum": [
+              "leave",
+              "pause",
+              "remove"
+            ],
+            "title": "Cleanup",
+            "default": "leave"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RecoveryPolicy"
       },
       "RecoveryQbitSettings": {
         "properties": {
@@ -30560,6 +31130,80 @@
           "metadata_downloader_id"
         ],
         "title": "RecoverySourceSettings"
+      },
+      "RecoveryStatusView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "cleanup": {
+            "type": "string",
+            "title": "Cleanup"
+          },
+          "can_approve": {
+            "type": "boolean",
+            "title": "Can Approve"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "reason",
+          "message",
+          "cleanup",
+          "can_approve"
+        ],
+        "title": "RecoveryStatusView"
+      },
+      "RecoveryStepView": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "release_title": {
+            "type": "string",
+            "title": "Release Title"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "selection_id",
+          "release_title",
+          "state",
+          "reason"
+        ],
+        "title": "RecoveryStepView"
       },
       "RecoveryView": {
         "properties": {
@@ -31434,6 +32078,52 @@
           "applied_at"
         ],
         "title": "RepairView"
+      },
+      "ReportInput": {
+        "properties": {
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "wrong-book",
+              "wrong-language",
+              "bad-audio",
+              "missing-chapters",
+              "wrong-narrator",
+              "drm",
+              "incomplete"
+            ],
+            "title": "Reason"
+          },
+          "require_approval": {
+            "type": "boolean",
+            "title": "Require Approval",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "selection_id",
+          "reason"
+        ],
+        "title": "ReportInput"
       },
       "RequestInput": {
         "properties": {
@@ -35631,6 +36321,11 @@
               }
             ],
             "title": "Attempt Id"
+          },
+          "can_view_download_history": {
+            "type": "boolean",
+            "title": "Can View Download History",
+            "default": false
           },
           "can_cancel": {
             "type": "boolean",

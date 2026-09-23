@@ -216,7 +216,7 @@ def verify_version_snapshot(payload, version):
         raise HTTPException(409, "Catalog edition or recording changed; start a fresh selection")
 
 
-async def context(db, user_id, body):
+async def context(db, user_id, body, *, recovery_selection_id=None):
     user = await db.get(User, user_id, populate_existing=True)
     if not user or not user.active or user.role == "viewer":
         raise HTTPException(403, "Request account access changed")
@@ -318,10 +318,16 @@ async def context(db, user_id, body):
         raise HTTPException(
             409, "Resolve this catalog version's metadata conflict before automatic selection"
         )
+    if recovery_selection_id:
+        from app.domain.download_recovery import frozen_context
+
+        _, rule, _ = await frozen_context(db, recovery_selection_id, rule, profile)
     return user, work, search, profile, rule, version
 
 
-async def begin(db, user, body, key, *, list_authority=None, series_authority=None):
+async def begin(
+    db, user, body, key, *, list_authority=None, series_authority=None, recovery_selection_id=None
+):
     if get_settings().recovery_mode:
         raise HTTPException(409, "Automatic selection is paused for recovery")
     from app.domain.list_policies import require_authority
@@ -350,7 +356,9 @@ async def begin(db, user, body, key, *, list_authority=None, series_authority=No
         ):
             raise HTTPException(409, "This command key was already used for another selection")
         return previous
-    _, work, search, profile, rule, version = await context(db, user.id, body)
+    _, work, search, profile, rule, version = await context(
+        db, user.id, body, recovery_selection_id=recovery_selection_id
+    )
     approval = (
         await automatic_dispatch.approve_route(
             db, user.id, body.destination_id, body.destination_revision
@@ -401,6 +409,11 @@ async def begin(db, user, body, key, *, list_authority=None, series_authority=No
         message="Waiting to assess source candidates",
         payload={
             "command": command,
+            **(
+                {"recovery_selection_id": str(recovery_selection_id)}
+                if recovery_selection_id
+                else {}
+            ),
             "work": deepcopy(search.payload["work"]),
             "profile": profile.model_dump(mode="json"),
             "requirements": rule,
@@ -494,10 +507,30 @@ async def candidates(db, operation, work, profile, rule, version):
             unattended=operation.payload["command"].get("download_when_ready", False),
             catalog=operation.payload.get("pack_catalog"),
         )
-        if not matches_source(
+        if not operation.payload.get("recovery_selection_id") and not matches_source(
             pinned_source(operation.payload.get("series_authority")), row, release
         ):
             problems.append("Additional pack books must use their originally selected torrent")
+        from app.domain import release_blocklist
+
+        if await release_blocklist.blocked(db, work.id, rule["medium"], release):
+            problems.append("This release is blocklisted for this book and medium")
+        root_id = operation.payload.get("recovery_selection_id")
+        if root_id:
+            from app.domain.download_recovery import frozen_context
+
+            _, original_rule, original_profile = await frozen_context(db, root_id, rule, profile)
+            problems.extend(
+                eligibility(
+                    release,
+                    operation.payload["work"],
+                    original_rule,
+                    original_profile.preferences,
+                    version=version,
+                    unattended=True,
+                    catalog=operation.payload.get("pack_catalog"),
+                )
+            )
         source = sources.get(row.source_key)
         if (
             not source
@@ -654,7 +687,12 @@ async def run(identifier):
                 operation.payload.get("series_authority"),
                 intent_id=body.intent_id,
             )
-            user, work, search, profile, rule, version = await context(db, operation.owner_id, body)
+            user, work, search, profile, rule, version = await context(
+                db,
+                operation.owner_id,
+                body,
+                recovery_selection_id=operation.payload.get("recovery_selection_id"),
+            )
             verify_version_snapshot(operation.payload, version)
             if body.download_when_ready:
                 await automatic_dispatch.approve_route(
@@ -740,7 +778,11 @@ async def run(identifier):
         owner_id = operation.owner_id
         from app.domain.pack_expansion import pinned_source
 
-        pinned = pinned_source(operation.payload.get("series_authority"))
+        pinned = (
+            None
+            if operation.payload.get("recovery_selection_id")
+            else pinned_source(operation.payload.get("series_authority"))
+        )
     try:
         if pinned:
             artifact_id = UUID(pinned["artifact_id"])
@@ -841,7 +883,12 @@ async def run(identifier):
                     operation.payload.get("series_authority"),
                     intent_id=body.intent_id,
                 )
-                user, work, search, profile, rule, version = await context(db, owner_id, body)
+                user, work, search, profile, rule, version = await context(
+                    db,
+                    owner_id,
+                    body,
+                    recovery_selection_id=operation.payload.get("recovery_selection_id"),
+                )
                 verify_version_snapshot(operation.payload, version)
                 frozen_catalog = operation.payload.get("pack_catalog")
                 if frozen_catalog is not None and frozen_catalog != await pack_coverage.catalog(
@@ -883,7 +930,11 @@ async def run(identifier):
                     )
                 from app.domain.pack_expansion import pinned_source
 
-                pinned = pinned_source(operation.payload.get("series_authority"))
+                pinned = (
+                    None
+                    if operation.payload.get("recovery_selection_id")
+                    else pinned_source(operation.payload.get("series_authority"))
+                )
                 if pinned and (
                     str(artifact.id) != pinned["artifact_id"]
                     or artifact.sha256 != pinned["artifact_sha256"]
@@ -912,6 +963,31 @@ async def run(identifier):
                     unattended=body.download_when_ready,
                     catalog=operation.payload.get("pack_catalog"),
                 )
+                from app.domain import release_blocklist
+
+                if await release_blocklist.blocked(
+                    db, work.id, rule["medium"], fresh, artifact.descriptor
+                ):
+                    reasons.append("This release or its content hash is blocklisted")
+                root_id = operation.payload.get("recovery_selection_id")
+                if root_id:
+                    from app.domain.download_recovery import frozen_context
+
+                    _, original_rule, original_profile = await frozen_context(
+                        db, root_id, rule, profile
+                    )
+                    reasons.extend(
+                        eligibility(
+                            fresh,
+                            operation.payload["work"],
+                            original_rule,
+                            original_profile.preferences,
+                            version=version,
+                            descriptor=descriptor,
+                            unattended=True,
+                            catalog=operation.payload.get("pack_catalog"),
+                        )
+                    )
                 # Existing artifact snapshots are immutable. Metadata changes require
                 # review; fluctuating counts/timestamps cannot change book identity.
                 excluded = {
@@ -990,6 +1066,7 @@ async def run(identifier):
                 if (
                     body.download_when_ready
                     and not coverage
+                    and not operation.payload.get("recovery_selection_id")
                     and getattr(fresh, "source", None) == "slskd"
                 ):
                     from app.domain.slskd_transfers import queue_folder
@@ -1038,6 +1115,7 @@ async def run(identifier):
                             or profile.effective_revision,
                         ),
                         child_key,
+                        recovery_selection_id=operation.payload.get("recovery_selection_id"),
                         automatic_evidence={
                             "operation_id": str(identifier),
                             "search_id": str(body.search_id),

@@ -25,6 +25,7 @@ import { usePagedQuery } from "../hooks/usePagedQuery";
 import { randomUUID } from "../randomUUID";
 import DownloadConstraints from "./DownloadConstraints";
 import DownloadRepair from "./DownloadRepair";
+import DownloadRecoveryDetails from "../components/DownloadRecoveryDetails";
 import { EffectivePreferences } from "./PreferenceFields";
 import {
   nextRequestOffset,
@@ -680,6 +681,12 @@ function RequestCard({
                 )}
                 {target.can_repair && target.attempt_id && (
                   <DownloadRepair attemptId={target.attempt_id} />
+                )}
+                {target.attempt_id && target.can_view_download_history && (
+                  <DownloadRecoveryDetails
+                    attemptId={target.attempt_id}
+                    workId={request.work_id}
+                  />
                 )}
               </div>
             );

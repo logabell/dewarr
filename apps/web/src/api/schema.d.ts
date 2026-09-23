@@ -3374,6 +3374,109 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/acquisition/recovery/approvals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Pending Approvals */
+    get: operations["pending_approvals_api_acquisition_recovery_approvals_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Settings */
+    get: operations["settings_api_acquisition_recovery_settings_get"];
+    /** Save Settings */
+    put: operations["save_settings_api_acquisition_recovery_settings_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/blocklist": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Blocklist */
+    get: operations["blocklist_api_acquisition_recovery_blocklist_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/blocklist/{block_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Remove Block */
+    delete: operations["remove_block_api_acquisition_recovery_blocklist__block_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/reports": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Report */
+    post: operations["report_api_acquisition_recovery_reports_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/{recovery_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve */
+    post: operations["approve_api_acquisition_recovery__recovery_id__approve_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/acquisition/reviews": {
     parameters: {
       query?: never;
@@ -5411,6 +5514,17 @@ export interface components {
       members: components["schemas"]["DownloadMemberView"][];
       /** Import Continuations */
       import_continuations?: components["schemas"]["ImportContinuationView"][];
+      /** Attempt Chain */
+      attempt_chain?: components["schemas"]["RecoveryStepView"][];
+      /** Recoveries */
+      recoveries?: components["schemas"]["RecoveryStatusView"][];
+      /**
+       * Can Report Problem
+       * @default false
+       */
+      can_report_problem: boolean;
+      /** Imported Asset Id */
+      imported_asset_id?: string | null;
     };
     /** AuthView */
     AuthView: {
@@ -5753,6 +5867,43 @@ export interface components {
       };
       /** Receipt */
       receipt?: components["schemas"]["BatchReceipt"][] | null;
+    };
+    /** BlockView */
+    BlockView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Work Id
+       * Format: uuid
+       */
+      work_id: string;
+      /** Medium */
+      medium: string;
+      /** Source */
+      source: string;
+      /** Title */
+      title: string;
+      /** Reason */
+      reason: string;
+      /**
+       * Actor Id
+       * Format: uuid
+       */
+      actor_id: string;
+      /** Automatic */
+      automatic: boolean;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Work Title */
+      work_title: string;
+      /** Actor Name */
+      actor_name: string;
     };
     /** BookData */
     BookData: {
@@ -6937,6 +7088,32 @@ export interface components {
       fulfillment: components["schemas"]["FulfillmentView"] | null;
       /** Join Operation Id */
       join_operation_id?: string | null;
+    };
+    /** DownloadRecoveryView */
+    DownloadRecoveryView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
+      /** Message */
+      message: string;
+      /** Replacement Id */
+      replacement_id: string | null;
     };
     /** DownloaderChoice */
     DownloaderChoice: {
@@ -10461,6 +10638,52 @@ export interface components {
       /** Public Url */
       public_url: string;
     };
+    /** RecoveryApprovalView */
+    RecoveryApprovalView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
+      /** Message */
+      message: string;
+      /** Replacement Id */
+      replacement_id: string | null;
+      /** Work Title */
+      work_title: string;
+    };
+    /** RecoveryConfiguration */
+    RecoveryConfiguration: {
+      defaults?: components["schemas"]["RecoveryPolicy"];
+      /** Sources */
+      sources?: {
+        [key: string]: components["schemas"]["RecoveryPolicy"];
+      };
+      /**
+       * Attempt Cap
+       * @default 3
+       */
+      attempt_cap: number;
+      /**
+       * Approve Reports
+       * @default false
+       */
+      approve_reports: boolean;
+    };
     /** RecoveryPathMapping */
     RecoveryPathMapping: {
       /** Download Root */
@@ -10469,6 +10692,30 @@ export interface components {
       source_key: string;
       /** Worker Path */
       worker_path: string;
+    };
+    /** RecoveryPolicy */
+    RecoveryPolicy: {
+      /**
+       * Enabled
+       * @default true
+       */
+      enabled: boolean;
+      /**
+       * Stall Hours
+       * @default 24
+       */
+      stall_hours: number | null;
+      /**
+       * Error Minutes
+       * @default 5
+       */
+      error_minutes: number;
+      /**
+       * Cleanup
+       * @default leave
+       * @enum {string}
+       */
+      cleanup: "leave" | "pause" | "remove";
     };
     /** RecoveryQbitSettings */
     RecoveryQbitSettings: {
@@ -10513,6 +10760,43 @@ export interface components {
       excluded_indexers: number[];
       /** Metadata Downloader Id */
       metadata_downloader_id: string | null;
+    };
+    /** RecoveryStatusView */
+    RecoveryStatusView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
+      /** Message */
+      message: string;
+      /** Cleanup */
+      cleanup: string;
+      /** Can Approve */
+      can_approve: boolean;
+    };
+    /** RecoveryStepView */
+    RecoveryStepView: {
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /** Release Title */
+      release_title: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
     };
     /** RecoveryView */
     RecoveryView: {
@@ -10817,6 +11101,33 @@ export interface components {
       created_at: string;
       /** Applied At */
       applied_at: string | null;
+    };
+    /** ReportInput */
+    ReportInput: {
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /** Asset Id */
+      asset_id?: string | null;
+      /**
+       * Reason
+       * @enum {string}
+       */
+      reason:
+        | "wrong-book"
+        | "wrong-language"
+        | "bad-audio"
+        | "missing-chapters"
+        | "wrong-narrator"
+        | "drm"
+        | "incomplete";
+      /**
+       * Require Approval
+       * @default false
+       */
+      require_approval: boolean;
     };
     /** RequestInput */
     RequestInput: {
@@ -12371,6 +12682,11 @@ export interface components {
       attempt_state?: string | null;
       /** Attempt Id */
       attempt_id?: string | null;
+      /**
+       * Can View Download History
+       * @default false
+       */
+      can_view_download_history: boolean;
       /**
        * Can Cancel
        * @default false
@@ -19694,7 +20010,9 @@ export interface operations {
   };
   detail_api_acquisition_downloads__attempt_id__get: {
     parameters: {
-      query?: never;
+      query?: {
+        work_id?: string | null;
+      };
       header?: never;
       path: {
         attempt_id: string;
@@ -19840,6 +20158,204 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RepairView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  pending_approvals_api_acquisition_recovery_approvals_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecoveryApprovalView"][];
+        };
+      };
+    };
+  };
+  settings_api_acquisition_recovery_settings_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecoveryConfiguration"];
+        };
+      };
+    };
+  };
+  save_settings_api_acquisition_recovery_settings_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RecoveryConfiguration"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecoveryConfiguration"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  blocklist_api_acquisition_recovery_blocklist_get: {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BlockView"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  remove_block_api_acquisition_recovery_blocklist__block_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        block_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  report_api_acquisition_recovery_reports_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReportInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloadRecoveryView"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_api_acquisition_recovery__recovery_id__approve_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        recovery_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloadRecoveryView"];
         };
       };
       /** @description Validation Error */

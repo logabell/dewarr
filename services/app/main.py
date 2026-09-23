@@ -173,6 +173,9 @@ def create_app() -> FastAPI:
     app.include_router(identity.router, prefix="/api")
     app.include_router(requests.router, prefix="/api")
     app.include_router(download_attempts.router, prefix="/api")
+    from app.api import download_recovery
+
+    app.include_router(download_recovery.router, prefix="/api")
     app.include_router(download_reviews.router, prefix="/api")
     app.include_router(organization.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")

@@ -139,12 +139,33 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
             continue
         contents = document.get("collection_contents", {}).get(item["group_id"], [])
         await verify_contents(db, contents)
-        if await already_owned(db, version.id, destination.library_id):
+        if await already_owned(
+            db, version.id, destination.library_id, inspection_id=plan.inspection_id
+        ):
             entry.state, entry.message = (
                 "skipped",
                 "This version is already confirmed in the destination library",
             )
             continue
+        # A confirmed, specifically reported copy keeps its receipt and files,
+        # but cannot reserve the version forever against its own replacement.
+        from app.domain.download_recovery import replacement_exclusions
+
+        excluded = await replacement_exclusions(db, plan.inspection_id)
+        if excluded:
+            for previous in await db.scalars(
+                select(ImportEntry)
+                .where(
+                    ImportEntry.asset_id.in_(excluded),
+                    ImportEntry.state == "confirmed",
+                    ImportEntry.version_id == version.id,
+                    ImportEntry.destination_id == destination.id,
+                    ImportEntry.reserved.is_(True),
+                )
+                .with_for_update()
+            ):
+                previous.reserved = False
+            await db.flush()
         reserved = await db.scalar(
             select(ImportEntry.id)
             .where(

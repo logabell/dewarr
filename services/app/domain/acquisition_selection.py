@@ -128,7 +128,7 @@ def version_evidence(version):
     )
 
 
-async def prepare(db, user, body, key, *, automatic_evidence=None):
+async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_selection_id=None):
     if get_settings().recovery_mode:
         raise HTTPException(409, "Acquisition preparation is paused for recovery")
     command = body.model_dump(mode="json")
@@ -218,6 +218,19 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
         await db.flush()
         await release_unused(db, intent.work_id)
     rule = reservation.requirements
+    if recovery_selection_id:
+        from app.domain.download_recovery import frozen_context
+
+        recovery_root, rule, original_profile = await frozen_context(
+            db, recovery_selection_id, rule, profile
+        )
+        if recovery_root.owner_id != user.id or recovery_root.target_id != target.id:
+            raise HTTPException(409, "Replacement scope does not match the original request")
+        enforce_profile(release, descriptor, original_profile)
+    from app.domain import release_blocklist
+
+    if await release_blocklist.blocked(db, work.id, rule["medium"], release, artifact.descriptor):
+        raise HTTPException(409, "This release is blocklisted for this book and medium")
     profile = profile.model_copy(
         update={"preferences": constrained_preferences(profile.preferences, rule)}
     )
@@ -289,6 +302,11 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
         command=command,
         frozen={
             "schema": 1,
+            **(
+                {"download_recovery": {"root_selection_id": str(recovery_selection_id)}}
+                if recovery_selection_id
+                else {}
+            ),
             **({"automatic_selection": automatic_evidence} if automatic_evidence else {}),
             "work_id": str(work.id),
             "origin_work_id": str(intent.work_id),
@@ -302,6 +320,11 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
             "descriptor": descriptor.model_dump(mode="json"),
             "release": release.model_dump(mode="json"),
             "profile": profile.model_dump(mode="json"),
+            **(
+                {"recovery_profile": original_profile.model_dump(mode="json")}
+                if recovery_selection_id
+                else {}
+            ),
             "downloader": {
                 "id": str(downloader.id),
                 "generation": downloader.credential_generation,
