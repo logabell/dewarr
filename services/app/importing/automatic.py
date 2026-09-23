@@ -293,10 +293,13 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             wanted.setdefault(work_id, []).append(item)
     files = {file["path"]: file for file in inspection.snapshot["files"]}
     choices, held, unresolved, skipped = [], [], [], []
+    release_rejection = False
     covered_by_existing = set()
     for group in grouping.groups:
         match = await match_group(db, inspection.snapshot, grouping_revision, group)
         reason = content_reason(group, files, selection.frozen["release"])
+        if reason and ("partial content" in reason or "incomplete" in reason):
+            release_rejection = True
         if not reason:
             unresolved.append(match)
         candidate = next(
@@ -306,6 +309,7 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
         if match.status != "matched" or not candidate:
             reason = match.message
         elif candidate.work_id not in works:
+            release_rejection = True
             reason = "Additional collection titles need an authorized acquisition scope"
         elif candidate.work_id not in wanted:
             skipped.append(
@@ -336,6 +340,7 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
                     group=group,
                 )
             except HTTPException as error:
+                release_rejection = error.status_code == 422 or release_rejection
                 reason = str(error.detail)
         if reason:
             held.append({"group_key": group.key, "reason": reason})
@@ -399,6 +404,13 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
         )
         return
     if not choices:
+        if release_rejection:
+            row.evidence = {**row.evidence, "release_rejection": True}
+            await enqueue(
+                db,
+                "acquisition.reject-download",
+                attempt_id=str(row.attempt_id),
+            )
         row.state, row.message = (
             "held",
             "No book group qualifies for automatic import; open file review",
@@ -477,6 +489,13 @@ async def run(identifier):
         except (HTTPException, ValueError) as error:
             await db.refresh(row)
             row.state = "held"
+            if isinstance(error, HTTPException) and error.status_code == 422 and row.inspection_id:
+                row.evidence = {**(row.evidence or {}), "release_rejection": True}
+                await enqueue(
+                    db,
+                    "acquisition.reject-download",
+                    attempt_id=str(row.attempt_id),
+                )
             row.message = (
                 str(error.detail)
                 if isinstance(error, HTTPException)

@@ -1,4 +1,5 @@
 import { usePagedQuery } from "../hooks/usePagedQuery";
+import DownloadRecoveryDetails from "./DownloadRecoveryDetails";
 import InfiniteScroll from "./InfiniteScroll";
 import { Link } from "react-router-dom";
 import { api, result } from "../api/client";
@@ -62,6 +63,10 @@ export default function BookDownloads({ workId }: { workId: string }) {
                       <td>
                         <strong>{item.release_title}</strong>
                         <small>{item.message}</small>
+                        <DownloadRecoveryDetails
+                          attemptId={item.id}
+                          workId={workId}
+                        />
                         {item.progress != null && item.progress < 1 && (
                           <progress
                             max={1}

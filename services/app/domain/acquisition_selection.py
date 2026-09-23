@@ -33,7 +33,14 @@ from app.domain.acquisition import (
     reserve,
     validate_request,
 )
-from app.domain.downloaders import SETTINGS_LOCK, USENET_KINDS, mapped_path, transfer_connection
+from app.domain.downloaders import (
+    SETTINGS_LOCK,
+    TORRENT_KINDS,
+    USENET_KINDS,
+    client_features,
+    mapped_path,
+    transfer_connection,
+)
 from app.domain.operations import transaction_lock
 from app.domain.release_profiles import enforce_profile
 from app.domain.request_constraints import constrained_preferences
@@ -128,7 +135,7 @@ def version_evidence(version):
     )
 
 
-async def prepare(db, user, body, key, *, automatic_evidence=None):
+async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_selection_id=None):
     if get_settings().recovery_mode:
         raise HTTPException(409, "Acquisition preparation is paused for recovery")
     command = body.model_dump(mode="json")
@@ -218,6 +225,19 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
         await db.flush()
         await release_unused(db, intent.work_id)
     rule = reservation.requirements
+    if recovery_selection_id:
+        from app.domain.download_recovery import frozen_context
+
+        recovery_root, rule, original_profile = await frozen_context(
+            db, recovery_selection_id, rule, profile
+        )
+        if recovery_root.owner_id != user.id or recovery_root.target_id != target.id:
+            raise HTTPException(409, "Replacement scope does not match the original request")
+        enforce_profile(release, descriptor, original_profile)
+    from app.domain import release_blocklist
+
+    if await release_blocklist.blocked(db, work.id, rule["medium"], release, artifact.descriptor):
+        raise HTTPException(409, "This release is blocklisted for this book and medium")
     profile = profile.model_copy(
         update={"preferences": constrained_preferences(profile.preferences, rule)}
     )
@@ -235,8 +255,8 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
         raise HTTPException(409, "Saved release type does not match its inspected file")
     if artifact.source_key != "slskd" and usenet and route.kind not in USENET_KINDS:
         raise HTTPException(422, "Choose a SABnzbd or NZBGet connection for Usenet releases")
-    if artifact.source_key != "slskd" and not usenet and route.kind != "qbittorrent":
-        raise HTTPException(422, "Choose a qBittorrent connection for torrent releases")
+    if artifact.source_key != "slskd" and not usenet and route.kind not in TORRENT_KINDS:
+        raise HTTPException(422, "Choose a torrent connection for torrent releases")
     if artifact.source_key == "slskd":
         from app.domain.slskd_connection import integration as soulseek_integration
 
@@ -269,12 +289,33 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
         ),
     )
     configuration = await destination_configuration(db, destination)
+    features = client_features(downloader)
+    if not features["full_v2_hashes"] and descriptor.model_dump().get("infohash_v2"):
+        raise HTTPException(
+            422, "This client cannot verify full v2 torrent identities; choose qBittorrent"
+        )
+    if configuration.get("seeding_rename") and not features["in_client_rename"]:
+        raise HTTPException(
+            422,
+            "Renaming the seeding copy is unavailable for this client; "
+            "use a copy or hardlink destination",
+        )
+    if downloader.config.get("category") and not features["categories"]:
+        raise HTTPException(422, "This client needs its Label plugin enabled for categories")
     if destination.medium != rule["medium"]:
         raise HTTPException(422, "Choose an import destination for the requested medium")
     if fingerprint(configuration) != body.destination_revision or not await verified_probe(
         db, destination, configuration, mapping
     ):
         raise HTTPException(409, "The download-to-library route needs a current verified probe")
+    from app.domain.request_quotas import reserve_size
+
+    await reserve_size(db, user, target, rule["medium"], descriptor.content_bytes)
+    route_mapping = mapping
+    save_path = downloader.config["save_path"]
+    if downloader.kind == "deluge":
+        save_path += "/dewarr-" + artifact.id.hex
+        mapping = mapped_path(downloader, save_path, await import_sources(db))
     # This record is the frozen handoff for a future dispatch ledger. It cannot
     # be updated to silently change the source, target rules, route or client.
     selection = AcquisitionSelection(
@@ -289,6 +330,11 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
         command=command,
         frozen={
             "schema": 1,
+            **(
+                {"download_recovery": {"root_selection_id": str(recovery_selection_id)}}
+                if recovery_selection_id
+                else {}
+            ),
             **({"automatic_selection": automatic_evidence} if automatic_evidence else {}),
             "work_id": str(work.id),
             "origin_work_id": str(intent.work_id),
@@ -302,13 +348,19 @@ async def prepare(db, user, body, key, *, automatic_evidence=None):
             "descriptor": descriptor.model_dump(mode="json"),
             "release": release.model_dump(mode="json"),
             "profile": profile.model_dump(mode="json"),
+            **(
+                {"recovery_profile": original_profile.model_dump(mode="json")}
+                if recovery_selection_id
+                else {}
+            ),
             "downloader": {
                 "id": str(downloader.id),
                 "generation": downloader.credential_generation,
-                "save_path": downloader.config["save_path"],
+                "save_path": save_path,
                 "category": downloader.config["category"],
             },
             "mapping": mapping,
+            **({"route_mapping": route_mapping} if downloader.kind == "deluge" else {}),
             "destination": configuration,
             "verification": (
                 "Automatically eligible candidate; actual content and versions require inspection"
@@ -430,8 +482,15 @@ async def configuration_current(
             == UUID(frozen["work_id"])
             and await destination_configuration(db, destination) == frozen["destination"]
             and mapped_path(downloader, downloader.config["save_path"], await import_sources(db))
+            == frozen.get("route_mapping", frozen["mapping"])
+            and mapped_path(downloader, frozen["downloader"]["save_path"], await import_sources(db))
             == frozen["mapping"]
-            and await verified_probe(db, destination, frozen["destination"], frozen["mapping"])
+            and await verified_probe(
+                db,
+                destination,
+                frozen["destination"],
+                frozen.get("route_mapping", frozen["mapping"]),
+            )
         )
     except HTTPException:
         return False

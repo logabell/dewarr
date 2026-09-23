@@ -104,10 +104,11 @@ async def proposal(db, user, attempt, selection):
             409, "The downloader endpoint changed; this repair cannot identify a different server"
         )
     if (
-        downloader.config.get("save_path") != frozen["downloader"]["save_path"]
+        downloader.config.get("save_path")
+        != frozen.get("route_mapping", frozen["mapping"])["download_path"]
         or downloader.config.get("category") != frozen["downloader"]["category"]
         or mapped_path(downloader, downloader.config["save_path"], await import_sources(db))
-        != frozen["mapping"]
+        != frozen.get("route_mapping", frozen["mapping"])
     ):
         raise HTTPException(
             409,
@@ -141,7 +142,7 @@ async def proposal(db, user, attempt, selection):
     if previous["source_generation"] != desired["source_generation"]:
         changes.append("Use the current source connection for this existing acquisition")
     if previous["downloader"] != desired["downloader"]:
-        changes.append("Use the updated qBittorrent connection to observe the same transfer")
+        changes.append("Use the updated download client connection to observe the same transfer")
     if previous["destination"] != desired["destination"]:
         changes.append("Use the updated Audiobookshelf connection and reverified destination")
     if not changes:

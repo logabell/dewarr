@@ -14,7 +14,7 @@ from app.db.models import AcquisitionSelection, ImportDestination, Integration, 
 from app.domain import acquisition_selection as selections
 from app.domain import automatic_dispatch, manual_pack
 from app.domain.acquisition_selection import SelectionInput
-from app.domain.downloaders import USENET_KINDS, mapped_path, mappings_current
+from app.domain.downloaders import TORRENT_KINDS, USENET_KINDS, mapped_path, mappings_current
 from app.domain.visibility import visible_library
 from app.importing.destinations import destination_configuration
 from app.importing.naming import fingerprint
@@ -169,7 +169,7 @@ async def options(user: Member, db: Database):
     for row in await db.scalars(
         select(Integration)
         .where(
-            Integration.kind.in_(["qbittorrent", "slskd", *USENET_KINDS]),
+            Integration.kind.in_([*TORRENT_KINDS, "slskd", *USENET_KINDS]),
             Integration.owner_id.is_(None),
             Integration.enabled.is_(True),
         )

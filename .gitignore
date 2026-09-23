@@ -34,12 +34,17 @@ backups/
 !/docs/READING-ACCOUNTS.md
 !/docs/RECOVERY.md
 !/docs/NOTIFICATIONS.md
+!/docs/DOWNLOAD-RECOVERY.md
+!/docs/REQUEST-QUOTAS.md
+!/docs/DOWNLOAD-CLIENTS.md
 
 # Publish only reusable build, catalog, and test tools.
 /scripts/*.py
 !/scripts/init_env.py
 !/scripts/export_openapi.py
 !/scripts/pytest_shard.py
+!/scripts/release.py
+!/scripts/e2e_downloader_cleanup.py
 !/scripts/dependency_notices.py
 !/scripts/build_discovery_catalog.py
 !/scripts/e2e_abs.py

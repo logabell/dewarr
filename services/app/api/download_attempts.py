@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 
@@ -18,6 +18,7 @@ from app.db.models import (
     DownloadFulfillment,
     DownloadInspection,
     DownloadMembership,
+    DownloadRecovery,
     ImportEntry,
 )
 from app.domain import download_attempts as downloads
@@ -82,6 +83,23 @@ class RepairView(BaseModel):
     applied_at: datetime | None
 
 
+class RecoveryStepView(BaseModel):
+    attempt_id: UUID
+    selection_id: UUID
+    release_title: str
+    state: str
+    reason: str
+
+
+class RecoveryStatusView(BaseModel):
+    id: UUID
+    state: str
+    reason: str
+    message: str
+    cleanup: str
+    can_approve: bool
+
+
 class AttemptView(BaseModel):
     id: UUID
     created_at: datetime
@@ -102,6 +120,10 @@ class AttemptView(BaseModel):
     can_repair: bool
     members: list[DownloadMemberView]
     import_continuations: list[ImportContinuationView] = Field(default_factory=list)
+    attempt_chain: list[RecoveryStepView] = Field(default_factory=list)
+    recoveries: list[RecoveryStatusView] = Field(default_factory=list)
+    can_report_problem: bool = False
+    imported_asset_id: UUID | None = None
 
 
 class AttemptPage(BaseModel):
@@ -205,10 +227,43 @@ async def view(db, user, row, selection):
             continuations.append(
                 ImportContinuationView(id=item.id, state=state, message=detail, selection_ids=ids)
             )
+    from app.domain.download_recovery import history
+
+    recoveries = list(
+        await db.scalars(
+            select(DownloadRecovery).where(
+                DownloadRecovery.attempt_id == row.id,
+                DownloadRecovery.selection_id.in_(
+                    select(AcquisitionSelection.id).where(AcquisitionSelection.owner_id == user.id)
+                ),
+            )
+        )
+    )
+    imported = await db.scalar(
+        select(DownloadFulfillment).where(
+            DownloadFulfillment.attempt_id == row.id,
+            DownloadFulfillment.target_id == selection.target_id,
+            DownloadFulfillment.import_entry_id.is_not(None),
+        )
+    )
     return AttemptView(
+        attempt_chain=await history(db, selection),
+        recoveries=[
+            RecoveryStatusView(
+                id=r.id,
+                state=r.state,
+                reason=r.reason,
+                message=r.message,
+                cleanup=r.evidence.get("cleanup_state", "pending"),
+                can_approve=user.role == "admin" and r.state == "approval",
+            )
+            for r in recoveries
+        ],
+        can_report_problem=user.role != "viewer" and row.state == "complete" and not recoveries,
+        imported_asset_id=imported.asset_id if imported else None,
         id=row.id,
         created_at=row.created_at,
-        selection_id=row.selection_id,
+        selection_id=selection.id,
         operation_id=row.operation_id,
         state=row.state,
         work_title=selection.frozen["work_title"],
@@ -217,7 +272,8 @@ async def view(db, user, row, selection):
         message=message,
         external_may_exist=row.external_may_exist,
         can_cancel=not row.external_may_exist and row.state != "cancelled",
-        can_recheck=row.state != "cancelled"
+        can_recheck=not recoveries
+        and row.state != "cancelled"
         and not repairing
         and (not row.lease_until or row.lease_until <= datetime.now(UTC))
         and (not row.next_check_at or row.next_check_at <= datetime.now(UTC)),
@@ -329,8 +385,27 @@ async def listing(
             )
         )
     }
+    items = []
+    for row in rows:
+        selection = selections[row.selection_id]
+        if work_id or selection_id:
+            for member in await download_memberships.for_attempt(db, row.id):
+                if member.owner_id != user.id:
+                    continue
+                if selection_id and member.id != selection_id:
+                    continue
+                if work_id and not await db.scalar(
+                    select(AcquisitionIntent.id).where(
+                        AcquisitionIntent.id == member.intent_id,
+                        AcquisitionIntent.work_id.in_(family_ids(work_id)),
+                    )
+                ):
+                    continue
+                selection = member
+                break
+        items.append(await view(db, user, row, selection))
     return AttemptPage(
-        items=[await view(db, user, row, selections[row.selection_id]) for row in rows],
+        items=items,
         offset=offset,
         limit=limit,
         total=await db.scalar(select(func.count()).select_from(DownloadAttempt).where(*where)),
@@ -338,9 +413,23 @@ async def listing(
 
 
 @router.get("/{attempt_id}", response_model=AttemptView)
-async def detail(attempt_id: UUID, user: CurrentUser, db: Database):
+async def detail(attempt_id: UUID, user: CurrentUser, db: Database, work_id: UUID | None = None):
     row = await downloads.owned_attempt(db, user, attempt_id)
-    return await view(db, user, row, await db.get(AcquisitionSelection, row.selection_id))
+    selection = await db.get(AcquisitionSelection, row.selection_id)
+    if work_id:
+        selection = await db.scalar(
+            select(AcquisitionSelection)
+            .join(DownloadMembership)
+            .join(AcquisitionIntent, AcquisitionIntent.id == AcquisitionSelection.intent_id)
+            .where(
+                DownloadMembership.attempt_id == row.id,
+                AcquisitionSelection.owner_id == user.id,
+                AcquisitionIntent.work_id.in_(family_ids(work_id)),
+            )
+        )
+        if not selection:
+            raise HTTPException(404, "Book is not a member of this download")
+    return await view(db, user, row, selection)
 
 
 @router.delete("/{attempt_id}", response_model=AttemptView)

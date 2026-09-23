@@ -87,9 +87,9 @@ Event types: `request.pending`, `request.approved`, `request.declined`,
 `download.started`, `import.available`, `operation.held`, `operation.failed`,
 `connection.problem`, `discovery.list`, `discovery.author`, `discovery.series`,
 `discovery.gap`, `download.stalled`, `download.retried`, `download.gave_up`.
-Channel tests use `test`. Author/series and recovery producers are extension points
-implemented by their respective features; configuring their events does not
-create follows or recovery policies.
+Channel tests use `test`. Download recovery emits stalled, retried, and gave-up events through this interface.
+Author/series producers are extension points implemented by their feature;
+configuring their events does not create follows or recovery policies.
 
 ## Producer interface
 

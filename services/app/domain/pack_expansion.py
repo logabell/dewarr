@@ -39,7 +39,10 @@ async def removed(db, saved):
         or operation.payload.get("selection_id") != saved["selection_id"]
         or not selection
         # Finishing the root does not withdraw consent for its covered siblings.
-        or selection.state not in {"prepared", "committed", "fulfilled"}
+        or (
+            selection.state not in {"prepared", "committed", "fulfilled"}
+            and not await failed_pack_member(db, selection)
+        )
         or str(selection.intent_id) != saved["root_intent_id"]
         or str(selection.artifact_id) != saved["artifact_id"]
         or selection.frozen["artifact_sha256"] != saved["artifact_sha256"]
@@ -95,6 +98,7 @@ async def create(db, user, operation, selection, coverage):
         not operation.payload["command"].get("download_when_ready")
         or profile.preferences.effective_series_scope != "prefer_packs"
         or operation.payload.get("series_authority")
+        or operation.payload.get("recovery_selection_id")
     ):
         return
     planned = operation.payload.get("pack_scope") or {
@@ -230,3 +234,13 @@ async def create(db, user, operation, selection, coverage):
             "work_ids": [r["work_id"] for r in records],
         },
     }
+
+
+async def failed_pack_member(db, selection):
+    from app.db.models import DownloadRecovery
+
+    return bool(
+        await db.scalar(
+            select(DownloadRecovery.id).where(DownloadRecovery.selection_id == selection.id)
+        )
+    )

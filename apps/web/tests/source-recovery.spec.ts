@@ -55,6 +55,8 @@ test("restored sources save explicit settings and verify rotating sessions witho
     );
     expect(configured.status()).toBe(200);
   }
+  // Leave the app before its restored-state redirect can race the next login navigation.
+  await page.goto("about:blank");
   fixture("pause");
   try {
     await login();

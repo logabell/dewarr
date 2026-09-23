@@ -3477,6 +3477,109 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/acquisition/recovery/approvals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Pending Approvals */
+    get: operations["pending_approvals_api_acquisition_recovery_approvals_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Settings */
+    get: operations["settings_api_acquisition_recovery_settings_get"];
+    /** Save Settings */
+    put: operations["save_settings_api_acquisition_recovery_settings_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/blocklist": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Blocklist */
+    get: operations["blocklist_api_acquisition_recovery_blocklist_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/blocklist/{block_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Remove Block */
+    delete: operations["remove_block_api_acquisition_recovery_blocklist__block_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/reports": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Report */
+    post: operations["report_api_acquisition_recovery_reports_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/acquisition/recovery/{recovery_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve */
+    post: operations["approve_api_acquisition_recovery__recovery_id__approve_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/acquisition/reviews": {
     parameters: {
       query?: never;
@@ -4005,6 +4108,75 @@ export interface paths {
     put: operations["save_api_acquisition_capacity_put"];
     post?: never;
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Mine */
+    get: operations["mine_api_request_quotas_me_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas/users": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Users */
+    get: operations["users_api_request_quotas_users_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Policies */
+    get: operations["policies_api_request_quotas_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/request-quotas/{scope}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Save */
+    put: operations["save_api_request_quotas__scope__put"];
+    post?: never;
+    /** Inherit */
+    delete: operations["inherit_api_request_quotas__scope__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -5514,6 +5686,17 @@ export interface components {
       members: components["schemas"]["DownloadMemberView"][];
       /** Import Continuations */
       import_continuations?: components["schemas"]["ImportContinuationView"][];
+      /** Attempt Chain */
+      attempt_chain?: components["schemas"]["RecoveryStepView"][];
+      /** Recoveries */
+      recoveries?: components["schemas"]["RecoveryStatusView"][];
+      /**
+       * Can Report Problem
+       * @default false
+       */
+      can_report_problem: boolean;
+      /** Imported Asset Id */
+      imported_asset_id?: string | null;
     };
     /** AuthView */
     AuthView: {
@@ -5856,6 +6039,43 @@ export interface components {
       };
       /** Receipt */
       receipt?: components["schemas"]["BatchReceipt"][] | null;
+    };
+    /** BlockView */
+    BlockView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Work Id
+       * Format: uuid
+       */
+      work_id: string;
+      /** Medium */
+      medium: string;
+      /** Source */
+      source: string;
+      /** Title */
+      title: string;
+      /** Reason */
+      reason: string;
+      /**
+       * Actor Id
+       * Format: uuid
+       */
+      actor_id: string;
+      /** Automatic */
+      automatic: boolean;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Work Title */
+      work_title: string;
+      /** Actor Name */
+      actor_name: string;
     };
     /** BookData */
     BookData: {
@@ -7056,6 +7276,32 @@ export interface components {
       /** Join Operation Id */
       join_operation_id?: string | null;
     };
+    /** DownloadRecoveryView */
+    DownloadRecoveryView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
+      /** Message */
+      message: string;
+      /** Replacement Id */
+      replacement_id: string | null;
+    };
     /** DownloaderChoice */
     DownloaderChoice: {
       /**
@@ -7084,7 +7330,7 @@ export interface components {
        * @default qbittorrent
        * @enum {string}
        */
-      kind: "qbittorrent" | "sabnzbd" | "nzbget";
+      kind: "qbittorrent" | "transmission" | "deluge" | "sabnzbd" | "nzbget";
       /**
        * Name
        * @default qBittorrent
@@ -7138,7 +7384,7 @@ export interface components {
        * Kind
        * @enum {string}
        */
-      kind: "qbittorrent" | "sabnzbd" | "nzbget";
+      kind: "qbittorrent" | "transmission" | "deluge" | "sabnzbd" | "nzbget";
       /** Name */
       name: string;
       /** Base Url */
@@ -7170,6 +7416,12 @@ export interface components {
        * @default false
        */
       dispatch_available: boolean;
+      /** Capabilities */
+      capabilities?: {
+        [key: string]: boolean;
+      };
+      /** Limitations */
+      limitations?: string[];
     };
     /** EditValues */
     EditValues: {
@@ -9929,19 +10181,6 @@ export interface components {
       /** Destination Revision */
       destination_revision: string;
     };
-    /** PolicyView */
-    PolicyView: {
-      /** Enabled */
-      enabled: boolean;
-      /** Generation */
-      generation: number;
-      /** Ready */
-      ready: boolean;
-      /** Can Enable */
-      can_enable: boolean;
-      /** Message */
-      message: string;
-    };
     /** PreReleaseCandidate */
     PreReleaseCandidate: {
       /** Title */
@@ -10680,6 +10919,52 @@ export interface components {
       /** Public Url */
       public_url: string;
     };
+    /** RecoveryApprovalView */
+    RecoveryApprovalView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
+      /** Message */
+      message: string;
+      /** Replacement Id */
+      replacement_id: string | null;
+      /** Work Title */
+      work_title: string;
+    };
+    /** RecoveryConfiguration */
+    RecoveryConfiguration: {
+      defaults?: components["schemas"]["RecoveryPolicy"];
+      /** Sources */
+      sources?: {
+        [key: string]: components["schemas"]["RecoveryPolicy"];
+      };
+      /**
+       * Attempt Cap
+       * @default 3
+       */
+      attempt_cap: number;
+      /**
+       * Approve Reports
+       * @default false
+       */
+      approve_reports: boolean;
+    };
     /** RecoveryPathMapping */
     RecoveryPathMapping: {
       /** Download Root */
@@ -10688,6 +10973,30 @@ export interface components {
       source_key: string;
       /** Worker Path */
       worker_path: string;
+    };
+    /** RecoveryPolicy */
+    RecoveryPolicy: {
+      /**
+       * Enabled
+       * @default true
+       */
+      enabled: boolean;
+      /**
+       * Stall Hours
+       * @default 24
+       */
+      stall_hours: number | null;
+      /**
+       * Error Minutes
+       * @default 5
+       */
+      error_minutes: number;
+      /**
+       * Cleanup
+       * @default leave
+       * @enum {string}
+       */
+      cleanup: "leave" | "pause" | "remove";
     };
     /** RecoveryQbitSettings */
     RecoveryQbitSettings: {
@@ -10732,6 +11041,43 @@ export interface components {
       excluded_indexers: number[];
       /** Metadata Downloader Id */
       metadata_downloader_id: string | null;
+    };
+    /** RecoveryStatusView */
+    RecoveryStatusView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
+      /** Message */
+      message: string;
+      /** Cleanup */
+      cleanup: string;
+      /** Can Approve */
+      can_approve: boolean;
+    };
+    /** RecoveryStepView */
+    RecoveryStepView: {
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /** Release Title */
+      release_title: string;
+      /** State */
+      state: string;
+      /** Reason */
+      reason: string;
     };
     /** RecoveryView */
     RecoveryView: {
@@ -11037,6 +11383,33 @@ export interface components {
       /** Applied At */
       applied_at: string | null;
     };
+    /** ReportInput */
+    ReportInput: {
+      /**
+       * Selection Id
+       * Format: uuid
+       */
+      selection_id: string;
+      /** Asset Id */
+      asset_id?: string | null;
+      /**
+       * Reason
+       * @enum {string}
+       */
+      reason:
+        | "wrong-book"
+        | "wrong-language"
+        | "bad-audio"
+        | "missing-chapters"
+        | "wrong-narrator"
+        | "drm"
+        | "incomplete";
+      /**
+       * Require Approval
+       * @default false
+       */
+      require_approval: boolean;
+    };
     /** RequestInput */
     RequestInput: {
       /**
@@ -11308,6 +11681,18 @@ export interface components {
       description: string;
       /** Permissions */
       permissions: string[];
+    };
+    /** Rules */
+    Rules: {
+      /** Windows */
+      windows?: components["schemas"]["Window"][];
+      /** Pending Cap */
+      pending_cap?: number | null;
+      /**
+       * Exempt Admin Approved
+       * @default false
+       */
+      exempt_admin_approved: boolean;
     };
     /** RunView */
     RunView: {
@@ -12591,6 +12976,11 @@ export interface components {
       /** Attempt Id */
       attempt_id?: string | null;
       /**
+       * Can View Download History
+       * @default false
+       */
+      can_view_download_history: boolean;
+      /**
        * Can Cancel
        * @default false
        */
@@ -12676,6 +13066,24 @@ export interface components {
       path: string;
       /** Size Bytes */
       size_bytes: number;
+    };
+    /** Usage */
+    Usage: {
+      /** User Id */
+      user_id: string;
+      /** User Name */
+      user_name: string;
+      /** Source */
+      source: string;
+      /** Bypass */
+      bypass: boolean;
+      /** Pending */
+      pending: number;
+      /** Pending Remaining */
+      pending_remaining: number | null;
+      rules: components["schemas"]["Rules"];
+      /** Windows */
+      windows: components["schemas"]["WindowUsage"][];
     };
     /** UserInput */
     UserInput: {
@@ -12796,6 +13204,54 @@ export interface components {
       owned: boolean;
       /** Needs Review */
       needs_review: boolean;
+    };
+    /** Window */
+    Window: {
+      /**
+       * Medium
+       * @default combined
+       * @enum {string}
+       */
+      medium: "ebook" | "audio" | "combined";
+      /**
+       * Window
+       * @default week
+       * @enum {string}
+       */
+      window: "day" | "week" | "month";
+      /** Books */
+      books?: number | null;
+      /** Size Bytes */
+      size_bytes?: number | null;
+    };
+    /** WindowUsage */
+    WindowUsage: {
+      /**
+       * Medium
+       * @default combined
+       * @enum {string}
+       */
+      medium: "ebook" | "audio" | "combined";
+      /**
+       * Window
+       * @default week
+       * @enum {string}
+       */
+      window: "day" | "week" | "month";
+      /** Books */
+      books?: number | null;
+      /** Size Bytes */
+      size_bytes?: number | null;
+      /** Used Books */
+      used_books: number;
+      /** Used Bytes */
+      used_bytes: number;
+      /** Remaining Books */
+      remaining_books: number | null;
+      /** Remaining Bytes */
+      remaining_bytes: number | null;
+      /** Capacity Returns At */
+      capacity_returns_at?: string | null;
     };
     /** WorkInput */
     WorkInput: {
@@ -12998,6 +13454,19 @@ export interface components {
        */
       action: "apply_local" | "keep_remote";
     };
+    /** PolicyView */
+    app__api__automatic_imports__PolicyView: {
+      /** Enabled */
+      enabled: boolean;
+      /** Generation */
+      generation: number;
+      /** Ready */
+      ready: boolean;
+      /** Can Enable */
+      can_enable: boolean;
+      /** Message */
+      message: string;
+    };
     /** GroupingView */
     app__api__catalog_grouping__GroupingView: {
       /** Reason */
@@ -13100,6 +13569,12 @@ export interface components {
       basis: "audiobook" | "work" | "unknown";
       /** Mode */
       mode?: ("ebook" | "audio" | "both" | "either") | null;
+    };
+    /** PolicyView */
+    app__api__request_quotas__PolicyView: {
+      /** Scope */
+      scope: string;
+      rules: components["schemas"]["Rules"];
     };
     /** FollowInput */
     app__domain__community_lists__FollowInput: {
@@ -20125,7 +20600,9 @@ export interface operations {
   };
   detail_api_acquisition_downloads__attempt_id__get: {
     parameters: {
-      query?: never;
+      query?: {
+        work_id?: string | null;
+      };
       header?: never;
       path: {
         attempt_id: string;
@@ -20271,6 +20748,204 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RepairView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  pending_approvals_api_acquisition_recovery_approvals_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecoveryApprovalView"][];
+        };
+      };
+    };
+  };
+  settings_api_acquisition_recovery_settings_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecoveryConfiguration"];
+        };
+      };
+    };
+  };
+  save_settings_api_acquisition_recovery_settings_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RecoveryConfiguration"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecoveryConfiguration"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  blocklist_api_acquisition_recovery_blocklist_get: {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BlockView"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  remove_block_api_acquisition_recovery_blocklist__block_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        block_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  report_api_acquisition_recovery_reports_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReportInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloadRecoveryView"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_api_acquisition_recovery__recovery_id__approve_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        recovery_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloadRecoveryView"];
         };
       };
       /** @description Validation Error */
@@ -21197,7 +21872,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["PolicyView"];
+          "application/json": components["schemas"]["app__api__automatic_imports__PolicyView"];
         };
       };
       /** @description Validation Error */
@@ -21232,7 +21907,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["PolicyView"];
+          "application/json": components["schemas"]["app__api__automatic_imports__PolicyView"];
         };
       };
       /** @description Validation Error */
@@ -21417,6 +22092,142 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["CapacityView"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  mine_api_request_quotas_me_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Usage"];
+        };
+      };
+    };
+  };
+  users_api_request_quotas_users_get: {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Usage"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  policies_api_request_quotas_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["app__api__request_quotas__PolicyView"][];
+        };
+      };
+    };
+  };
+  save_api_request_quotas__scope__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        scope: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["Rules"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["app__api__request_quotas__PolicyView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  inherit_api_request_quotas__scope__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        scope: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
