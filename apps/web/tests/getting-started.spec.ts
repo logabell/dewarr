@@ -78,7 +78,7 @@ test("onboarding defers, resumes and completes once; settings show one focused s
   await expect(
     page.getByRole("heading", { name: "Libraries", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+  await page.getByRole("button", { name: "Finish later", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
   for (const label of [
@@ -213,7 +213,7 @@ test("onboarding defers, resumes and completes once; settings show one focused s
   await expect(
     page.getByRole("navigation", { name: "Setup steps" }).getByRole("button"),
   ).toHaveCount(2);
-  await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+  await page.getByRole("button", { name: "Finish later", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page.locator(".settings-section")).toHaveCount(1);
   await expect(

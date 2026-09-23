@@ -19,7 +19,7 @@ test("first account, saved books, library connection and worker", async ({
     .getByLabel("Password", { exact: true })
     .fill("browser test password");
   await page.getByRole("button", { name: "Create administrator" }).click();
-  await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+  await page.getByRole("button", { name: "Finish later", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Sign out", exact: true }),
   ).toBeVisible();

@@ -19,7 +19,9 @@ test("connect Goodreads in onboarding, choose shelves, pause and refresh from se
   if (await page.getByLabel("Your name").isVisible()) {
     await page.getByLabel("Your name").fill("Test Reader");
     await page.getByRole("button", { name: "Create administrator" }).click();
-    await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Finish later", exact: true })
+      .click();
   } else {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
   }

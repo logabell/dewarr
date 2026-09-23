@@ -21,7 +21,9 @@ test("Discover opens a full book page with safe reviews and explicit actions", a
       .getByLabel("Password", { exact: true })
       .fill("browser test password");
     await page.getByRole("button", { name: "Create administrator" }).click();
-    await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Finish later", exact: true })
+      .click();
     await page.getByRole("link", { name: "My Library", exact: true }).click();
   } else {
     await page.getByLabel("Username", { exact: true }).fill("reader");
