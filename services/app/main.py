@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Dewarr", version="0.2.1", lifespan=lifespan)
+    app = FastAPI(title="Dewarr", version="0.2.2", lifespan=lifespan)
     app.include_router(application_release.router, prefix="/api")
 
     @app.exception_handler(RequestValidationError)
