@@ -1,5 +1,6 @@
 import { lazy } from "react";
 
+const Notifications = lazy(() => import("./Notifications"));
 const Logs = lazy(() => import("./Activity"));
 const Display = lazy(() => import("./DisplaySettings"));
 const ReadingAccounts = lazy(() => import("./ReadingAccounts"));
@@ -75,6 +76,11 @@ export function settingsSections(role: string, permissions: string[] = []) {
           },
         ]
       : []),
+    {
+      id: "notifications",
+      title: "Notifications",
+      content: <Notifications admin={admin} />,
+    },
     { id: "logs", title: "Logs", content: <Logs admin={admin} /> },
   ];
 }

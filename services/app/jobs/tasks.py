@@ -482,3 +482,11 @@ async def schedule_mam_account(timestamp: int) -> None:
     from app.domain.account_automation import run
 
     await run()
+
+
+@tasks.periodic(cron="* * * * *")
+@tasks.task(name="notifications.dispatch", queue="notifications", lock="notifications.dispatch")
+async def dispatch_notifications(timestamp: int = 0) -> None:
+    from app.notifications.delivery import tick
+
+    await tick()

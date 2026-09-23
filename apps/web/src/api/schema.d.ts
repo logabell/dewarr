@@ -38,6 +38,109 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/notifications": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Settings */
+    get: operations["settings_api_notifications_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications/channels": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create */
+    post: operations["create_api_notifications_channels_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications/channels/{channel_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Save */
+    put: operations["save_api_notifications_channels__channel_id__put"];
+    post?: never;
+    /** Remove */
+    delete: operations["remove_api_notifications_channels__channel_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications/policy": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Policy */
+    put: operations["policy_api_notifications_policy_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications/channels/{channel_id}/deliveries": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** History */
+    get: operations["history_api_notifications_channels__channel_id__deliveries_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications/channels/{channel_id}/test": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Test */
+    post: operations["test_api_notifications_channels__channel_id__test_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/health/live": {
     parameters: {
       query?: never;
@@ -5970,6 +6073,21 @@ export interface components {
       /** Can Undo */
       can_undo: boolean;
     };
+    /** ChannelSecrets */
+    ChannelSecrets: {
+      /**
+       * Url
+       * @default
+       */
+      url: string;
+      /** Urls */
+      urls?: string[];
+      /**
+       * Token
+       * @default
+       */
+      token: string;
+    };
     /** ChoicePage */
     ChoicePage: {
       /** Items */
@@ -9039,6 +9157,107 @@ export interface components {
        * @default {title}
        */
       ebook_filename: string;
+    };
+    /** NotificationChannelInput */
+    NotificationChannelInput: {
+      /** Name */
+      name: string;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "apprise" | "discord" | "ntfy" | "webhook";
+      /**
+       * Installation
+       * @default false
+       */
+      installation: boolean;
+      /** Events */
+      events: string[];
+      /**
+       * Enabled
+       * @default true
+       */
+      enabled: boolean;
+      /**
+       * Digest Minutes
+       * @default 15
+       * @enum {integer}
+       */
+      digest_minutes: 0 | 5 | 15 | 60 | 1440;
+      secrets?: components["schemas"]["ChannelSecrets"] | null;
+    };
+    /** NotificationChannelView */
+    NotificationChannelView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Name */
+      name: string;
+      /** Kind */
+      kind: string;
+      /** Installation */
+      installation: boolean;
+      /** Events */
+      events: string[];
+      /** Enabled */
+      enabled: boolean;
+      /** Digest Minutes */
+      digest_minutes: number;
+      /**
+       * Configured
+       * @default true
+       */
+      configured: boolean;
+      /** Last Status */
+      last_status?: string | null;
+      /** Last Message */
+      last_message?: string | null;
+      /** Last Delivery At */
+      last_delivery_at?: string | null;
+    };
+    /** NotificationDeliveryView */
+    NotificationDeliveryView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Event Type */
+      event_type: string;
+      /** State */
+      state: string;
+      /** Message */
+      message: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Attempted At */
+      attempted_at: string | null;
+      /** Finished At */
+      finished_at: string | null;
+    };
+    /** NotificationPolicyInput */
+    NotificationPolicyInput: {
+      /** Member Events */
+      member_events: string[];
+    };
+    /** NotificationSettingsView */
+    NotificationSettingsView: {
+      /** Channels */
+      channels: components["schemas"]["NotificationChannelView"][];
+      /** Event Labels */
+      event_labels: {
+        [key: string]: string;
+      };
+      /** Allowed Events */
+      allowed_events: string[];
+      /** Member Events */
+      member_events: string[];
     };
     /** NzbDescriptor */
     NzbDescriptor: {
@@ -12932,6 +13151,218 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ApplicationReleaseHistory"];
+        };
+      };
+    };
+  };
+  settings_api_notifications_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationSettingsView"];
+        };
+      };
+    };
+  };
+  create_api_notifications_channels_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NotificationChannelInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationChannelView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  save_api_notifications_channels__channel_id__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        channel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NotificationChannelInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationChannelView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  remove_api_notifications_channels__channel_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        channel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  policy_api_notifications_policy_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NotificationPolicyInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationPolicyInput"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  history_api_notifications_channels__channel_id__deliveries_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        channel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationDeliveryView"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  test_api_notifications_channels__channel_id__test_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        channel_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationChannelView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
