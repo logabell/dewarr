@@ -1,20 +1,31 @@
 """Library items for an admin to review: unmatched books and records Dewarr could not read."""
 
-from sqlalchemy import func, or_, select, union_all
+from sqlalchemy import and_, func, not_, or_, select, union_all
+from sqlalchemy.dialects.postgresql import array
 
+from app.adapters.audiobookshelf import IDENTITY_ISSUES
 from app.db.models import Library, LibraryAsset, LibraryReadIssue
 
 # Gone from the library, so there is nothing left to link.
 CLOSED_STATES = ("missing-confirmed", "intentionally-removed")
 NEEDS_MATCHING = LibraryAsset.match_status == "needs-review"
 HAS_READ_ISSUES = func.jsonb_array_length(LibraryAsset.read_issues) > 0
+# A lost title or author can hold matching. Other unreadable fields are only missing details.
+HAS_IDENTITY_ISSUES = LibraryAsset.read_issues.has_any(array(sorted(IDENTITY_ISSUES)))
+DETAILS_ONLY = and_(HAS_READ_ISSUES, not_(HAS_IDENTITY_ISSUES))
 
 
-def open_assets(kind: str | None = None):
+def open_assets(kind: str | None = None, reason: str | None = None):
     condition = {
         "needs-matching": NEEDS_MATCHING,
-        "read-issue": HAS_READ_ISSUES,
-    }.get(kind, or_(NEEDS_MATCHING, HAS_READ_ISSUES))
+        "read-issue": HAS_IDENTITY_ISSUES,
+        "details": DETAILS_ONLY,
+        "any": or_(NEEDS_MATCHING, HAS_READ_ISSUES),
+    }.get(kind, or_(NEEDS_MATCHING, HAS_IDENTITY_ISSUES))
+    if reason:
+        condition = and_(
+            or_(NEEDS_MATCHING, HAS_READ_ISSUES), LibraryAsset.read_issues.contains([reason])
+        )
     return (
         select(LibraryAsset)
         .join(Library, Library.id == LibraryAsset.library_id)
@@ -22,38 +33,41 @@ def open_assets(kind: str | None = None):
     )
 
 
-def open_read_issues():
-    return (
+def open_read_issues(reason: str | None = None):
+    query = (
         select(LibraryReadIssue)
         .join(Library, Library.id == LibraryReadIssue.library_id)
         .where(Library.accessible, LibraryReadIssue.resolved_at.is_(None))
     )
+    return query.where(LibraryReadIssue.reasons.contains([reason])) if reason else query
 
 
 async def review_counts(db, library_ids=None) -> dict[str, int]:
-    assets, issues = open_assets(), open_read_issues()
+    assets, issues = open_assets("any"), open_read_issues()
     if library_ids is not None:
         assets = assets.where(LibraryAsset.library_id.in_(library_ids))
         issues = issues.where(LibraryReadIssue.library_id.in_(library_ids))
-    matching = await db.scalar(
-        select(func.count()).select_from(assets.where(NEEDS_MATCHING).subquery())
-    )
-    unread_assets = await db.scalar(
-        select(func.count()).select_from(assets.where(HAS_READ_ISSUES).subquery())
-    )
-    unread_items = await db.scalar(select(func.count()).select_from(issues.subquery()))
-    total = await db.scalar(select(func.count()).select_from(assets.subquery()))
+
+    async def count(query):
+        return await db.scalar(select(func.count()).select_from(query.subquery()))
+
+    matching = await count(assets.where(NEEDS_MATCHING))
+    unread_assets = await count(assets.where(HAS_IDENTITY_ISSUES))
+    details = await count(assets.where(DETAILS_ONLY))
+    unread_items = await count(issues)
+    attention = await count(assets.where(or_(NEEDS_MATCHING, HAS_IDENTITY_ISSUES)))
     return {
-        "total": total + unread_items,
+        "total": attention + unread_items,
         "needs_matching": matching,
         "read_issues": unread_assets + unread_items,
+        "details": details,
     }
 
 
 async def reason_counts(db, library_ids) -> list[tuple[str, int]]:
     asset_reasons = (
-        open_assets("read-issue")
-        .where(LibraryAsset.library_id.in_(library_ids))
+        open_assets("any")
+        .where(HAS_READ_ISSUES, LibraryAsset.library_id.in_(library_ids))
         .with_only_columns(func.jsonb_array_elements_text(LibraryAsset.read_issues).label("reason"))
     )
     item_reasons = (

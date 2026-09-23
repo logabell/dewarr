@@ -23,7 +23,7 @@ from app.db.models import (
     WorkMetadataSource,
 )
 from app.domain.catalog_metadata import FIELDS, preferences, resolve_fields
-from app.domain.identity import resolve_abs_version, version_changed
+from app.domain.identity import item_part, resolve_abs_version, version_changed
 from app.domain.work_graph import canonical_work, family_ids
 
 
@@ -139,11 +139,20 @@ async def asset_state(db, asset, link, *, coverage=None):
         "observed_evidence": evidence(asset.metadata_snapshot),
         "observed_files": sorted(asset.files, key=lambda value: value["path"]),
         "containment": asset.containment,
-        "coverage": [{"work_id": str(row.work_id), "verified": row.verified} for row in coverage],
+        "coverage": [
+            {"work_id": str(row.work_id), "verified": row.verified}
+            | (
+                {"part_index": row.part_index, "part_total": row.part_total}
+                if row.part_total
+                else {}
+            )
+            for row in coverage
+        ],
     }
 
 
-async def correct_asset(db, actor_id, asset_id, work_id, expected_revision=None):
+async def correct_asset(db, actor_id, asset_id, work_id, expected_revision=None, *, part=None):
+    """``part`` is (N, M), False for the whole book, or None to read it from the title."""
     asset, link = await asset_target(db, asset_id, lock=True)
     before = await asset_state(db, asset, link)
     check_revision(before, expected_revision)
@@ -187,11 +196,21 @@ async def correct_asset(db, actor_id, asset_id, work_id, expected_revision=None)
     link.work_id, link.manual_lock = work_id, True
     await db.execute(delete(AssetContains).where(AssetContains.asset_id == asset.id))
     if work:
-        version = await resolve_abs_version(db, work, item, asset.medium, link)
+        chosen = item_part(item) if part is None else part or None
+        version = await resolve_abs_version(db, work, item, asset.medium, link, part=chosen)
         asset.version_id, asset.match_status = version.id, "manual"
         asset.full_content = getattr(item, f"full_{asset.medium}")
         link.match_status = "manual"
-        db.add(AssetContains(asset_id=asset.id, work_id=work.id, verified=True))
+        index, total = chosen or (None, None)
+        db.add(
+            AssetContains(
+                asset_id=asset.id,
+                work_id=work.id,
+                verified=True,
+                part_index=index,
+                part_total=total,
+            )
+        )
     else:
         asset.version_id, asset.full_content, asset.match_status = None, False, "needs-review"
         link.version_id, link.match_status = None, "unmatched"
@@ -431,7 +450,11 @@ async def undo_change(db, actor_id, change_id):
         db.add_all(
             [
                 AssetContains(
-                    asset_id=asset.id, work_id=UUID(row["work_id"]), verified=row["verified"]
+                    asset_id=asset.id,
+                    work_id=UUID(row["work_id"]),
+                    verified=row["verified"],
+                    part_index=row.get("part_index"),
+                    part_total=row.get("part_total"),
                 )
                 for row in before["coverage"]
             ]

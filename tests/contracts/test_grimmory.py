@@ -459,6 +459,8 @@ def test_bad_book_fields_are_dropped_and_named():
         "abridged",
         "year",
     ]
+    # Short scalar values are kept for the admin review queue; free text is not.
+    assert parsed.read_issue_values == {"language": "12", "abridged": "no", "year": "sometime"}
     blank = book()
     blank["metadata"]["authors"] = ["", "Alex Morgan"]
     assert parse_book(blank).read_issues == []
@@ -511,7 +513,12 @@ async def test_grimmory_books_with_bad_metadata_are_kept_for_review(
     finished = await sync("grimmory-malformed")
     assert finished.status == "completed"
     assert finished.message == "Synced 2 Grimmory libraries. 3 items need review"
-    assert finished.payload["review"] == {"total": 3, "needs_matching": 1, "read_issues": 3}
+    assert finished.payload["review"] == {
+        "total": 3,
+        "needs_matching": 1,
+        "read_issues": 3,
+        "details": 0,
+    }
     assets = by_book((await client.get("/api/library/assets")).json())
     # The earlier match survives an author list Dewarr can no longer read.
     assert assets["3"]["work_ids"] == before["3"]["work_ids"]

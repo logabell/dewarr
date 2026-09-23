@@ -31,6 +31,8 @@ const labels: Record<string, string> = {
   "acquisition.review": "Download import review",
   "acquisition.select": "Release selection",
   "metadata.enrich": "Automatic metadata lookup",
+  "library.match": "Library matching",
+  "library.combine": "Combining multi-part books",
   "metadata.resolve-import": "Imported metadata lookup",
 };
 

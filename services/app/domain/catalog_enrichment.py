@@ -13,8 +13,10 @@ from app.db.models import AuditEvent, Operation, User, Work, WorkMetadataSource
 from app.db.session import session_factory
 from app.domain.catalog_metadata import attach_source, preferences
 from app.domain.catalog_network import CatalogGateway
+from app.domain.catalog_titles import identity_authors, parse_title_labels
 from app.domain.corrections import revision
-from app.domain.identity import normalized, work_key
+from app.domain.hardcover_matching import MatchEvidence, compatible
+from app.domain.identity import work_key
 from app.domain.visibility import visible_work
 from app.domain.work_graph import family_ids
 from app.jobs.queue import enqueue
@@ -127,12 +129,14 @@ async def lookup(title, authors, language):
                 def phrase(value):
                     return '"' + value.replace("\\", " ").replace('"', " ") + '"'
 
-                page = await adapter.search(f"title:{phrase(title)} author:{phrase(authors[0])}", 1)
-                key = work_key(title, authors)
+                evidence = MatchEvidence(title=title, authors=authors, language=language)
+                search_title = parse_title_labels(title).title
+                search_author = (identity_authors(authors)[0] or authors)[0]
+                page = await adapter.search(
+                    f"title:{phrase(search_title)} author:{phrase(search_author)}", 1
+                )
                 candidates = {
-                    item.external_id: item
-                    for item in page.items
-                    if work_key(item.title, item.authors) == key
+                    item.external_id: item for item in page.items if compatible(evidence, item)
                 }
                 if gateway.stale:
                     raise AdapterError(FailureKind.UNAVAILABLE, "Secondary catalog is unavailable")
@@ -145,14 +149,8 @@ async def lookup(title, authors, language):
                 book = await adapter.fetch(next(iter(candidates)))
                 if gateway.stale:
                     raise AdapterError(FailureKind.UNAVAILABLE, "Secondary catalog is unavailable")
-                if (
-                    work_key(book.title, book.authors) != key
-                    or (book.canonical_id and book.canonical_id != book.external_id)
-                    or (
-                        language
-                        and book.language
-                        and normalized(language) != normalized(book.language)
-                    )
+                if not compatible(evidence, book) or (
+                    book.canonical_id and book.canonical_id != book.external_id
                 ):
                     return None, "needs-review", "Secondary book details need an explicit match"
                 return book, "completed", "Missing metadata checked against Open Library"

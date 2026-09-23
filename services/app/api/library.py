@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Text, cast, delete, func, or_, select
 
 from app.api.catalog import WorkPage, work_view
@@ -74,6 +74,9 @@ class AssetView(BaseModel):
     collection_work_id: UUID | None = None
     contents: list["ContainedBookView"] = Field(default_factory=list)
     read_issues: list[str] = Field(default_factory=list)
+    # Part N of M of its book, when the item holds only part of it.
+    part_index: int | None = None
+    part_total: int | None = None
 
 
 class ContainedBookView(BaseModel):
@@ -92,6 +95,20 @@ class AssetPage(BaseModel):
 class MatchInput(BaseModel):
     work_id: UUID | None
     expected_revision: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    # Part N of M of the book. Omit to use the part number in the item's title, if any.
+    part_index: int | None = Field(default=None, ge=1, le=20)
+    part_total: int | None = Field(default=None, ge=2, le=20)
+    whole_book: bool = False
+
+    @model_validator(mode="after")
+    def one_part(self):
+        if (self.part_index is None) != (self.part_total is None):
+            raise ValueError("Give both the part number and the number of parts")
+        if self.part_index and self.part_index > self.part_total:
+            raise ValueError("The part number cannot be more than the number of parts")
+        if self.whole_book and self.part_index:
+            raise ValueError("A whole book has no part number")
+        return self
 
 
 class ContentsInput(BaseModel):
@@ -323,9 +340,13 @@ async def asset_views(db, user, rows) -> list[AssetView]:
     """Rows are (LibraryAsset, Library, Integration) tuples."""
     coverage = (
         await db.execute(
-            select(AssetContains.asset_id, AssetContains.work_id, AssetContains.verified).where(
-                AssetContains.asset_id.in_([row[0].id for row in rows]),
-            )
+            select(
+                AssetContains.asset_id,
+                AssetContains.work_id,
+                AssetContains.verified,
+                AssetContains.part_index,
+                AssetContains.part_total,
+            ).where(AssetContains.asset_id.in_([row[0].id for row in rows]))
         )
     ).all()
     mapping = canonical_map()
@@ -359,6 +380,11 @@ async def asset_views(db, user, rows) -> list[AssetView]:
             await db.execute(select(Work.id, Work.title).where(Work.id.in_(set(roots.values()))))
         ).all()
     )
+    parts = {
+        row.asset_id: (row.part_index, row.part_total)
+        for row in coverage
+        if row.verified and row.part_total
+    }
     contents = {}
     for row in coverage:
         by_work = contents.setdefault(row.asset_id, {})
@@ -436,6 +462,8 @@ async def asset_views(db, user, rows) -> list[AssetView]:
                 ],
                 open_url=open_url(connection, asset.external_id),
                 read_issues=asset.read_issues or [],
+                part_index=parts.get(asset.id, (None, None))[0],
+                part_total=parts.get(asset.id, (None, None))[1],
             )
         )
     return views
@@ -443,7 +471,14 @@ async def asset_views(db, user, rows) -> list[AssetView]:
 
 @router.post("/assets/{asset_id}/match", status_code=204)
 async def match_asset(asset_id: UUID, body: MatchInput, admin: Admin, db: Database):
-    await correct_asset(db, admin.id, asset_id, body.work_id, body.expected_revision)
+    part = (
+        False
+        if body.whole_book
+        else (body.part_index, body.part_total)
+        if body.part_index
+        else None
+    )
+    await correct_asset(db, admin.id, asset_id, body.work_id, body.expected_revision, part=part)
     await db.commit()
 
 

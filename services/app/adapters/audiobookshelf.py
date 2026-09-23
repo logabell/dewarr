@@ -57,6 +57,9 @@ class ABSItem(BaseModel):
     unreadable: bool = False
     # Names of fields Dewarr dropped or could not read. Values are never kept here.
     read_issues: list[str] = Field(default_factory=list)
+    # A short preview of unreadable scalar fields (year, language, identifiers) for the
+    # admin review queue. Stored with the item, never logged.
+    read_issue_values: dict[str, str] = Field(default_factory=dict)
     path: str | None = None
     library_files: list[ABSFile] = Field(default_factory=list)
     series: list[dict] = Field(default_factory=list)
@@ -72,6 +75,15 @@ def folder_title(path: Any) -> str | None:
         return None
     name = PurePosixPath(path.replace("\\", "/")).name.strip()
     return name[:600] or None
+
+
+def issue_preview(value: Any) -> str:
+    """Printable, bounded preview of an unreadable scalar value."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, str):
+        text = text[1:-1]
+    text = "".join(character for character in text if character.isprintable())
+    return text if len(text) <= 60 else text[:59] + "…"
 
 
 def names(records: Any, key: str | None = None) -> tuple[list[str], bool]:
@@ -132,6 +144,14 @@ def metadata_patch(title, authors, narrators):
     return {"metadata": metadata}
 
 
+def series_patch(name, sequence):
+    """Only the series is sent; Audiobookshelf leaves every other field as it is."""
+    entry = {"name": name}
+    if sequence:
+        entry["sequence"] = sequence
+    return {"metadata": {"series": [entry]}}
+
+
 def backend_path(value):
     """Library root as Audiobookshelf stores it.
 
@@ -184,6 +204,7 @@ def unreadable_item(value: dict, reason: str) -> ABSItem:
         authors=names(metadata.get("authors"), "name")[0],
         narrators=names(metadata.get("narrators"))[0],
         path=value["path"] if isinstance(value.get("path"), str) else None,
+        missing=value.get("isMissing") is True,
         invalid=True,
         unreadable=True,
         read_issues=[reason],
@@ -244,9 +265,12 @@ def _metadata(value: dict, media: dict, metadata: dict) -> dict:
         issues.append("description")
         description = None
     raw_year = metadata.get("publishedYear")
-    year = str(raw_year) if type(raw_year) in (str, int) else ""
-    if re.fullmatch(r"\d{4}", year):
-        year = int(year)
+    year = str(raw_year).strip() if type(raw_year) in (str, int) else ""
+    # ABS copies an audio file's date tag verbatim, so full dates are common.
+    if match := re.fullmatch(
+        r"(\d{4})(?:-\d{2}(?:-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?)?)?", year
+    ):
+        year = int(match[1])
     else:
         if raw_year not in (None, ""):
             issues.append("year")
@@ -290,6 +314,17 @@ def _metadata(value: dict, media: dict, metadata: dict) -> dict:
         "cover_path": cover if isinstance(cover, str) else None,
         "path": path if isinstance(path, str) else None,
         "read_issues": issues,
+        "read_issue_values": {
+            issue: issue_preview(metadata[field])
+            for issue, field in (
+                ("year", "publishedYear"),
+                ("language", "language"),
+                ("abridged", "abridged"),
+                ("isbn", "isbn"),
+                ("asin", "asin"),
+            )
+            if issue in issues and metadata.get(field) is not None
+        },
     }
 
 
@@ -569,12 +604,58 @@ class Audiobookshelf(JsonEndpoint):
     async def scan(self, library_id: str) -> None:
         await self.request("POST", f"api/libraries/{external_id(library_id)}/scan", empty=True)
 
+    async def started_items(self) -> set[str]:
+        """Item ids the connected account has listened to or finished."""
+        response = await self.request("GET", "api/me")
+        values = response.get("mediaProgress")
+        if not isinstance(values, list):
+            raise AdapterError(
+                FailureKind.PARSER, "Audiobookshelf did not return listening progress."
+            )
+        started = set()
+        for value in values:
+            if not isinstance(value, dict):
+                raise AdapterError(
+                    FailureKind.PARSER, "Audiobookshelf returned unreadable listening progress."
+                )
+            item = value.get("libraryItemId")
+            if not isinstance(item, str) or value.get("episodeId"):
+                continue
+            progress, position = value.get("progress"), value.get("currentTime")
+            if (
+                value.get("isFinished") is True
+                or (isinstance(progress, int | float) and progress > 0)
+                or (isinstance(position, int | float) and position > 0)
+            ):
+                started.add(item)
+        return started
+
+    async def remove_missing_item(self, item_id: str) -> bool:
+        """Drop a missing item's record. Never deletes files, and never touches a present item."""
+        try:
+            current = await self.item(item_id)
+        except AdapterError as error:
+            if error.kind == FailureKind.NOT_FOUND:
+                return True
+            raise
+        if not current.missing:
+            return False
+        await self.request("DELETE", f"api/items/{external_id(item_id)}", empty=True)
+        return True
+
     async def update_item(self, item_id: str, *, title: str, authors: list[str], narrators):
         """Write metadata only. Audio files are not renamed or retagged."""
         await self.request(
             "PATCH",
             f"api/items/{external_id(item_id)}/media",
             json=metadata_patch(title, authors, narrators),
+        )
+
+    async def update_series(self, item_id: str, name: str, sequence: str | None) -> None:
+        await self.request(
+            "PATCH",
+            f"api/items/{external_id(item_id)}/media",
+            json=series_patch(name, sequence),
         )
 
     async def update_cover(self, item_id: str, content: bytes) -> None:

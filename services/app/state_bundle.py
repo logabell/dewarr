@@ -24,7 +24,7 @@ from app.config import Settings, get_settings
 from app.db.models import Base
 from app.recovery import MAINTENANCE_LOCK
 
-SCHEMA = "0059_library_review"
+SCHEMA = "0061_part_combines"
 CONFIG_FIELDS = {
     "public_url",
     "cookie_secure",

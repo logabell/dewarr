@@ -530,3 +530,69 @@
   color: var(--muted);
   font-size: 0.9rem;
 }
+.part-sets {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.part-sets h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.part-sets ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.part-set + .part-set {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.part-set > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.part-set p {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.part-set .button-row {
+  margin-top: 8px;
+}
+.part-sets {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.part-sets h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.part-sets ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.part-set + .part-set {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.part-set > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.part-set p {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.part-set .button-row {
+  margin-top: 8px;
+}

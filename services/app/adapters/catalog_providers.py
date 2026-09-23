@@ -18,18 +18,30 @@ from app.adapters.contracts import AdapterError, FailureKind
 HC_SEARCH = """query CatalogSearch($query: String!, $page: Int!) {
  search(query: $query, query_type: "Book", per_page: 20, page: $page) { error results }
 }"""
-HC_BOOK = """query CatalogBook($id: Int!) {
- books(where: {id: {_eq: $id}}, limit: 1) {
-  id canonical_id rating title description release_year cached_image cached_contributors
-  book_series(limit: 100, order_by: {id: asc}) { position compilation series { id name } }
- }
-}"""
-HC_EDITIONS = """query CatalogEditions($id: Int!, $offset: Int!) {
- editions(where: {book_id: {_eq: $id}}, order_by: {id: asc}, limit: 51, offset: $offset) {
-  id title book_id canonical_id release_year isbn_10 isbn_13 asin cached_image cached_contributors
-  edition_information reading_format { format } language { code2 code3 } publisher { name }
- }
-}"""
+_HC_BOOK_FIELDS = """id canonical_id rating title description release_year cached_image
+  cached_contributors
+  book_series(limit: 100, order_by: {id: asc}) { position compilation series { id name } }"""
+_HC_EDITION_FIELDS = """id title book_id canonical_id release_year isbn_10 isbn_13 asin cached_image
+  cached_contributors edition_information reading_format { format } language { code2 code3 }
+  publisher { name }"""
+# One request per book: Hardcover's rate limit counts requests, not fields.
+HC_BOOK = f"""query CatalogBook($id: Int!, $offset: Int!) {{
+ books(where: {{id: {{_eq: $id}}}}, limit: 1) {{
+  {_HC_BOOK_FIELDS}
+ }}
+ editions(where: {{book_id: {{_eq: $id}}}}, order_by: {{id: asc}}, limit: 51, offset: $offset) {{
+  {_HC_EDITION_FIELDS}
+ }}
+}}"""
+# Several candidates in one request, each with its first page of editions.
+HC_BOOKS = f"""query CatalogBooks($ids: [Int!]!) {{
+ books(where: {{id: {{_in: $ids}}}}, limit: 10) {{
+  {_HC_BOOK_FIELDS}
+  editions(order_by: {{id: asc}}, limit: 51) {{
+   {_HC_EDITION_FIELDS}
+  }}
+ }}
+}}"""
 
 
 def parse_failure():
@@ -209,7 +221,7 @@ class Hardcover:
 
     async def fetch(self, external_id: str, edition_offset: int = 0) -> BookData:
         key = int(identifier("hardcover", external_id))
-        data = await self.query(HC_BOOK, {"id": key})
+        data = await self.query(HC_BOOK, {"id": key, "offset": edition_offset})
         try:
             rows = data["books"]
             if rows == []:
@@ -219,34 +231,7 @@ class Hardcover:
             record = rows[0]
             if str(record["id"]) != external_id:
                 raise parse_failure()
-            book = BookData(
-                provider="hardcover",
-                external_id=external_id,
-                title=record["title"],
-                rating=record.get("rating"),
-                authors=contributors(record.get("cached_contributors", []), "Author"),
-                description=record.get("description"),
-                publication_year=year(record.get("release_year")),
-                cover_url=cover_url((record.get("cached_image") or {}).get("url")),
-                canonical_id=str(record["canonical_id"]) if record.get("canonical_id") else None,
-                series=[
-                    SeriesData(
-                        external_id=str(row["series"]["id"]),
-                        name=row["series"]["name"],
-                        position=str(row["position"]) if row.get("position") is not None else None,
-                        compilation=row.get("compilation") or False,
-                    )
-                    for row in record.get("book_series", [])
-                    if row.get("series")
-                ],
-            )
-            edition_rows = (await self.query(HC_EDITIONS, {"id": key, "offset": edition_offset}))[
-                "editions"
-            ]
-            book.editions = [self.edition(row, external_id) for row in edition_rows[:50]]
-            book.editions_more = len(edition_rows) > 50
-            book.editions_offset = edition_offset
-            return book
+            return self.book(record, data["editions"], edition_offset)
         except (
             ValueError,
             TypeError,
@@ -256,6 +241,58 @@ class Hardcover:
             ValidationError,
         ) as error:
             raise parse_failure() from error
+
+    async def fetch_many(self, external_ids: list[str]) -> dict[str, BookData]:
+        """Full records keyed by id. A missing id is a book Hardcover no longer has."""
+        keys = [int(identifier("hardcover", value)) for value in external_ids]
+        if not keys or len(keys) > 10:
+            raise parse_failure()
+        data = await self.query(HC_BOOKS, {"ids": keys})
+        try:
+            books = {}
+            for record in data["books"]:
+                external_id = str(record["id"])
+                if external_id not in external_ids or external_id in books:
+                    raise parse_failure()
+                books[external_id] = self.book(record, record["editions"], 0)
+            return books
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            IndexError,
+            ValidationError,
+        ) as error:
+            raise parse_failure() from error
+
+    def book(self, record, edition_rows, edition_offset):
+        external_id = str(record["id"])
+        book = BookData(
+            provider="hardcover",
+            external_id=external_id,
+            title=record["title"],
+            rating=record.get("rating"),
+            authors=contributors(record.get("cached_contributors", []), "Author"),
+            description=record.get("description"),
+            publication_year=year(record.get("release_year")),
+            cover_url=cover_url((record.get("cached_image") or {}).get("url")),
+            canonical_id=str(record["canonical_id"]) if record.get("canonical_id") else None,
+            series=[
+                SeriesData(
+                    external_id=str(row["series"]["id"]),
+                    name=row["series"]["name"],
+                    position=str(row["position"]) if row.get("position") is not None else None,
+                    compilation=row.get("compilation") or False,
+                )
+                for row in record.get("book_series", [])
+                if row.get("series")
+            ],
+        )
+        book.editions = [self.edition(row, external_id) for row in edition_rows[:50]]
+        book.editions_more = len(edition_rows) > 50
+        book.editions_offset = edition_offset
+        return book
 
     @staticmethod
     def edition(row, work_id):

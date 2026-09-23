@@ -76,9 +76,10 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
         return existing
     intent = await owned_request(db, user, body.request_id, work.id) if body.request_id else None
     profile = await for_intent(db, user, intent, body)
-    query = (body.q if body.q is not None else work.title[:300]).strip()
+    query = (body.q if body.q is not None else source_queries.default_query(work)).strip()
     if not query:
         raise HTTPException(422, "Enter a source-search query")
+    identifiers = await source_queries.edition_identifiers(db, work, body.medium)
     query_plan = await source_queries.plan(db, user, work, query, profile.preferences.search_series)
     if pack_origin:
         # Accepted children inspect the already selected artifact. A tracker
@@ -105,6 +106,7 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
                 "command": command,
                 "work": identity(work),
                 "query": query,
+                "identifiers": identifiers,
                 "query_plan": query_plan,
                 "medium": body.medium,
                 "offset": 0,
@@ -172,6 +174,7 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
             "command": command,
             "work": identity(work),
             "query": query,
+            "identifiers": identifiers,
             "query_plan": query_plan,
             "medium": body.medium,
             "offset": body.offset,

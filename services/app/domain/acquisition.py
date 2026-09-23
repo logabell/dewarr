@@ -40,6 +40,7 @@ from app.db.models import (
     WorkMetadataSource,
 )
 from app.domain import narrators
+from app.domain.availability import owned_coverage
 from app.domain.corrections import revision
 from app.domain.narrators import NarratorNames
 from app.domain.operations import transaction_lock
@@ -366,7 +367,7 @@ async def inventory_candidates(db, user, work_id):
             .where(
                 AssetContains.work_id.in_(family_ids(work_id)),
                 or_(
-                    and_(AssetContains.verified.is_(True), LibraryAsset.full_content.is_(True)),
+                    owned_coverage(),
                     LibraryAsset.containment["valid"].as_boolean().is_(False),
                 ),
                 Library.accessible.is_(True),

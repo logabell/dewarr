@@ -25,6 +25,7 @@ from app.db.models import (
 from app.db.session import session_factory
 from app.domain import download_memberships, download_reviews
 from app.domain.acquisition import RequestSpec, assess
+from app.domain.catalog_titles import parse_title_labels
 from app.domain.operations import transaction_lock
 from app.domain.work_graph import canonical_work
 from app.importing.destination_view import view as destination_view
@@ -214,6 +215,8 @@ def content_reason(group, files, release):
     """
     if PARTIAL.search(release["title"]):
         return "The release is labelled as partial content"
+    if parse_title_labels(release["title"]).part:
+        return "The release is one part of a book released in parts; review it before importing"
     selected = [files[file.path] for file in group.files]
     if any(file["state"] != "inspected" for file in selected):
         return "Some media could not be inspected"

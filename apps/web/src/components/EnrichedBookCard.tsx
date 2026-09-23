@@ -1,28 +1,59 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, result, type Work } from "../api/client";
+import type { components } from "../api/schema";
 import { BookCard } from "../components";
 
-// Shelf pages can contain hundreds of books. Only resolve visible cards, and
-// share the result with the book detail page without importing a catalog match.
+type ReaderMatch = components["schemas"]["ReaderMatch"];
+type Pending = {
+  workId: string;
+  signal: AbortSignal;
+  done: (value: ReaderMatch) => void;
+  fail: (error: unknown) => void;
+};
+
+// Shelf pages can contain hundreds of books. Only resolve visible cards, a few
+// per request, and share the result with the book detail page without
+// importing a catalog match.
+const BATCH = 8;
 let active = 0;
-const waiting: (() => void)[] = [];
-async function resolve(workId: string, signal: AbortSignal) {
-  if (active >= 2) await new Promise<void>((done) => waiting.push(done));
-  else active++;
+let timer: ReturnType<typeof setTimeout> | undefined;
+const queue: Pending[] = [];
+
+function schedule() {
+  if (timer || active >= 2 || !queue.length) return;
+  timer = setTimeout(() => {
+    timer = undefined;
+    void send();
+  }, 50);
+}
+
+async function send() {
+  const batch = queue.splice(0, BATCH).filter((item) => !item.signal.aborted);
+  if (!batch.length) return schedule();
+  active++;
   try {
-    signal.throwIfAborted();
-    return result(
-      await api.GET("/api/metadata/works/{work_id}/reader-match", {
-        params: { path: { work_id: workId } },
-        signal,
+    const { results } = result(
+      await api.POST("/api/metadata/reader-matches", {
+        body: { work_ids: [...new Set(batch.map((item) => item.workId))] },
       }),
     );
+    for (const item of batch)
+      item.done(results[item.workId] ?? { status: "unmatched" });
+  } catch (error) {
+    for (const item of batch) item.fail(error);
   } finally {
-    const next = waiting.shift();
-    if (next) next();
-    else active--;
+    active--;
+    schedule();
   }
+}
+
+function resolve(workId: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  return new Promise<ReaderMatch>((done, fail) => {
+    queue.push({ workId, signal, done, fail });
+    schedule();
+  });
 }
 
 export default function EnrichedBookCard({ work }: { work: Work }) {

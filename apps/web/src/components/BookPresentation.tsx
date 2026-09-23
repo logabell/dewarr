@@ -146,6 +146,14 @@ export function BookHero({
             )}
           </p>
         )}
+        {!!work?.availability.parts_total && (
+          <p className="narrator-line">
+            {work.availability.parts_owned} of {work.availability.parts_total}{" "}
+            {work.availability.parts_medium === "ebook" ? "ebook" : "audiobook"}{" "}
+            parts in your library ·{" "}
+            <Link to={`/books/${work.id}?tab=library`}>see which</Link>
+          </p>
+        )}
         <HardcoverRating details={details} />
         <dl className="reader-facts">
           {(year || details?.release_date) && (

@@ -148,3 +148,14 @@ def test_grimmory_sidecar_matches_the_published_media_stem(tmp_path):
             ],
             sidecars={"metadata.json": "{}"},
         )
+
+
+def test_a_part_keeps_its_label_in_the_title_so_sync_groups_it_under_the_book():
+    from app.importing.metadata import grimmory_sidecars
+
+    facts = NamingMetadata(title="Dark Age", authors=["Pierce Brown"], part_index=2, part_total=3)
+    opf = fromstring(initial_sidecars(ExportMetadata(medium="audio", naming=facts))["metadata.opf"])
+    title = opf.find(".//{http://purl.org/dc/elements/1.1/}title").text
+    assert title == "Dark Age (Part 2 of 3)"
+    document = grimmory_sidecars(facts.model_dump(), "audio", ["Dark Age.m4b"])
+    assert json.loads(document["Dark Age.metadata.json"])["metadata"]["title"] == title

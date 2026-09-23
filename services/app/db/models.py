@@ -262,6 +262,10 @@ class Version(Identity, Base):
     __tablename__ = "versions"
     __table_args__ = (
         CheckConstraint("medium IN ('ebook', 'audio', 'print', 'unknown')", name="version_medium"),
+        CheckConstraint(
+            "recording_kind IS NULL OR recording_kind IN ('narrated', 'dramatized', 'full_cast')",
+            name="version_recording_kind",
+        ),
     )
     work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"), index=True)
     medium: Mapped[str] = mapped_column(String(10))
@@ -271,6 +275,8 @@ class Version(Identity, Base):
     abridged: Mapped[bool | None] = mapped_column(Boolean)
     publication_year: Mapped[int | None] = mapped_column(Integer)
     identifiers: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # How an audio version was recorded. Parts of one dramatization share a version.
+    recording_kind: Mapped[str | None] = mapped_column(String(20))
 
 
 class Representation(Identity, Base):
@@ -452,9 +458,47 @@ class LibraryReadIssue(Identity, Base):
 
 class AssetContains(Base):
     __tablename__ = "asset_contains"
+    __table_args__ = (
+        CheckConstraint(
+            "(part_index IS NULL AND part_total IS NULL)"
+            " OR (part_index BETWEEN 1 AND part_total AND part_total BETWEEN 2 AND 20)",
+            name="asset_contains_part",
+        ),
+    )
     asset_id: Mapped[UUID] = mapped_column(ForeignKey("library_assets.id"), primary_key=True)
     work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"), primary_key=True)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # This item is part N of M of the book, not the whole book.
+    part_index: Mapped[int | None] = mapped_column(Integer)
+    part_total: Mapped[int | None] = mapped_column(Integer)
+
+
+class PartCombine(Identity, Base):
+    """Folding the separate part items of one recording into one library book."""
+
+    __tablename__ = "part_combines"
+    __table_args__ = (
+        UniqueConstraint("library_id", "version_id"),
+        CheckConstraint(
+            "state IN ('skipped', 'combining', 'combined', 'separating', 'separated',"
+            " 'needs-attention')",
+            name="part_combines_state",
+        ),
+    )
+    library_id: Mapped[UUID] = mapped_column(ForeignKey("libraries.id"), index=True)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("versions.id"), index=True)
+    work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"))
+    state: Mapped[str] = mapped_column(String(20))
+    reason: Mapped[str | None] = mapped_column(String(500))
+    operation_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+    destination_id: Mapped[UUID | None] = mapped_column(ForeignKey("import_destinations.id"))
+    part_asset_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    combined_asset_id: Mapped[UUID | None] = mapped_column(ForeignKey("library_assets.id"))
+    # Frozen folder plan and progress. The recovery journal itself lives in private staging.
+    plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class BookList(Identity, Base):
