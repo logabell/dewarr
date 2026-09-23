@@ -171,12 +171,16 @@ export default function BookCover({
             kind === "audio"
               ? availability?.audio_stale
               : availability?.ebook_stale;
-          const label = `${kind === "audio" ? "Audiobook" : "Ebook"}: ${owned ? (stale ? "in library (last known)" : "in library") : work ? "not in library" : "library status unknown"}`;
+          const partial =
+            !owned && availability?.parts_medium === kind
+              ? `${availability.parts_owned} of ${availability.parts_total} parts in library`
+              : null;
+          const label = `${kind === "audio" ? "Audiobook" : "Ebook"}: ${owned ? (stale ? "in library (last known)" : "in library") : partial || (work ? "not in library" : "library status unknown")}`;
           const Icon = kind === "audio" ? Headphones : BookOpen;
           return (
             <span
               key={kind}
-              className={`cover-format ${owned ? "is-owned" : "is-missing"} ${owned && versions > 1 ? "has-versions" : ""}`}
+              className={`cover-format ${owned ? "is-owned" : partial ? "is-partial" : "is-missing"} ${owned && versions > 1 ? "has-versions" : ""}`}
               role="img"
               aria-label={label}
               title={versions > 1 ? `${label} · ${versions} versions` : label}
@@ -184,6 +188,11 @@ export default function BookCover({
               <Icon size={15} aria-hidden="true" />
               {owned && versions > 1 && (
                 <small aria-hidden="true">+{versions - 1}</small>
+              )}
+              {partial && (
+                <small aria-hidden="true">
+                  {availability!.parts_owned}/{availability!.parts_total}
+                </small>
               )}
             </span>
           );

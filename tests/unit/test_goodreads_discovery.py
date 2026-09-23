@@ -155,6 +155,26 @@ def test_full_size_covers_and_series_evidence_preserve_distinct_books():
         assert evidence_for(entry.model_copy(update={"title": title})).title == title
 
 
+async def test_a_broad_discovery_search_falls_back_to_the_exact_title():
+    from app.adapters.catalog_types import BookData, SearchPage
+    from app.adapters.goodreads_discovery import CollectionBook
+    from app.domain.discovery_matching import resolve_entry
+
+    dune = BookData(provider="hardcover", external_id="1", title="Dune", authors=["Frank Herbert"])
+    calls = []
+
+    async def call(operation, *args):
+        calls.append(operation)
+        if operation == "fetch":
+            return dune, False, None
+        more = operation == "search"
+        return SearchPage(provider="hardcover", items=[dune], page=1, has_more=more), False, None
+
+    entry = CollectionBook(external_id="1", title="Dune", authors=["Frank Herbert"])
+    assert (await resolve_entry(entry, call)).status == "matched"
+    assert calls == ["search", "title_search", "fetch"]
+
+
 def list_page_html(page, count=201, length=None):
     start = (page - 1) * 100 + 1
     length = min(100, count - start + 1) if length is None else length

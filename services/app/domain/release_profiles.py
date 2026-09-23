@@ -12,6 +12,7 @@ from sqlalchemy.orm import aliased
 
 from app.db.models import AcquisitionDefaults, AcquisitionProfile
 from app.domain import narrators
+from app.domain.catalog_titles import parse_title_labels
 from app.domain.narrators import NarratorNames
 from app.domain.request_scope import ScopePreferences
 from app.importing.naming import fingerprint
@@ -72,6 +73,10 @@ class ReleasePreferences(ScopePreferences):
         default=["format", "source", "seeders"], min_length=3, max_length=5
     )
     preferred_narrators: NarratorNames = Field(default_factory=list)
+    # A dramatized adaptation is an edition of the book; this only narrows which recordings qualify.
+    recording_style: Literal["any", "narrated", "dramatized"] = Field(
+        default="any", exclude_if=lambda value: value == "any"
+    )
     blocked_formats: list[str] = Field(default_factory=list, max_length=20)
     maximum_bytes: int | None = Field(default=None, gt=0, le=2**53 - 1)
 
@@ -141,7 +146,7 @@ class PreferenceOverrides(ReleasePreferences):
                 values[field] = None
         if "allow_unknown_seeders" in self.model_fields_set:
             values["allow_unknown_seeders"] = self.allow_unknown_seeders
-        for field in ("source_strategy", "source_fallback"):
+        for field in ("source_strategy", "source_fallback", "recording_style"):
             if field in self.model_fields_set:
                 values[field] = getattr(self, field)
         return {key: value for key, value in values.items() if key in self.model_fields_set}
@@ -333,29 +338,84 @@ class ReleaseAssessment(BaseModel):
     source_origin: str
 
 
-def assess_release(release, work, preferences, medium="all"):
-    title, expected = (
-        normalized(getattr(release, "title", release.raw_title)),
-        normalized(work["title"]),
+# Release names carry labels anywhere: "Dark Age (1 of 3) [Dramatized Adaptation] [M4B]".
+_RELEASE_PART = re.compile(
+    r"[\(\[]\s*(?:part\s+)?(\d{1,2})\s+of\s+(\d{1,2})\s*[\)\]]|\bpart\s+(\d{1,2})\s+of\s+(\d{1,2})\b",
+    re.I,
+)
+_RELEASE_DRAMATIZED = re.compile(
+    r"[\(\[]?\s*\b(?:graphic\s*audio|dramati[sz](?:ed|ation)(?:\s+adaptation)?|"
+    r"full[- ]cast(?:\s+(?:edition|dramati[sz]ation|production|recording))?)\b\s*[\)\]]?",
+    re.I,
+)
+
+
+_RELEASE_TAG = re.compile(
+    rf"[\(\[]\s*(?:{'|'.join(sorted(FORMATS))}|\d{{4}}|unabridged|\d{{2,3}}\s*kbps)\s*[\)\]]", re.I
+)
+
+
+def release_labels(value):
+    """(title without labels, (N, M) or None, dramatized) for a source release name."""
+    value = _RELEASE_TAG.sub(" ", value)
+    part = None
+    if match := _RELEASE_PART.search(value):
+        number, total = (int(group) for group in match.groups() if group is not None)
+        if 1 <= number <= total <= 20 and total >= 2:
+            part = number, total
+            value = value[: match.start()] + " " + value[match.end() :]
+    dramatized = bool(_RELEASE_DRAMATIZED.search(value))
+    value = _RELEASE_DRAMATIZED.sub(" ", value)
+    return parse_title_labels(value).title, part, dramatized
+
+
+def identifier_values(value):
+    """ISBN-10, ISBN-13 and ASIN values in a free-form identifier field."""
+    compact = re.sub(r"[\s-]", "", str(value or "")).upper()
+    return set(
+        re.findall(r"(?<![0-9A-Z])(?:97[89]\d{10}|\d{9}[\dX]|B0[0-9A-Z]{8})(?![0-9A-Z])", compact)
     )
+
+
+def assess_release(release, work, preferences, medium="all"):
+    raw, part, dramatized = release_labels(getattr(release, "title", release.raw_title))
+    title, expected = normalized(raw), normalized(parse_title_labels(work["title"]).title)
     authors = {normalized(a) for a in release.authors}
     work_authors = {normalized(a) for a in work["authors"]}
+    known = set().union(*(identifier_values(value) for value in work.get("identifiers") or []))
+    same_edition = bool(known & identifier_values(getattr(release, "isbn", None)))
     identity = (
         "corroborated"
-        if title == expected and authors & work_authors
+        if (title == expected or same_edition) and authors & work_authors
         else "possible"
-        if title == expected or (expected and expected in title)
+        if title == expected or same_edition or (expected and expected in title)
         else "unmatched"
     )
     if authors and work_authors and not authors & work_authors:
         identity = "unmatched"
     blocked, review, explanation = [], [], []
+    if part:
+        # A part is not the whole book, even when its title matches.
+        identity = "possible" if identity != "unmatched" else identity
+        review.append(
+            f"This release is part {part[0]} of {part[1]} of the book, not the whole book"
+        )
     if identity != "corroborated":
-        review.append("Confirm this release contains the selected title and author")
+        if not part:
+            review.append("Confirm this release contains the selected title and author")
     else:
         explanation.append(
             "Source title and author agree with the catalog; file identity still needs inspection"
         )
+    if same_edition:
+        explanation.append("The source's ISBN or ASIN matches an edition of this book")
+    if dramatized:
+        explanation.append("Dramatized adaptation: an audio edition of this book")
+    style = preferences.recording_style
+    if style == "narrated" and dramatized:
+        blocked.append("The profile accepts narrated recordings only")
+    elif style == "dramatized" and not dramatized and release.medium != "ebook":
+        blocked.append("The profile accepts dramatized adaptations only")
     if release.protocol == "soulseek":
         if not getattr(release, "files", None):
             blocked.append("Soulseek did not return a downloadable file list")

@@ -50,6 +50,13 @@ def test_partial_labels_and_noncertified_ebook_containers_need_review(extension,
     )
 
 
+def test_one_part_of_a_book_released_in_parts_needs_review():
+    group = SimpleNamespace(medium="ebook", files=[SimpleNamespace(path="book.epub")])
+    files = {"book.epub": {"path": "book.epub", "extension": "epub", "state": "inspected"}}
+    assert "one part" in content_reason(group, files, {"title": "Dark Age (Part 1 of 3)"})
+    assert content_reason(group, files, {"title": "Dark Age"}) is None
+
+
 def test_automatic_chapter_merge_goes_straight_to_the_library():
     from app.importing.automatic import importer_message
 

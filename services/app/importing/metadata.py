@@ -78,7 +78,8 @@ def initial_sidecars(metadata: ExportMetadata) -> dict[str, str]:
         if value is not None and str(value).strip():
             ET.SubElement(container, name, attributes).text = str(value).strip()
 
-    add("dc:title", facts.title)
+    # The part label in the title is how a sync recognizes this item as one part of the book.
+    add("dc:title", f"{facts.title} ({facts.part_label})" if facts.part_label else facts.title)
     add("dc:subtitle", facts.subtitle)
     for author in dict.fromkeys(name.strip() for name in facts.authors if name.strip()):
         add("dc:creator", author, **{"opf:role": "aut"})
@@ -114,8 +115,11 @@ def initial_sidecars(metadata: ExportMetadata) -> dict[str, str]:
 
 def grimmory_sidecars(facts: dict, medium: str, filenames: list[str]) -> dict[str, str]:
     """Write Grimmory's {Book}.metadata.json beside each published media file."""
+    title = facts["title"].strip()
+    if facts.get("part_index") and facts.get("part_total"):
+        title += f" (Part {facts['part_index']} of {facts['part_total']})"
     metadata = {
-        "title": facts["title"].strip(),
+        "title": title,
         "authors": [name.strip() for name in facts.get("authors") or [] if name.strip()],
     }
     if facts.get("subtitle"):

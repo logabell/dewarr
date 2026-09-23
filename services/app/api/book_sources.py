@@ -125,6 +125,7 @@ async def view(db, user, operation_id):
         )
     )
     ranked = []
+    work = {**payload["work"], "identifiers": payload.get("identifiers", [])}
     for row in rows:
         release = parse_release(row.source_key, row.release_snapshot)
         connection = connections.get(row.source_key)
@@ -132,7 +133,7 @@ async def view(db, user, operation_id):
             RankedReleaseView(
                 id=row.id,
                 release=release,
-                assessment=assess_release(release, payload["work"], preferences, payload["medium"]),
+                assessment=assess_release(release, work, preferences, payload["medium"]),
                 expires_at=row.expires_at,
                 query_keys=row.query_keys if not changed else [],
                 current_connection=bool(

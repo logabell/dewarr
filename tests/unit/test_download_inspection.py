@@ -157,6 +157,57 @@ def test_audio_disc_folder_and_tags_conflict_is_held():
     assert files[0]["state"] == "held"
 
 
+def tagged(path, album, track, disc=None):
+    tags = {"album": album, "artist": "Pierce Brown", "track": str(track)}
+    if disc:
+        tags["disc"] = disc
+    return {
+        "state": "inspected",
+        "medium": "audio",
+        "path": path,
+        "extension": "mp3",
+        "technical": {"tags": tags},
+    }
+
+
+def test_every_part_of_a_book_in_one_release_becomes_one_item_with_parts_as_discs():
+    files = [
+        tagged(
+            f"Dark Age/Dark Age ({part} of 3)/{track:02}.mp3", f"Dark Age ({part} of 3)", track, "1"
+        )
+        for part in (1, 2, 3)
+        for track in (1, 2)
+    ]
+    [group] = inspection.suggest_groups(files)
+    assert group["title"] == "Dark Age"
+    assert [(file["disc"], file["track"]) for file in group["files"]] == [
+        (1, 1),
+        (1, 2),
+        (2, 1),
+        (2, 2),
+        (3, 1),
+        (3, 2),
+    ]
+
+
+def test_plain_part_folders_are_discs_and_a_lone_part_stays_its_own_item():
+    files = [tagged(f"Book/Part {part}/01.mp3", "Book", 1) for part in (1, 2)]
+    [group] = inspection.suggest_groups(files)
+    assert [file["disc"] for file in group["files"]] == [1, 2]
+    lone = [tagged("Dark Age (1 of 3)/01.mp3", "Dark Age (1 of 3)", 1)]
+    [group] = inspection.suggest_groups(lone)
+    assert group["title"] == "Dark Age (1 of 3)"
+    assert group["files"][0]["disc"] is None
+
+
+def test_part_folders_of_different_books_are_not_combined():
+    files = [
+        tagged("Pack/Dark Age (1 of 3)/01.mp3", "Dark Age (1 of 3)", 1),
+        tagged("Pack/Golden Son (2 of 3)/01.mp3", "Golden Son (2 of 3)", 1),
+    ]
+    assert len(inspection.suggest_groups(files)) == 2
+
+
 def test_download_root_cannot_be_filesystem_root():
     with pytest.raises(InspectionError, match="filesystem root"):
         with directory(Path("/")):

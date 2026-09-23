@@ -19,8 +19,14 @@ from app.db.models import (
     ProviderObject,
 )
 from app.db.session import session_factory
-from app.domain.catalog_titles import display_title
-from app.domain.identity import normalized, resolve_abs_version, resolve_abs_work, version_changed
+from app.domain.catalog_titles import base_title, display_title
+from app.domain.identity import (
+    item_part,
+    normalized,
+    resolve_abs_version,
+    resolve_abs_work,
+    version_changed,
+)
 from app.domain.library_review import review_counts, review_message
 from app.domain.operations import transaction_lock
 from app.security import decrypt_secrets
@@ -202,6 +208,10 @@ async def apply_item(db, library, item, generation, integration_id, seen):
                 )
                 if asset:
                     asset.external_id = item.id
+        if asset and asset.state == "intentionally-removed":
+            # A part folded into a combined book stays retired while its old entry lingers.
+            asset.last_seen_at, asset.seen_generation = now, generation
+            continue
         if not link:
             link = ProviderObject(provider=namespace, kind=f"item:{medium}", external_id=item.id)
             db.add(link)
@@ -215,8 +225,8 @@ async def apply_item(db, library, item, generation, integration_id, seen):
             )
             continue
         # Serialize same-title resolution across independent backend connections.
-        # Edition labels share a lock with the short title so both cannot create a book.
-        identity = display_title(item.title) or normalized(item.title)
+        # Edition labels and parts share a lock with the short title so both cannot create a book.
+        identity = display_title(base_title(item.title)) or normalized(item.title)
         await transaction_lock(db, "identity:" + identity)
         previous_work_id = link.work_id
         if held or (asset and asset.containment):
@@ -272,9 +282,13 @@ async def apply_item(db, library, item, generation, integration_id, seen):
                     previous.verified = False
             coverage = await db.get(AssetContains, (asset.id, work.id))
             if not coverage:
-                db.add(AssetContains(asset_id=asset.id, work_id=work.id, verified=True))
+                coverage = AssetContains(asset_id=asset.id, work_id=work.id, verified=True)
+                db.add(coverage)
             else:
                 coverage.verified = True
+            if not link.manual_lock:
+                # A manual match keeps the part number the reviewer chose.
+                coverage.part_index, coverage.part_total = item_part(item) or (None, None)
             link.snapshot = item.model_dump(mode="json")
         else:
             if supplementary:
@@ -587,6 +601,12 @@ async def synchronize(operation_id: UUID, *, client_factory=None):
             await db.execute(
                 delete(InventoryObservation).where(InventoryObservation.run_id == run_id)
             )
+            from app.domain.library_matching import schedule_library_match
+            from app.importing.combine import schedule_library_combine
+
+            await schedule_library_match(db, operation.owner_id, integration_id, run_id)
+            if kind == "audiobookshelf":
+                await schedule_library_combine(db, operation.owner_id, integration_id, run_id)
     except (AdapterError, LeaseLost) as error:
         async with session_factory()() as db, db.begin():
             integration = await db.get(Integration, integration_id, with_for_update=True)

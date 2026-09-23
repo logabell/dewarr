@@ -2,6 +2,7 @@ import BookSourceIcon from "../components/BookSourceIcon";
 import QuickAdd from "../components/QuickAdd";
 import BookGrouping from "../components/BookGrouping";
 import LibraryFormatBadges from "../components/LibraryFormatBadges";
+import PartSets from "../components/CombineParts";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Settings2 } from "lucide-react";
@@ -488,6 +489,7 @@ function BookDetailContent({
                 <Link to={`${href("library")}&format=audio`}>Audiobooks</Link>
               )}
             </div>
+            {admin && <PartSets workId={id} />}
             <LibraryAssets
               key={params.get("format") || "any"}
               workId={id}

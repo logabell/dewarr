@@ -35,6 +35,7 @@ from app.api import (
     inspection_matches,
     integrations,
     library,
+    library_combine,
     library_folders,
     library_review,
     list_comparisons,
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     app.include_router(integrations.router, prefix="/api")
     app.include_router(library.router, prefix="/api")
     app.include_router(library_review.router, prefix="/api")
+    app.include_router(library_combine.router, prefix="/api")
     app.include_router(metadata.router, prefix="/api")
     app.include_router(identity.router, prefix="/api")
     app.include_router(requests.router, prefix="/api")

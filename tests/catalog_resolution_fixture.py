@@ -51,21 +51,14 @@ def resolution_provider(monkeypatch):
                         }
                     },
                 )
-            if "CatalogBook" in query:
-                return httpx.Response(
-                    200,
-                    json={
-                        "data": {
-                            "books": [
-                                {
-                                    "id": 42,
-                                    "title": title,
-                                    "cached_contributors": [{"author": {"name": "Alex Morgan"}}],
-                                }
-                            ]
-                        }
-                    },
-                )
+            assert "CatalogBook" in query
+            books = [
+                {
+                    "id": 42,
+                    "title": title,
+                    "cached_contributors": [{"author": {"name": "Alex Morgan"}}],
+                }
+            ]
             offset = body["variables"]["offset"]
             more = offset < (state["pages"] - 1) * 50
             rows = [
@@ -95,7 +88,7 @@ def resolution_provider(monkeypatch):
                 rows[-1]["isbn_13"] = "9781234567897"
             if offset and state["fault"] == "overlap":
                 rows.insert(0, {**rows[0], "id": 1, "isbn_13": None})
-            return httpx.Response(200, json={"data": {"editions": rows}})
+            return httpx.Response(200, json={"data": {"books": books, "editions": rows}})
         if request.url.path == "/search.json":
             return httpx.Response(
                 200,

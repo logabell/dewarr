@@ -327,6 +327,68 @@ function PreferenceForm({ value }: { value: Preferences }) {
             />
             Look up missing editions before import
           </label>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.automatic_library_matching ?? true}
+              onChange={(event) =>
+                setSettings({
+                  ...settings,
+                  automatic_library_matching: event.target.checked,
+                })
+              }
+            />
+            Match library books automatically
+            <SettingHelp label="automatic library matching">
+              After each library sync, Dewarr asks Hardcover about up to 25
+              unmatched library books using your Hardcover connection. Only a
+              single verified match is saved; anything else stays in library
+              review with its candidates.
+            </SettingHelp>
+          </label>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.write_library_series ?? false}
+              disabled={!(settings.automatic_library_matching ?? true)}
+              onChange={(event) =>
+                setSettings({
+                  ...settings,
+                  write_library_series: event.target.checked,
+                })
+              }
+            />
+            Add the series to matched Audiobookshelf books
+            <SettingHelp label="series write-back">
+              When automatic matching links a book, Dewarr sets its Hardcover
+              series and position on Audiobookshelf items that have no series.
+              Items that already have a series, and every other field, are left
+              alone. Audio files are never changed.
+            </SettingHelp>
+          </label>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.combine_library_parts ?? true}
+              onChange={(event) =>
+                setSettings({
+                  ...settings,
+                  combine_library_parts: event.target.checked,
+                })
+              }
+            />
+            Combine complete multi-part books into one Audiobookshelf book
+            <SettingHelp label="combining parts">
+              When every part of a book released in parts is in an
+              Audiobookshelf library, Dewarr moves them into one book folder
+              with a Disc folder per part, keeping each part's files. The old
+              part folders are removed only after Audiobookshelf shows the
+              combined book, and you can separate them again from the book page.
+              Books whose parts your connected Audiobookshelf account has
+              started are skipped, so listening progress is kept. This needs the
+              library set up as an audio import destination.
+            </SettingHelp>
+          </label>
         </div>
         <div className="settings-fields">
           <label>
@@ -384,6 +446,9 @@ function PreferenceForm({ value }: { value: Preferences }) {
               ...settings,
               automatic_enrichment: true,
               automatic_edition_lookup: true,
+              automatic_library_matching: true,
+              write_library_series: false,
+              combine_library_parts: true,
               covers: "automatic",
               field_providers: {},
             })

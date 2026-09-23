@@ -2902,6 +2902,26 @@ img.detail-cover {
   background: #303640ed;
   color: #c1c6cf;
 }
+.part-number {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.part-number input {
+  width: 5em;
+}
+.part-number p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.cover-format.is-partial {
+  background: #6b4f12f0;
+  color: #ffe6a8;
+}
 .cover-rating {
   position: absolute;
   top: 8px;

@@ -27,6 +27,13 @@ class MetadataPreferences(BaseModel):
     primary: Provider = "hardcover"
     automatic_enrichment: bool = True
     automatic_edition_lookup: bool = True
+    # After each library sync, save unique verified Hardcover matches for library books.
+    automatic_library_matching: bool = True
+    # Fill in the series on Audiobookshelf items that have none, after an automatic match.
+    write_library_series: bool = False
+    # Once every part of a recording is in an Audiobookshelf library, fold the part folders
+    # into one book with Disc N folders.
+    combine_library_parts: bool = True
     language: str = Field(default="en", min_length=2, max_length=20)
     filter_language: bool = False
     covers: Literal["automatic", "hardcover", "openlibrary"] = "automatic"

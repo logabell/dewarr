@@ -53,11 +53,13 @@ async def test_unabridged_shelf_title_matches_the_catalog_book_by_the_same_autho
         separate = ProviderObject(provider="abs:test", kind="item:audio", external_id="graphic")
         db.add(separate)
         await db.flush()
-        created = await resolve_abs_work(
-            db, item("Cloud Atlas: The Graphic Novel (Unabridged)", ["Someone Else"]), separate
-        )
+        separate_item = item("Cloud Atlas: The Graphic Novel (Unabridged)", ["Someone Else"])
+        created = await resolve_abs_work(db, separate_item, separate)
         assert created.id not in {catalog.id, other.id, duplicate.id}
-        assert created.title == "Cloud Atlas: The Graphic Novel (Unabridged)"
+        # The book is titled by the book. The recording keeps the library's label.
+        assert created.title == "Cloud Atlas: The Graphic Novel"
+        version = await resolve_abs_version(db, created, separate_item, "audio", separate)
+        assert version.title == "Cloud Atlas: The Graphic Novel (Unabridged)"
 
 
 async def test_existing_shelf_duplicate_joins_the_catalog_book(database):

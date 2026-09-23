@@ -1,0 +1,39 @@
+{
+  "storm_front": {
+    "provider": "hardcover", "external_id": "1001", "title": "Storm Front", "authors": ["Jim Butcher"],
+    "language": "en", "publication_year": 2000,
+    "series": [{"external_id": "51", "name": "The Dresden Files", "position": "1"}],
+    "editions": [
+      {"external_id": "9001", "medium": "audio", "language": "en", "narrators": ["James Marsters"], "identifiers": {"asin": "B002V0QK4C"}},
+      {"external_id": "9002", "medium": "audio", "language": "en", "title": "Storm Front [Dramatized Adaptation]", "identifiers": {"asin": "B0CGRAPHIC"}}
+    ]
+  },
+  "storm_front_adaptation": {
+    "provider": "hardcover", "external_id": "1002", "title": "Storm Front: Dramatized Adaptation", "authors": ["Jim Butcher"],
+    "language": "en", "series": [{"external_id": "51", "name": "The Dresden Files", "position": "1"}]
+  },
+  "dark_age": {
+    "provider": "hardcover", "external_id": "1101", "title": "Dark Age", "authors": ["Pierce Brown"],
+    "language": "en", "publication_year": 2019,
+    "series": [{"external_id": "61", "name": "Red Rising Saga", "position": "5"}]
+  },
+  "red_rising": {
+    "provider": "hardcover", "external_id": "1102", "title": "Red Rising", "authors": ["Pierce Brown"],
+    "language": "en", "series": [{"external_id": "61", "name": "Red Rising Saga", "position": "1"}]
+  },
+  "red_rising_graphic_novel": {
+    "provider": "hardcover", "external_id": "1103", "title": "Red Rising: Sons of Ares", "authors": ["Pierce Brown"],
+    "language": "en", "series": [{"external_id": "62", "name": "Red Rising: Sons of Ares", "position": "1"}]
+  },
+  "well_of_ascension": {
+    "provider": "hardcover", "external_id": "1201", "title": "The Well of Ascension", "authors": ["Brandon Sanderson"],
+    "language": "en", "series": [{"external_id": "71", "name": "The Mistborn Saga", "position": "2"}]
+  },
+  "prisoner_of_azkaban": {
+    "provider": "hardcover", "external_id": "1301", "title": "Harry Potter and the Prisoner of Azkaban", "authors": ["J.K. Rowling"],
+    "language": "en", "series": [{"external_id": "81", "name": "Harry Potter", "position": "3"}]
+  },
+  "generation_ai": {
+    "provider": "hardcover", "external_id": "1401", "title": "Generation AI", "authors": ["W.R. Hulkenberg"], "language": "en"
+  }
+}

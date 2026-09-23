@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.adapters.catalog_providers import HC_BOOK, HC_EDITIONS, Hardcover, OpenLibrary
+from app.adapters.catalog_providers import HC_BOOK, Hardcover, OpenLibrary
 from app.adapters.contracts import AdapterError, FailureKind
 from app.domain.catalog_network import retry_delay
 
@@ -12,6 +12,7 @@ async def test_hardcover_separates_authors_narrators_and_catalog_formats():
     async def request(method, path, *, json):
         assert method == "POST" and path == "v1/graphql"
         if json["query"] == HC_BOOK:
+            assert json["variables"] == {"id": 42, "offset": 0}
             return {
                 "data": {
                     "books": [
@@ -31,12 +32,7 @@ async def test_hardcover_separates_authors_narrators_and_catalog_formats():
                                 }
                             ],
                         }
-                    ]
-                }
-            }
-        if json["query"] == HC_EDITIONS:
-            return {
-                "data": {
+                    ],
                     "editions": [
                         {
                             "id": i,
@@ -52,7 +48,7 @@ async def test_hardcover_separates_authors_narrators_and_catalog_formats():
                         for i, format_name in enumerate(
                             ["Audio", "Ebook", "Physical", "Unspecified"], 1
                         )
-                    ]
+                    ],
                 }
             }
         return {
@@ -222,15 +218,14 @@ def test_quota_headers_respect_all_exhausted_buckets():
 @pytest.mark.parametrize("count, has_more", [(50, False), (51, True)])
 async def test_editions_use_lookahead_before_claiming_another_page(count, has_more):
     async def request(method, path, *, json):
-        if json["query"] == HC_BOOK:
-            return {"data": {"books": [{"id": 42, "title": "Book", "cached_contributors": None}]}}
-        assert json["variables"]["offset"] == 50
+        assert json["query"] == HC_BOOK and json["variables"]["offset"] == 50
         return {
             "data": {
+                "books": [{"id": 42, "title": "Book", "cached_contributors": None}],
                 "editions": [
                     {"id": index + 51, "book_id": 42, "cached_contributors": None}
                     for index in range(count)
-                ]
+                ],
             }
         }
 
@@ -238,6 +233,45 @@ async def test_editions_use_lookahead_before_claiming_another_page(count, has_mo
     assert len(book.editions) == 50
     assert book.editions_more is has_more
     assert book.editions_offset == 50
+
+
+@pytest.mark.asyncio
+async def test_candidates_are_fetched_together_with_their_editions():
+    from app.adapters.catalog_providers import HC_BOOKS
+
+    requests = []
+
+    async def request(method, path, *, json):
+        requests.append(json)
+        assert json["query"] == HC_BOOKS and json["variables"] == {"ids": [42, 43]}
+        return {
+            "data": {
+                "books": [
+                    {
+                        "id": key,
+                        "title": f"Book {key}",
+                        "cached_contributors": None,
+                        "editions": [{"id": key * 10, "book_id": key, "asin": f"B0000000{key}"}],
+                    }
+                    for key in (42, 43)
+                ]
+            }
+        }
+
+    books = await Hardcover(request).fetch_many(["42", "43"])
+    assert len(requests) == 1
+    assert books["43"].editions[0].identifiers == {"asin": "B000000043"}
+    assert not books["42"].editions_more
+
+
+@pytest.mark.asyncio
+async def test_batched_fetch_rejects_a_book_that_was_not_requested():
+    async def request(method, path, *, json):
+        return {"data": {"books": [{"id": 9, "title": "Other", "editions": []}]}}
+
+    with pytest.raises(AdapterError) as caught:
+        await Hardcover(request).fetch_many(["42"])
+    assert caught.value.kind == FailureKind.PARSER
 
 
 @pytest.mark.asyncio

@@ -6,23 +6,25 @@ import type { components } from "../api/schema";
 import { Empty, Loading, Notice } from "../components";
 import AssetMatchForm, { useAssetMatch } from "../components/AssetMatchForm";
 import BookDialog from "../components/BookDialog";
+import { CombineButton, combineStateLabel } from "../components/CombineParts";
 import InfiniteScroll from "../components/InfiniteScroll";
 import { useLibraryReviewCount } from "../hooks/useLibraryReviewCount";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import ProviderSearch from "./ProviderSearch";
+import { searchTitle } from "../titleLabels";
 
 type Asset = components["schemas"]["AssetView"];
 type ReadIssue = components["schemas"]["ReadIssueView"];
 type Item = components["schemas"]["ReviewItem"];
 type Summary = components["schemas"]["ReviewSummary"];
-type Kind = "all" | "needs-matching" | "read-issue";
+type Kind = "all" | "needs-matching" | "read-issue" | "details";
 
 const KINDS: {
   id: Kind;
   label: string;
   count: (summary: Summary) => number;
 }[] = [
-  { id: "all", label: "Everything", count: (s) => s.total },
+  { id: "all", label: "Needs attention", count: (s) => s.total },
   {
     id: "needs-matching",
     label: "Needs matching",
@@ -33,7 +35,14 @@ const KINDS: {
     label: "Couldn't read fully",
     count: (s) => s.read_issues,
   },
+  {
+    id: "details",
+    label: "Missing details",
+    count: (s) => s.details ?? 0,
+  },
 ];
+const isKind = (value: string | null): value is Kind =>
+  KINDS.some((kind) => kind.id === value);
 
 const SOURCES = [
   ["dewarr", "In your catalog"],
@@ -70,8 +79,8 @@ const itemTitle = (item: Item) =>
 export default function LibraryReview() {
   const [params, setParams] = useSearchParams();
   const rawKind = params.get("kind");
-  const kind: Kind =
-    rawKind === "needs-matching" || rawKind === "read-issue" ? rawKind : "all";
+  const kind: Kind = isKind(rawKind) ? rawKind : "all";
+  const reason = (params.get("reason") || "").slice(0, 40);
   const q = (params.get("q") || "").slice(0, 300);
   const selectedKey = params.get("item");
   const [input, setInput] = useState(q);
@@ -86,12 +95,20 @@ export default function LibraryReview() {
   };
   const summary = useLibraryReviewCount(true);
   const items = usePagedQuery({
-    queryKey: ["library-review", kind, q],
+    queryKey: ["library-review", kind, q, reason],
     queryFn: async (offset, signal) =>
       result(
         await api.GET("/api/library/review", {
           signal,
-          params: { query: { kind, q, offset, limit: 40 } },
+          params: {
+            query: {
+              kind,
+              q,
+              offset,
+              limit: 40,
+              ...(reason ? { reason } : {}),
+            },
+          },
         }),
       ),
     initial: 0,
@@ -102,9 +119,13 @@ export default function LibraryReview() {
     staleTime: 0,
     retry: false,
   });
-  const selected = items.data?.items.find(
-    (item) => itemKey(item) === selectedKey,
-  );
+  // Offset pages can overlap when items are resolved or synced between page loads.
+  const shown = [
+    ...new Map(
+      (items.data?.items ?? []).map((item) => [itemKey(item), item]),
+    ).values(),
+  ];
+  const selected = shown.find((item) => itemKey(item) === selectedKey);
   const close = () => update({ item: "", source: "" });
   const search = (event: FormEvent) => {
     event.preventDefault();
@@ -128,13 +149,14 @@ export default function LibraryReview() {
           const next = new URLSearchParams(params);
           next.delete("item");
           next.delete("source");
+          next.delete("reason");
           if (id === "all") next.delete("kind");
           else next.set("kind", id);
           return (
             <Link
               key={id}
               to={`?${next}`}
-              aria-current={kind === id ? "page" : undefined}
+              aria-current={kind === id && !reason ? "page" : undefined}
             >
               {label}
               {total > 0 && (
@@ -167,12 +189,29 @@ export default function LibraryReview() {
           <div className="review-insights" aria-label="Most common problems">
             <span>Most common problems</span>
             <ul>
-              {reasons.slice(0, 4).map((row) => (
-                <li key={row.reason}>
-                  {reasonLabel(row.reason)}
-                  <strong>{row.count}</strong>
-                </li>
-              ))}
+              {reasons.slice(0, 4).map((row) => {
+                const next = new URLSearchParams(params);
+                next.delete("item");
+                next.delete("source");
+                if (reason === row.reason) next.delete("reason");
+                else next.set("reason", row.reason);
+                return (
+                  <li key={row.reason}>
+                    <Link
+                      to={`?${next}`}
+                      aria-current={reason === row.reason ? "true" : undefined}
+                      title={
+                        reason === row.reason
+                          ? "Show every review item"
+                          : "Show only items with this problem"
+                      }
+                    >
+                      {reasonLabel(row.reason)}
+                      <strong>{row.count}</strong>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -187,11 +226,17 @@ export default function LibraryReview() {
         </p>
       )}
       <Notice error={summary.error || items.error} />
+      {reason && items.data && (
+        <p className="muted review-filter-count" role="status">
+          {items.data.total} {items.data.total === 1 ? "item" : "items"} with “
+          {reasonLabel(reason)}”
+        </p>
+      )}
       {items.isPending ? (
         <Loading />
-      ) : items.data?.items.length ? (
+      ) : shown.length ? (
         <div className="review-grid">
-          {items.data.items.map((item) => (
+          {shown.map((item) => (
             <ReviewCard
               key={itemKey(item)}
               item={item}
@@ -201,10 +246,16 @@ export default function LibraryReview() {
         </div>
       ) : (
         !items.isError && (
-          <Empty title={q ? "No review items match" : "All caught up"}>
+          <Empty
+            title={q || reason ? "No review items match" : "All caught up"}
+          >
             {q
               ? "Try another title or author."
-              : "Every library item is matched and read cleanly."}
+              : reason
+                ? "No open items have this problem."
+                : kind === "details"
+                  ? "Every library item was read with all its details."
+                  : "Every library item is matched and read cleanly."}
           </Empty>
         )
       )}
@@ -218,6 +269,7 @@ export default function LibraryReview() {
         >
           {selected.asset ? (
             <AssetReview
+              item={selected}
               asset={selected.asset}
               close={close}
               matched={(workId) => {
@@ -242,7 +294,7 @@ function Chip({
   tone,
   children,
 }: {
-  tone: "match" | "warn" | "error";
+  tone: "match" | "linked" | "warn" | "error";
   children: string;
 }) {
   return (
@@ -264,6 +316,11 @@ function ReviewCard({ item, open }: { item: Item; open: () => void }) {
       ? "Audiobook"
       : "Ebook"
     : "Files not read";
+  const linked = Boolean(
+    asset &&
+    asset.match_status !== "needs-review" &&
+    item.linked_titles?.length,
+  );
   return (
     <article className="review-card" aria-label={title}>
       <div className="review-card-body">
@@ -276,9 +333,18 @@ function ReviewCard({ item, open }: { item: Item; open: () => void }) {
           <p className="review-card-source">
             {format} · {asset ? asset.library_name : issue!.library_name}
           </p>
+          {linked && (
+            <p className="review-card-linked">
+              Linked to {item.linked_titles!.join(", ")}
+            </p>
+          )}
           <div className="review-chips">
             {asset?.match_status === "needs-review" && (
               <Chip tone="match">Needs matching</Chip>
+            )}
+            {linked && <Chip tone="linked">Matched</Chip>}
+            {item.parts && (
+              <Chip tone="match">{`Part ${asset!.part_index} of ${item.parts.total}`}</Chip>
             )}
             {!asset && <Chip tone="error">Couldn't read files</Chip>}
             {reasons.map((reason) => (
@@ -298,8 +364,8 @@ function ReviewCard({ item, open }: { item: Item; open: () => void }) {
           Open in {appName(kind)}
           <ExternalLink size={13} aria-hidden />
         </a>
-        <button className="primary" onClick={open}>
-          {asset ? "Find the book" : "See details"}
+        <button className={linked ? undefined : "primary"} onClick={open}>
+          {linked ? "Check the match" : asset ? "Find the book" : "See details"}
         </button>
       </footer>
     </article>
@@ -314,6 +380,9 @@ function BackendReport({
   library,
   paths,
   reasons,
+  values = {},
+  linked = [],
+  parts,
   openUrl,
 }: {
   kind: string;
@@ -323,8 +392,20 @@ function BackendReport({
   library: string;
   paths: string[];
   reasons: string[];
+  values?: Record<string, string>;
+  linked?: string[];
+  parts?:
+    | (components["schemas"]["PartSet"] & {
+        index: number;
+      })
+    | null;
   openUrl: string;
 }) {
+  const missingParts = parts
+    ? Array.from({ length: parts.total }, (_, i) => i + 1).filter(
+        (part) => !parts.present.includes(part),
+      )
+    : [];
   return (
     <section className="review-report" aria-label="Library details">
       <div className="review-report-heading">
@@ -348,10 +429,57 @@ function BackendReport({
           <dt>Library</dt>
           <dd>{library}</dd>
         </div>
+        {linked.length > 0 && (
+          <div>
+            <dt>Linked to</dt>
+            <dd>{linked.join(", ")}</dd>
+          </div>
+        )}
+        {parts && (
+          <div>
+            <dt>Parts</dt>
+            <dd>
+              {`Part ${parts.index} of ${parts.total}. In this library: ${parts.present.join(", ")}`}
+              {missingParts.length > 0 &&
+                `; missing ${missingParts.join(", ")}. The book counts as owned once every part is here.`}
+            </dd>
+          </div>
+        )}
+        {parts?.combine_state && (
+          <div className="review-report-wide">
+            <dt>Combining</dt>
+            <dd>
+              {combineStateLabel(parts.combine_state)}
+              {parts.combine_reason && `. ${parts.combine_reason}`}
+              {parts.can_combine && parts.library_id && parts.version_id && (
+                <div className="button-row">
+                  <CombineButton
+                    libraryId={parts.library_id}
+                    versionId={parts.version_id}
+                  />
+                </div>
+              )}
+            </dd>
+          </div>
+        )}
         {reasons.length > 0 && (
           <div>
             <dt>Couldn't read</dt>
-            <dd>{reasons.map(reasonLabel).join(", ")}</dd>
+            <dd>
+              <ul className="review-read-values">
+                {reasons.map((reason) => (
+                  <li key={reason}>
+                    {reasonLabel(reason)}
+                    {values[reason] !== undefined && (
+                      <>
+                        {": "}
+                        <code>{values[reason]}</code>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </dd>
           </div>
         )}
         {paths.length > 0 && (
@@ -378,10 +506,12 @@ function BackendReport({
 }
 
 function AssetReview({
+  item,
   asset,
   close,
   matched,
 }: {
+  item: Item;
   asset: Asset;
   close: () => void;
   matched: (workId: string | null) => void;
@@ -390,7 +520,9 @@ function AssetReview({
   const source = params.get("source") === "hardcover" ? "hardcover" : "dewarr";
   const match = useAssetMatch(asset, matched);
   const authors = asset.authors ?? [];
-  const query = `${asset.title} ${authors[0] || ""}`.trim();
+  const query =
+    item.search_query ||
+    `${searchTitle(asset.title)} ${authors[0] || ""}`.trim();
   return (
     <>
       <BackendReport
@@ -401,10 +533,35 @@ function AssetReview({
         library={asset.library_name}
         paths={(asset.files || []).map((file) => file.path)}
         reasons={asset.read_issues || []}
+        values={item.issue_values}
+        linked={asset.match_status !== "needs-review" ? item.linked_titles : []}
+        parts={
+          item.parts && asset.part_index
+            ? { index: asset.part_index, ...item.parts }
+            : null
+        }
         openUrl={asset.open_url}
       />
       <section className="review-find" aria-label="Find the book">
         <h3>Which book is this?</h3>
+        {item.auto_match && item.auto_match.status !== "matched" && (
+          <div className="review-auto-match" role="note">
+            <p>
+              {`Automatic Hardcover matching didn't choose a book: ${item.auto_match.reason || "no confident match"}`}
+            </p>
+            {(item.auto_match.candidates ?? []).length > 0 && (
+              <p className="muted">
+                {`Closest Hardcover books: ${(item.auto_match.candidates ?? [])
+                  .map(
+                    (book) =>
+                      book.title +
+                      (book.authors?.length ? ` (${book.authors[0]})` : ""),
+                  )
+                  .join("; ")}`}
+              </p>
+            )}
+          </div>
+        )}
         <nav className="settings-subtabs" aria-label="Where to look">
           {SOURCES.map(([id, label]) => {
             const next = new URLSearchParams(params);
@@ -436,7 +593,7 @@ function AssetReview({
             <ProviderSearch
               canEdit
               initialQuery={query}
-              onImported={(work) => match.mutate(work.id)}
+              onImported={(work) => match.mutate({ id: work.id })}
             />
           </div>
         )}

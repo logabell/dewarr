@@ -20,6 +20,7 @@ TOKENS = {
     "subtitle": "Subtitle",
     "series": "Selected filing series",
     "sequence": "Series position; decimals and nonnumeric positions preserved",
+    "part": "Part N of M, for one part of a book released in parts",
     "original_year": "Original work publication year",
     "edition_year": "Ebook edition year",
     "recording_year": "Audiobook recording release year",
@@ -130,6 +131,21 @@ class NamingMetadata(StrictModel):
     release_id: Text | None = None
     release_title: Text | None = None
     source_posted_year: int | None = Field(default=None, ge=0, le=9999)
+    # One part of a book released in parts. Its library item is labelled with the part.
+    part_index: int | None = Field(default=None, ge=1, le=20)
+    part_total: int | None = Field(default=None, ge=2, le=20)
+
+    @model_validator(mode="after")
+    def whole_part(self):
+        if (self.part_index is None) != (self.part_total is None) or (
+            self.part_index and self.part_index > self.part_total
+        ):
+            raise ValueError("A part needs a part number within the number of parts")
+        return self
+
+    @property
+    def part_label(self):
+        return f"Part {self.part_index} of {self.part_total}" if self.part_index else None
 
 
 class PlannedSourceFile(StrictModel):
@@ -240,6 +256,7 @@ def values_for(metadata, file=None, *, medium=None):
         (author for author in metadata.authors if author.strip()), "Unknown author"
     )
     values["author_sort"] = metadata.author_sort or values["author"]
+    values["part"] = metadata.part_label
     values["narrator"] = ", ".join(metadata.narrators) or None
     values["abridgment"] = (
         "Abridged"
@@ -289,13 +306,16 @@ def collision_key(path):
     return unicodedata.normalize("NFKC", path).casefold()
 
 
-def plan_import(groups: list[ImportGroup], profile: NamingProfile):
+def plan_import(groups: list[ImportGroup], profile: NamingProfile, *, combine_parts=True):
     if not groups or len(groups) > 100 or sum(len(group.files) for group in groups) > 10000:
         raise ValueError("Preview 1–100 book groups and at most 10,000 files at a time")
     if len({group.id for group in groups}) != len(groups):
         raise ValueError("Each book group needs a distinct ID")
+    # Different parts of one recording share its version.
     versions = Counter(
-        (group.medium, group.version_id) for group in groups if group.decision == "import"
+        (group.medium, group.version_id, group.metadata.part_index)
+        for group in groups
+        if group.decision == "import"
     )
     source_counts = Counter(
         file.path for group in groups if group.decision == "import" for file in group.files
@@ -325,7 +345,7 @@ def plan_import(groups: list[ImportGroup], profile: NamingProfile):
                 )
             if any(not file.complete for file in group.files):
                 raise ValueError("Wait for every selected file to finish downloading")
-            if versions[group.medium, group.version_id] > 1:
+            if versions[group.medium, group.version_id, group.metadata.part_index] > 1:
                 raise ValueError("Choose one representation for this version")
             if any(source_counts[file.path] > 1 for file in group.files):
                 raise ValueError("A source file belongs to more than one selected group")
@@ -381,6 +401,20 @@ def plan_import(groups: list[ImportGroup], profile: NamingProfile):
             if not group.metadata.authors:
                 item.missing_metadata.append("author")
             folder = render(template, values)
+            if values["part"] and "part" not in template_tokens(template):
+                # Audiobookshelf and Grimmory keep each folder as its own item. The label
+                # keeps a lone part distinct, and Dewarr groups the parts under one book.
+                parents, _, leaf = folder.rpartition("/")
+                leaf = component(f"{leaf} ({values['part']})")
+                folder = "/".join(part for part in (parents, leaf) if part)
+                item.warnings.append(
+                    f"{group.metadata.part_label}: kept as its own library item until every "
+                    "part is in the library; in Audiobookshelf, Dewarr then combines them "
+                    "into one book with disc folders"
+                    if combine_parts and group.medium == "audio"
+                    else f"{group.metadata.part_label}: kept as its own library item, "
+                    "grouped with the other parts in Dewarr"
+                )
             if profile.layout == "nested":
                 parents, _, leaf = folder.rpartition("/")
                 book_folder = render("[{sequence} - ]{title}", values)

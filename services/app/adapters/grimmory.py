@@ -21,6 +21,7 @@ from app.adapters.audiobookshelf import (
     backend_path,
     external_id,
     folder_title,
+    issue_preview,
     names,
     parse_reason,
 )
@@ -322,6 +323,15 @@ def parse_book(value: dict, *, tracks: list | None = None) -> ABSItem:
             full_ebook=full_ebook and not ebook_supplementary,
             ebook_supplementary=ebook_supplementary,
             read_issues=issues,
+            read_issue_values={
+                issue: issue_preview(metadata[field])
+                for issue, field in (
+                    ("year", "publishedDate"),
+                    ("language", "language"),
+                    ("abridged", "abridged"),
+                )
+                if issue in issues and metadata.get(field) is not None
+            },
         )
     except (KeyError, TypeError, ValueError, AdapterError) as error:
         raise AdapterError(

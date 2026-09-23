@@ -1,8 +1,9 @@
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.db.models import (
     AssetContains,
@@ -30,6 +31,10 @@ class Availability(BaseModel):
     primary_ebook_version_id: UUID | None = None
     primary_audio_version_id: UUID | None = None
     primary_audio_narrators: list[str] = Field(default_factory=list)
+    # Some parts of the book but not all: "2 of 3 parts". Not owned in that format.
+    parts_owned: int = 0
+    parts_total: int = 0
+    parts_medium: str | None = None
 
 
 async def availability_for(
@@ -93,11 +98,69 @@ async def availability_for(
                     primary[medium][0].version_id if primary[medium] else None,
                 )
             result[origin].primary_audio_narrators = primary["audio"][1] if primary["audio"] else []
+    partial = (
+        availability_rows(user, mapping, complete=False)
+        .with_only_columns(
+            mapping.c.work_id,
+            LibraryAsset.medium,
+            AssetContains.part_total,
+            func.count(func.distinct(AssetContains.part_index)),
+        )
+        .where(mapping.c.work_id.in_(by_root), AssetContains.part_total.is_not(None))
+        .group_by(
+            mapping.c.work_id,
+            LibraryAsset.medium,
+            LibraryAsset.library_id,
+            LibraryAsset.version_id,
+            AssetContains.part_total,
+        )
+    )
+    for root, medium, total, count in (await db.execute(partial)).all():
+        for origin in by_root[root]:
+            availability = result[origin]
+            if count >= total or getattr(availability, medium):
+                continue
+            if count / total > availability.parts_owned / (availability.parts_total or 1):
+                availability.parts_owned, availability.parts_total = count, total
+                availability.parts_medium = medium
     return result
 
 
-def availability_rows(user: User, mapping):
-    """Shared scoped ownership relation for projections and library-backed discovery."""
+def owned_coverage(contains=AssetContains, asset=LibraryAsset):
+    """A verified, complete copy of the book: the whole book, or every part of it.
+
+    Parts count together only within one library and one version, so part 1 of one
+    recording and part 2 of another never make a whole book.
+    """
+    sibling, copy = aliased(AssetContains), aliased(LibraryAsset)
+    parts = (
+        select(func.count(func.distinct(sibling.part_index)))
+        .select_from(sibling)
+        .join(copy, copy.id == sibling.asset_id)
+        .where(
+            sibling.work_id == contains.work_id,
+            sibling.part_total == contains.part_total,
+            sibling.verified.is_(True),
+            copy.full_content.is_(True),
+            copy.state.in_(["present", "stale"]),
+            copy.library_id == asset.library_id,
+            copy.version_id == asset.version_id,
+        )
+        .correlate(contains, asset)
+        .scalar_subquery()
+    )
+    return and_(
+        contains.verified.is_(True),
+        asset.full_content.is_(True),
+        or_(contains.part_total.is_(None), parts == contains.part_total),
+    )
+
+
+def availability_rows(user: User, mapping, *, complete=True):
+    """Shared scoped ownership relation for projections and library-backed discovery.
+
+    ``complete=False`` also returns parts of books whose other parts are missing.
+    """
     query = (
         select(mapping.c.work_id, LibraryAsset.medium, LibraryAsset.state, LibraryAsset.containment)
         .select_from(AssetContains)
@@ -106,8 +169,9 @@ def availability_rows(user: User, mapping):
         .join(Library, LibraryAsset.library_id == Library.id)
         .join(Integration, Library.integration_id == Integration.id)
         .where(
-            AssetContains.verified.is_(True),
-            LibraryAsset.full_content.is_(True),
+            owned_coverage()
+            if complete
+            else and_(AssetContains.verified.is_(True), LibraryAsset.full_content.is_(True)),
             LibraryAsset.state.in_(["present", "stale"]),
             Library.accessible.is_(True),
             Integration.enabled.is_(True),

@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -15,6 +16,7 @@ from app.db.models import (
     User,
     Version,
     Work,
+    WorkMetadataSource,
 )
 from app.importing import workflow
 from app.jobs.queue import enqueue, get_queue
@@ -62,6 +64,20 @@ async def test_inspection_worker_snapshot_and_frozen_plan_survive_replay(
         await db.flush()
         version = Version(work_id=work.id, medium="ebook", publication_year=2024)
         db.add(version)
+        db.add(
+            WorkMetadataSource(
+                work_id=work.id,
+                provider="hardcover",
+                external_id="7",
+                fetched_at=datetime.now(UTC),
+                snapshot={
+                    "series": [
+                        {"name": "Harbor Omnibus", "position": "1-3", "compilation": True},
+                        {"name": "Harbor Trilogy", "position": "1", "compilation": False},
+                    ]
+                },
+            )
+        )
         await db.flush()
         work_id, version_id = work.id, version.id
         await enqueue(db, "organization.inspect", operation_id=operation_id)
@@ -110,6 +126,10 @@ async def test_inspection_worker_snapshot_and_frozen_plan_survive_replay(
     exported = document["initial_sidecars"][document["groups"][0]["id"]]
     assert set(exported) == {"metadata.opf"}
     assert document["groups"][0]["metadata"]["title"] in exported["metadata.opf"]
+    metadata = document["groups"][0]["metadata"]
+    assert (metadata["series"], metadata["sequence"]) == ("Harbor Trilogy", "1")
+    assert metadata["part_index"] is None
+    assert 'content="Harbor Trilogy"' in exported["metadata.opf"]
     assert not document["publication_available"]
     await client.put(
         "/api/organization/settings",
