@@ -430,6 +430,24 @@ class LibraryAsset(Identity, Base):
         JSONB, default=dict, server_default="{}"
     )
     containment: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    read_issues: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+
+
+class LibraryReadIssue(Identity, Base):
+    """A backend item Dewarr could not read well enough to record as a library asset."""
+
+    __tablename__ = "library_read_issues"
+    __table_args__ = (UniqueConstraint("library_id", "external_id"),)
+    library_id: Mapped[UUID] = mapped_column(ForeignKey("libraries.id"), index=True)
+    external_id: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str | None] = mapped_column(String(600))
+    authors: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    path: Mapped[str | None] = mapped_column(Text)
+    reasons: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AssetContains(Base):

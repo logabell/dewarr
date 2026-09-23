@@ -8764,6 +8764,126 @@
         }
       }
     },
+    "/api/library/review": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Review",
+        "operationId": "review_api_library_review_get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "needs-matching",
+                "read-issue"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 300,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 40,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__library_review__ReviewPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/library/review/summary": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Summary",
+        "operationId": "summary_api_library_review_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/metadata/account": {
       "get": {
         "tags": [
@@ -10914,7 +11034,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReviewPage"
+                  "$ref": "#/components/schemas/app__api__download_reviews__ReviewPage"
                 }
               }
             }
@@ -16451,6 +16571,13 @@
             },
             "type": "array",
             "title": "Contents"
+          },
+          "read_issues": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Read Issues"
           }
         },
         "type": "object",
@@ -29105,6 +29232,85 @@
         ],
         "title": "RankedReleaseView"
       },
+      "ReadIssueView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "library_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Library Id"
+          },
+          "library_name": {
+            "type": "string",
+            "title": "Library Name"
+          },
+          "server_kind": {
+            "type": "string",
+            "title": "Server Kind"
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen At"
+          },
+          "open_url": {
+            "type": "string",
+            "title": "Open Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "library_id",
+          "library_name",
+          "server_kind",
+          "external_id",
+          "title",
+          "authors",
+          "path",
+          "reasons",
+          "last_seen_at",
+          "open_url"
+        ],
+        "title": "ReadIssueView"
+      },
       "ReaderDetails": {
         "properties": {
           "external_id": {
@@ -29338,6 +29544,24 @@
           "subscription"
         ],
         "title": "ReadingSubscription"
+      },
+      "ReasonCount": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason",
+          "count"
+        ],
+        "title": "ReasonCount"
       },
       "ReasonView": {
         "properties": {
@@ -31138,36 +31362,73 @@
         ],
         "title": "ReviewInput"
       },
-      "ReviewPage": {
+      "ReviewItem": {
         "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewView"
-            },
-            "type": "array",
-            "title": "Items"
+          "kind": {
+            "type": "string",
+            "enum": [
+              "asset",
+              "read-issue"
+            ],
+            "title": "Kind"
           },
-          "total": {
-            "type": "integer",
-            "title": "Total"
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "offset": {
-            "type": "integer",
-            "title": "Offset"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit"
+          "read_issue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadIssueView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
         "required": [
-          "items",
-          "total",
-          "offset",
-          "limit"
+          "kind"
         ],
-        "title": "ReviewPage"
+        "title": "ReviewItem"
+      },
+      "ReviewSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "needs_matching": {
+            "type": "integer",
+            "title": "Needs Matching"
+          },
+          "read_issues": {
+            "type": "integer",
+            "title": "Read Issues"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonCount"
+            },
+            "type": "array",
+            "title": "Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "needs_matching",
+          "read_issues",
+          "reasons"
+        ],
+        "title": "ReviewSummary"
       },
       "ReviewView": {
         "properties": {
@@ -35868,6 +36129,37 @@
         ],
         "title": "GroupingView"
       },
+      "app__api__download_reviews__ReviewPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "ReviewPage"
+      },
       "app__api__identity__RevisionInput": {
         "properties": {
           "expected_revision": {
@@ -35937,6 +36229,37 @@
           "work_id"
         ],
         "title": "MatchInput"
+      },
+      "app__api__library_review__ReviewPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "ReviewPage"
       },
       "app__api__list_policies__RevisionInput": {
         "properties": {

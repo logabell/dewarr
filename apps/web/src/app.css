@@ -6,6 +6,7 @@
 @import "./sources.css" layer(app);
 @import "./discovery.css" layer(app);
 @import "./requests.css" layer(app);
+@import "./library-review.css" layer(app);
 @import "./book-detail.css" layer(app);
 @import "./controls.css" layer(controls);
 

@@ -11,6 +11,7 @@ import type { components } from "../api/schema";
 import { BookCard, Empty, Loading, Notice } from "../components";
 
 type Book = components["schemas"]["BookData"];
+type Work = components["schemas"]["WorkView"];
 type Provider = "hardcover" | "openlibrary";
 export const providerName = (provider: string) =>
   provider === "hardcover" ? "Hardcover" : "Open Library";
@@ -19,20 +20,24 @@ export default function ProviderSearch({
   canEdit,
   matchWorkId,
   onMatched,
+  onImported,
   initialQuery = "",
 }: {
   initialQuery?: string;
   canEdit: boolean;
   matchWorkId?: string;
   onMatched?: () => void;
+  /** Embedded choice: the chosen book is added to the catalog and handed back. */
+  onImported?: (work: Work) => void;
 }) {
+  const embedded = Boolean(matchWorkId || onImported);
   const [routeParams, setRouteParams] = useSearchParams();
   const [matchParams, setMatchParams] = useState(
     () => new URLSearchParams({ q: initialQuery, provider: "hardcover" }),
   );
-  const params = matchWorkId ? matchParams : routeParams;
+  const params = embedded ? matchParams : routeParams;
   const setParams = (values: Record<string, string>) => {
-    if (matchWorkId) setMatchParams(new URLSearchParams(values));
+    if (embedded) setMatchParams(new URLSearchParams(values));
     else setRouteParams(values);
   };
   const q = params.get("q") || "";
@@ -56,7 +61,7 @@ export default function ProviderSearch({
           params: { query: { q, limit: 6 } },
         }),
       ),
-    enabled: !matchWorkId && Boolean(q.trim()),
+    enabled: !embedded && Boolean(q.trim()),
   });
   const query = usePagedQuery({
     queryKey: ["provider-search", q, provider],
@@ -77,19 +82,19 @@ export default function ProviderSearch({
     ...(query.loadedPages || []).map((p) => p.known_works || {}),
   );
   const localIds = new Set(
-    ((!matchWorkId && local.data?.items) || []).map((work) => work.id),
+    ((!embedded && local.data?.items) || []).map((work) => work.id),
   );
   const providerItems =
     query.data?.items.filter((book) => {
       const known = knownWorks[book.external_id];
-      if (matchWorkId || !known) return true;
+      if (embedded || !known) return true;
       if (localIds.has(known.id)) return false;
       localIds.add(known.id);
       return true;
     }) || [];
   return (
     <>
-      {!matchWorkId && (
+      {!embedded && (
         <div className="page-heading">
           <div>
             <p className="eyebrow">FIND YOUR NEXT BOOK</p>
@@ -102,7 +107,7 @@ export default function ProviderSearch({
           <Link to="/settings#catalog">Metadata settings</Link>
         </div>
       )}
-      {matchWorkId && <h3>Find the correct catalog record</h3>}
+      {embedded && <h3>Find the correct catalog record</h3>}
       <form
         className="panel library-filters catalog-search-form"
         onSubmit={(event) => {
@@ -119,7 +124,7 @@ export default function ProviderSearch({
             required
             maxLength={300}
           />
-          {!matchWorkId && (
+          {!embedded && (
             <small>
               Local search also includes known series, ISBNs, ASINs, and IDs
               such as hardcover:42.
@@ -145,7 +150,7 @@ export default function ProviderSearch({
           Search books
         </button>
       </form>
-      {!matchWorkId && q.trim() ? (
+      {!embedded && q.trim() ? (
         <section className="search-local" aria-label="Matches in your catalog">
           <div className="section-heading">
             <h2>In your catalog</h2>
@@ -201,7 +206,7 @@ export default function ProviderSearch({
                         cover={book.cover_url}
                         work={known}
                         providerBook={book}
-                        actions={!matchWorkId}
+                        actions={!embedded}
                       />
                     </div>
                     <span>
@@ -218,7 +223,7 @@ export default function ProviderSearch({
                     </span>
                   </>
                 );
-                return !matchWorkId ? (
+                return !embedded ? (
                   <BookLink
                     aria-label={`View ${book.title}`}
                     className="provider-result"
@@ -271,6 +276,7 @@ export default function ProviderSearch({
           canEdit={canEdit}
           matchWorkId={matchWorkId}
           onMatched={onMatched}
+          onImported={onImported}
           onClose={() => {
             setSelected(null);
             selectedButton.current?.focus();
@@ -308,6 +314,7 @@ export function Preview({
   canEdit,
   matchWorkId,
   onMatched,
+  onImported,
   onClose,
 }: {
   provider: Provider;
@@ -315,6 +322,7 @@ export function Preview({
   canEdit: boolean;
   matchWorkId?: string;
   onMatched?: () => void;
+  onImported?: (work: Work) => void;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
@@ -357,9 +365,11 @@ export function Preview({
       if (matchWorkId) {
         onMatched?.();
         onClose();
-      } else navigate(`/books/${work.id}`);
+      } else if (onImported) onImported(work);
+      else navigate(`/books/${work.id}`);
     },
   });
+  const existing = preview.data?.work;
   const book = preview.data?.book;
   return (
     <section
@@ -404,15 +414,24 @@ export function Preview({
               ? "Use this book for its description, authors and reviews. Your library copies stay in place."
               : "Adding a catalog title does not download it or mark it as owned."}
           </p>
-          {preview.data?.work && !matchWorkId ? (
+          {existing && !matchWorkId ? (
             <>
-              <SearchAvailability work={preview.data.work} />
-              <Link className="back-link" to={`/books/${preview.data.work.id}`}>
-                Open existing book →
-              </Link>
+              <SearchAvailability work={existing} />
+              {onImported ? (
+                <button
+                  className="primary"
+                  onClick={() => onImported(existing)}
+                >
+                  Use this book
+                </button>
+              ) : (
+                <Link className="back-link" to={`/books/${existing.id}`}>
+                  Open existing book →
+                </Link>
+              )}
             </>
           ) : null}
-          {canEdit && (matchWorkId || !preview.data?.work) && (
+          {canEdit && (matchWorkId || !existing) && (
             <button
               className="primary"
               onClick={() => save.mutate()}
@@ -420,7 +439,7 @@ export function Preview({
             >
               {save.isPending
                 ? "Saving…"
-                : matchWorkId
+                : matchWorkId || onImported
                   ? "Use this book"
                   : "Add to catalog"}
             </button>

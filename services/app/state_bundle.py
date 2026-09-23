@@ -24,7 +24,7 @@ from app.config import Settings, get_settings
 from app.db.models import Base
 from app.recovery import MAINTENANCE_LOCK
 
-SCHEMA = "0058_join_release_heads"
+SCHEMA = "0059_library_review"
 CONFIG_FIELDS = {
     "public_url",
     "cookie_secure",

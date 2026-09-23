@@ -73,6 +73,7 @@ class AssetView(BaseModel):
     collection: bool = False
     collection_work_id: UUID | None = None
     contents: list["ContainedBookView"] = Field(default_factory=list)
+    read_issues: list[str] = Field(default_factory=list)
 
 
 class ContainedBookView(BaseModel):
@@ -306,6 +307,20 @@ async def assets(
             .limit(limit)
         )
     ).all()
+    views = await asset_views(db, user, rows)
+    return AssetPage(items=views, total=total or 0, offset=offset, limit=limit)
+
+
+def open_url(connection: Integration, external_id: str) -> str:
+    return (
+        (connection.config.get("public_url") or connection.base_url)
+        + ("/book/" if connection.kind == "grimmory" else "/item/")
+        + external_id
+    )
+
+
+async def asset_views(db, user, rows) -> list[AssetView]:
+    """Rows are (LibraryAsset, Library, Integration) tuples."""
     coverage = (
         await db.execute(
             select(AssetContains.asset_id, AssetContains.work_id, AssetContains.verified).where(
@@ -419,12 +434,11 @@ async def assets(
                     for file in asset.files
                     if isinstance(file.get("path"), str)
                 ],
-                open_url=(connection.config.get("public_url") or connection.base_url)
-                + ("/book/" if connection.kind == "grimmory" else "/item/")
-                + asset.external_id,
+                open_url=open_url(connection, asset.external_id),
+                read_issues=asset.read_issues or [],
             )
         )
-    return AssetPage(items=views, total=total or 0, offset=offset, limit=limit)
+    return views
 
 
 @router.post("/assets/{asset_id}/match", status_code=204)

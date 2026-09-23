@@ -233,5 +233,10 @@ def version_changed(item: ABSItem, link: ProviderObject, medium: str) -> bool:
     fields = ["language", "year", "abridged", "identifiers"]
     if medium == "audio":
         fields.append("narrators")
+    # A field Dewarr could not read is missing evidence, not a different recording.
+    unread = set(item.read_issues)
+    if unread & {"isbn", "asin"}:
+        unread.add("identifiers")
+    fields = [field for field in fields if field not in unread]
     current = item.model_dump(mode="json")
     return any(link.snapshot.get(field) != current.get(field) for field in fields)
