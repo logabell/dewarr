@@ -1,3 +1,4 @@
+import QuotaSummary from "../components/QuotaSummary";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -338,6 +339,7 @@ export default function ActivityRequests({
   });
   return (
     <section className="requests-board" aria-label="Requests">
+      <QuotaSummary />
       <Notice
         error={
           requests.error ||

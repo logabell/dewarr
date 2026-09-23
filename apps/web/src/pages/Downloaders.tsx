@@ -27,6 +27,24 @@ const CLIENTS: Record<
     saved:
       "Credentials are stored privately. Leave both fields blank to keep them. Changing the server address clears saved credentials.",
   },
+  transmission: {
+    name: "Transmission",
+    placeholder: "http://transmission:9091",
+    url: "Use the Transmission RPC server address. Transmission 3.0 or newer is required.",
+    category:
+      "The category is saved as a label. The download folder comes from Transmission.",
+    saved:
+      "Leave credentials blank to keep them. Changing the address clears them.",
+  },
+  deluge: {
+    name: "Deluge",
+    placeholder: "http://deluge:8112",
+    url: "Use the Deluge Web UI address, connected to its daemon. Enter the Web UI password; no username is needed.",
+    category:
+      "Use an existing Label plugin label or leave blank. Dewarr uses unique folders inside the completed download location.",
+    saved:
+      "Leave the password blank to keep it. Changing the address clears it.",
+  },
   sabnzbd: {
     name: "SABnzbd",
     placeholder: "http://sabnzbd:8080",
@@ -49,6 +67,7 @@ const CLIENTS: Record<
 
 function draftKind(editing: string, selected?: Connection): DownloaderKind {
   if (selected?.kind) return selected.kind;
+  if (editing === "transmission" || editing === "deluge") return editing;
   if (editing === "sab") return "sabnzbd";
   if (editing === "nzb") return "nzbget";
   return "qbittorrent";
@@ -85,7 +104,8 @@ export default function Downloaders({
             <p className="eyebrow">DOWNLOAD CONNECTIONS</p>
             <h1>Downloaders</h1>
             <p>
-              Connect qBittorrent for torrents, or SABnzbd or NZBGet for Usenet.
+              Connect qBittorrent, Transmission or Deluge for torrents, or
+              SABnzbd or NZBGet for Usenet.
             </p>
             <Link to="/settings#libraries">Library connections</Link>
           </div>
@@ -94,6 +114,10 @@ export default function Downloaders({
           <button className="primary" onClick={() => setEditing("qbit")}>
             Connect qBittorrent
           </button>
+          <button onClick={() => setEditing("transmission")}>
+            Connect Transmission
+          </button>
+          <button onClick={() => setEditing("deluge")}>Connect Deluge</button>
           <button onClick={() => setEditing("sab")}>Connect SABnzbd</button>
           <button onClick={() => setEditing("nzb")}>Connect NZBGet</button>
         </div>
@@ -103,6 +127,8 @@ export default function Downloaders({
         (editing === "qbit" ||
           editing === "sab" ||
           editing === "nzb" ||
+          editing === "transmission" ||
+          editing === "deluge" ||
           selected) && (
           <ConnectionForm
             key={`${editing}:${selected?.generation || 0}`}
@@ -128,6 +154,32 @@ export default function Downloaders({
                 </span>
               </div>
               <p className="break-text">{connection.base_url}</p>
+              {connection.capabilities && (
+                <p className="muted">
+                  Attempt tags:{" "}
+                  {connection.capabilities.attempt_tagging
+                    ? "supported"
+                    : "unavailable; unique folders identify attempts"}
+                  . In-client rename:{" "}
+                  {connection.capabilities.in_client_rename
+                    ? "available when enabled"
+                    : "unavailable"}
+                  . Categories:{" "}
+                  {connection.capabilities.categories
+                    ? "supported"
+                    : "Label plugin required"}
+                  . Sequential/first-last controls:{" "}
+                  {connection.capabilities.sequential_first_last
+                    ? "supported"
+                    : "unavailable"}
+                  .
+                </p>
+              )}
+              {(connection.limitations || []).map((limit) => (
+                <p className="muted" key={limit}>
+                  {limit}
+                </p>
+              ))}
               <p>
                 {connection.version
                   ? `${CLIENTS[connection.kind].name} ${connection.version}`

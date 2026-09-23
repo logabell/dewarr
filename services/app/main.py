@@ -57,6 +57,7 @@ from app.api import (
     recovery,
     release_profiles,
     releases,
+    request_quotas,
     requests,
     series,
     series_discovery,
@@ -184,6 +185,7 @@ def create_app() -> FastAPI:
     app.include_router(automatic_imports.router, prefix="/api")
     app.include_router(automatic_selection.router, prefix="/api")
     app.include_router(capacity.router, prefix="/api")
+    app.include_router(request_quotas.router, prefix="/api")
     app.include_router(sources.router, prefix="/api")
     app.include_router(book_sources.router, prefix="/api")
     app.include_router(release_profiles.router, prefix="/api")
