@@ -228,10 +228,13 @@ def journal_census(path):
                 if entry.name.endswith(".json"):
                     if not journal_name(entry.name):
                         raise ScanHeld("Unrecognized journal filename in the staging root")
-                    total_bytes += entry.stat(follow_symlinks=False).st_size
+                    size = entry.stat(follow_symlinks=False).st_size
+                    total_bytes += size
                     if total_bytes > MAX_JOURNAL_BYTES:
                         raise ScanHeld("Journal census exceeds 256 MiB")
                     receipt = read_receipt(root, entry.name)
+                    if receipt is None and not size:
+                        continue  # An interrupted journal claim holds no publication state.
                     if (
                         not isinstance(receipt, dict)
                         or len(json.dumps(receipt).encode()) > 8 * 1024 * 1024

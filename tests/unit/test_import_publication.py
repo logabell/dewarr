@@ -2,8 +2,10 @@ import errno
 import json
 import os
 import shutil
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -21,6 +23,7 @@ from app.importing.publication import (
     publish_item,
     remember_rename_plan,
 )
+from app.importing.recovery import journal_census
 from tests.media_fixtures import epub
 
 
@@ -374,7 +377,9 @@ def test_probe_preserves_replaced_destination_during_cleanup(specification, monk
     replacements = []
 
     def replace_after_publish(source_fd, source_name, destination_fd, destination_name):
-        original(source_fd, source_name, destination_fd, destination_name)
+        mode = original(source_fd, source_name, destination_fd, destination_name)
+        if not destination_name.startswith(".book-search-probe-"):
+            return mode
         destination = spec.destination_root / destination_name
         destination.rename(spec.destination_root / "moved-original-probe")
         destination.mkdir()
@@ -498,3 +503,203 @@ def test_directory_receipt_fingerprint_remains_backward_compatible(specification
     old_document.pop("binary_sidecars")
     old_document.pop("conversion")
     assert publication.specification_fingerprint(specification) == fingerprint(old_document)
+
+
+@pytest.fixture(params=[errno.EINVAL, errno.ENOTSUP, errno.ENOSYS])
+def no_rename_flag(monkeypatch, request):
+    """NFS, SMB and 9p reject renameat2(RENAME_NOREPLACE) and renameatx_np(RENAME_EXCL)."""
+
+    def unsupported(*args):
+        raise OSError(request.param, os.strerror(request.param))
+
+    monkeypatch.setattr(publication, "native_no_replace", unsupported)
+
+
+def refuse_hardlinks(monkeypatch, code=errno.EPERM):
+    def refuse(*args, **kwargs):
+        raise OSError(code, "hardlinks unsupported on this share")
+
+    monkeypatch.setattr(os, "link", refuse)
+
+
+@pytest.fixture
+def no_hardlinks(monkeypatch):
+    refuse_hardlinks(monkeypatch)
+
+
+@pytest.fixture
+def folders(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    handles = [os.open(path, os.O_RDONLY | os.O_DIRECTORY) for path in (source, target)]
+    yield source, target, *handles
+    for fd in handles:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("links", [True, False])
+def test_file_fallback_moves_and_never_replaces(folders, no_rename_flag, monkeypatch, links):
+    if not links:
+        refuse_hardlinks(monkeypatch, errno.EOPNOTSUPP)
+    source, target, source_fd, target_fd = folders
+    (source / "new").write_bytes(b"new")
+    assert publication.no_replace(source_fd, "new", target_fd, "journal") == "fallback"
+    assert (target / "journal").read_bytes() == b"new" and not (source / "new").exists()
+    (source / "other").write_bytes(b"other")
+    with pytest.raises(FileExistsError):
+        publication.no_replace(source_fd, "other", target_fd, "journal")
+    assert (target / "journal").read_bytes() == b"new"
+    assert (source / "other").read_bytes() == b"other"
+    assert sorted(path.name for path in target.iterdir()) == ["journal"]
+
+
+def test_directory_fallback_moves_and_never_replaces(folders, no_rename_flag):
+    source, target, source_fd, target_fd = folders
+    (source / "item").mkdir()
+    (source / "item/book.epub").write_bytes(b"book")
+    assert publication.no_replace(source_fd, "item", target_fd, "Book") == "fallback"
+    assert (target / "Book/book.epub").read_bytes() == b"book"
+    (target / "file").write_bytes(b"keep")
+    (target / "empty").mkdir()
+    for existing in ("Book", "file", "empty"):
+        (source / "next").mkdir(exist_ok=True)
+        with pytest.raises(OSError) as raised:
+            publication.no_replace(source_fd, "next", target_fd, existing)
+        assert raised.value.errno == errno.EEXIST
+    assert (target / "file").read_bytes() == b"keep" and (target / "empty").is_dir()
+    assert (target / "Book/book.epub").read_bytes() == b"book"
+
+
+def test_fallback_accepts_nfs_replies_for_its_own_completed_operation(
+    folders, no_rename_flag, monkeypatch
+):
+    source, target, source_fd, target_fd = folders
+    real_link, real_rename = os.link, os.rename
+
+    def replayed_link(*args, **kwargs):
+        real_link(*args, **kwargs)
+        raise FileExistsError(errno.EEXIST, "replayed")
+
+    def replayed_rename(*args, **kwargs):
+        real_rename(*args, **kwargs)
+        raise FileNotFoundError(errno.ENOENT, "replayed")
+
+    monkeypatch.setattr(os, "link", replayed_link)
+    monkeypatch.setattr(os, "rename", replayed_rename)
+    (source / "journal").write_bytes(b"state")
+    (source / "item").mkdir()
+    publication.no_replace(source_fd, "journal", target_fd, "journal")
+    publication.no_replace(source_fd, "item", target_fd, "item")
+    assert (target / "journal").read_bytes() == b"state" and (target / "item").is_dir()
+    assert not list(source.iterdir())
+
+
+@pytest.mark.parametrize("mode", ["hardlink", "copy"])
+def test_publication_succeeds_without_a_no_replace_rename_flag(specification, no_rename_flag, mode):
+    spec = specification.model_copy(update={"mode": mode})
+    assert publish_item(spec)["state"] == "published"
+    published = spec.destination_root / spec.folder / "First Harbor.epub"
+    assert published.read_bytes() == (spec.source_root / "pack/book.epub").read_bytes()
+    assert publish_item(spec)["state"] == "published"
+
+
+def test_copy_publication_without_rename_flag_or_hardlinks(
+    specification, no_rename_flag, no_hardlinks
+):
+    spec = specification.model_copy(update={"mode": "copy"})
+    assert publish_item(spec)["state"] == "published"
+    journals = list(spec.staging_root.glob("*.json"))
+    assert len(journals) == 1 and journals[0].stat().st_size
+
+
+@pytest.mark.parametrize("links", [True, False])
+def test_probe_verifies_fallback_and_cleans_up(specification, no_rename_flag, monkeypatch, links):
+    if not links:
+        refuse_hardlinks(monkeypatch)
+    spec = specification
+    result = probe_destination(
+        spec.source_root,
+        spec.source_relative,
+        spec.files[0],
+        spec.destination_root,
+        spec.staging_root,
+    )
+    assert result["no_replace"] and result["hardlink"] == links
+    assert result["no_replace_mode"] == result["receipt_mode"] == "fallback"
+    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
+
+
+def test_native_probe_reports_its_mode(specification):
+    spec = specification
+    result = probe_destination(
+        spec.source_root,
+        spec.source_relative,
+        spec.files[0],
+        spec.destination_root,
+        spec.staging_root,
+    )
+    assert result["no_replace_mode"] == result["receipt_mode"] == "native"
+    assert result["warnings"] == []
+
+
+def test_interrupted_journal_claim_does_not_block_publication(specification):
+    spec = specification
+    (spec.staging_root / f"{spec.entry_id}.json").touch()
+    with publication.private_staging(spec.staging_root) as staging:
+        assert publication.read_receipt(staging, f"{spec.entry_id}.json") is None
+    assert publish_item(spec)["state"] == "published"
+    journal = json.loads((spec.staging_root / f"{spec.entry_id}.json").read_text())
+    assert journal["state"] == "published"
+
+
+def test_interrupted_journal_claim_is_not_a_held_census(specification):
+    (specification.staging_root / f"{uuid4()}.json").touch()
+    assert journal_census(specification.staging_root) == []
+
+
+def test_directory_fsync_is_optional_on_smb(specification, monkeypatch):
+    real_fsync = os.fsync
+
+    def smb_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "Invalid argument")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", smb_fsync)
+    assert publish_item(specification)["state"] == "published"
+
+
+def test_probe_explains_missing_file_locks(specification, monkeypatch):
+    def no_locks(*args):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(publication.fcntl, "flock", no_locks)
+    spec = specification
+    with pytest.raises(PublicationError, match="nobrl"):
+        probe_destination(
+            spec.source_root,
+            spec.source_relative,
+            spec.files[0],
+            spec.destination_root,
+            spec.staging_root,
+        )
+    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
+
+
+def test_smb_noserverino_mounts_are_reported(tmp_path):
+    mountinfo = tmp_path / "mountinfo"
+    mountinfo.write_text(
+        "22 1 0:21 / / rw,relatime - overlay overlay rw\n"
+        "35 22 0:40 / /data/My\\040Media rw,relatime - cifs //nas/media "
+        "rw,vers=3.1.1,noserverino,cache=strict\n"
+        "36 22 0:41 / /data/nfs rw,relatime shared:5 - nfs4 nas:/export rw,vers=4.2\n"
+    )
+    warnings = publication.mount_warnings(
+        Path("/data/My Media/Audiobooks"),
+        Path("/data/My Media/.book-search-staging"),
+        Path("/data/nfs/library"),
+        mountinfo=mountinfo,
+    )
+    assert len(warnings) == 1 and "/data/My Media" in warnings[0] and "serverino" in warnings[0]
+    assert publication.mount_warnings(Path("/data/x"), mountinfo=tmp_path / "missing") == []

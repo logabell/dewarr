@@ -165,13 +165,20 @@ def seeding_same_file(fd, expected):
     return info.st_ino == expected["inode"]
 
 
-def no_replace(source_fd, source_name, destination_fd, destination_name):
+# NFS, SMB, 9p and some FUSE filesystems reject the no-replace rename flag with these.
+NO_REPLACE_UNSUPPORTED = {errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}
+HARDLINKS_UNSUPPORTED = {errno.EPERM, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EMLINK}
+
+
+def native_no_replace(source_fd, source_name, destination_fd, destination_name):
+    if sys.platform not in {"darwin", "linux"}:
+        raise PublicationError("This platform has no supported no-replace publication operation")
     # Interface constants from Linux renameat2 and Darwin renameatx_np.
     libc = ctypes.CDLL(None, use_errno=True)
     symbol, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
     function = getattr(libc, symbol, None)
-    if function is None or sys.platform not in {"darwin", "linux"}:
-        raise PublicationError("This platform has no supported no-replace publication operation")
+    if function is None:
+        raise OSError(errno.ENOSYS, os.strerror(errno.ENOSYS))
     function.argtypes = [
         ctypes.c_int,
         ctypes.c_char_p,
@@ -188,8 +195,109 @@ def no_replace(source_fd, source_name, destination_fd, destination_name):
         raise OSError(code, os.strerror(code))
 
 
+def no_replace(source_fd, source_name, destination_fd, destination_name):
+    """Rename without replacing an existing name. Returns "native" or "fallback"."""
+    try:
+        native_no_replace(source_fd, source_name, destination_fd, destination_name)
+        return "native"
+    except OSError as error:
+        if error.errno not in NO_REPLACE_UNSUPPORTED:
+            raise
+    info = os.stat(source_name, dir_fd=source_fd, follow_symlinks=False)
+    if stat.S_ISDIR(info.st_mode):
+        _rename_directory(source_fd, source_name, destination_fd, destination_name, info)
+    elif stat.S_ISREG(info.st_mode):
+        _rename_file(source_fd, source_name, destination_fd, destination_name, info)
+    else:
+        raise PublicationError("Only files and directories can be published")
+    return "fallback"
+
+
+def _arrived(fd, name, info):
+    # NFS can replay a completed link or rename and report EEXIST or ENOENT for our own object.
+    try:
+        current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino)
+
+
+def _exists(fd, name):
+    try:
+        os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _rename_directory(source_fd, source_name, destination_fd, destination_name, info):
+    # rename(2) never replaces a file or a non-empty directory, so the name check only
+    # leaves a race in which another process's empty directory could be replaced.
+    if _exists(destination_fd, destination_name):
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), destination_name)
+    try:
+        os.rename(source_name, destination_name, src_dir_fd=source_fd, dst_dir_fd=destination_fd)
+    except FileNotFoundError:
+        if not _arrived(destination_fd, destination_name, info):
+            raise
+
+
+def _rename_file(source_fd, source_name, destination_fd, destination_name, info):
+    try:
+        os.link(
+            source_name,
+            destination_name,
+            src_dir_fd=source_fd,
+            dst_dir_fd=destination_fd,
+            follow_symlinks=False,
+        )
+    except FileExistsError:
+        if not _arrived(destination_fd, destination_name, info):
+            raise
+    except OSError as error:
+        if error.errno not in HARDLINKS_UNSUPPORTED:
+            raise
+        _claim_and_rename(source_fd, source_name, destination_fd, destination_name)
+        return
+    os.unlink(source_name, dir_fd=source_fd)
+
+
+def _claim_and_rename(source_fd, source_name, destination_fd, destination_name):
+    # O_EXCL reserves the name; the rename then replaces only our own empty claim.
+    # An interrupted claim stays behind as an empty file (see read_receipt).
+    claim = os.open(
+        destination_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=destination_fd,
+    )
+    try:
+        owned = object_id(claim)
+    finally:
+        os.close(claim)
+    try:
+        current = os.stat(destination_name, dir_fd=destination_fd, follow_symlinks=False)
+        if {"device": current.st_dev, "inode": current.st_ino} != owned or current.st_size:
+            raise PublicationError("No-replace claim changed before rename")
+        os.rename(source_name, destination_name, src_dir_fd=source_fd, dst_dir_fd=destination_fd)
+    except BaseException:
+        try:
+            current = os.stat(destination_name, dir_fd=destination_fd, follow_symlinks=False)
+            if {"device": current.st_dev, "inode": current.st_ino} == owned and not current.st_size:
+                os.unlink(destination_name, dir_fd=destination_fd)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def sync_directory(fd):
-    os.fsync(fd)
+    try:
+        os.fsync(fd)
+    except OSError as error:
+        # Some SMB clients cannot fsync a directory; the server applies namespace changes
+        # before replying, so there is nothing left to flush.
+        if error.errno not in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            raise
 
 
 @contextmanager
@@ -197,7 +305,12 @@ def private_staging(path):
     with directory(path) as fd:
         info = os.fstat(fd)
         if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
-            raise PublicationError("Staging root must be owned by the worker and private (0700)")
+            uid = os.geteuid()
+            raise PublicationError(
+                f"Staging root must be owned by the worker (uid {uid}) and private (0700). "
+                "On SMB/CIFS mounts ownership and permissions come from mount options, "
+                f"such as uid={uid},dir_mode=0700"
+            )
         yield fd
 
 
@@ -217,6 +330,13 @@ def _acquire(fd, message):
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as error:
         raise PublicationBusy(message) from error
+    except OSError as error:
+        if error.errno not in {errno.ENOLCK, *NO_REPLACE_UNSUPPORTED}:
+            raise
+        raise PublicationError(
+            "The staging filesystem does not support file locks. "
+            "Mount SMB/CIFS shares with nobrl or use a newer kernel"
+        ) from error
 
 
 @contextmanager
@@ -281,7 +401,14 @@ def write_receipt(staging, name, receipt, *, create=False):
         os.close(fd)
     try:
         if create:
-            no_replace(staging, temporary, staging, name)
+            try:
+                no_replace(staging, temporary, staging, name)
+            except FileExistsError:
+                # Callers hold the publication lock, so an empty receipt is an abandoned claim.
+                existing = os.stat(name, dir_fd=staging, follow_symlinks=False)
+                if not stat.S_ISREG(existing.st_mode) or existing.st_size:
+                    raise
+                os.replace(temporary, name, src_dir_fd=staging, dst_dir_fd=staging)
         else:
             os.replace(temporary, name, src_dir_fd=staging, dst_dir_fd=staging)
         sync_directory(staging)
@@ -295,8 +422,11 @@ def write_receipt(staging, name, receipt, *, create=False):
 def read_receipt(staging, name):
     try:
         with beneath(staging, name) as fd:
-            if os.fstat(fd).st_size > 8 * 1024 * 1024:
+            size = os.fstat(fd).st_size
+            if size > 8 * 1024 * 1024:
                 raise PublicationError("Publication receipt exceeds its size limit")
+            if not size:
+                return None  # An interrupted no-replace claim; receipts are never empty.
             with os.fdopen(os.dup(fd), "rb") as stream:
                 return json.load(stream)
     except FileNotFoundError:
@@ -1022,6 +1152,42 @@ def publish_item(
                             return receipt
 
 
+def _mounts(mountinfo="/proc/self/mountinfo"):
+    try:
+        with open(mountinfo, encoding="utf-8", errors="surrogateescape") as stream:
+            lines = stream.read().splitlines()
+    except OSError:
+        return []
+    mounts = []
+    for line in lines:
+        fields = line.split(" ")
+        if "-" not in fields[6:]:
+            continue
+        separator = fields.index("-", 6)
+        point = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+        options = {*fields[5].split(","), *fields[separator + 3].split(",")}
+        mounts.append((Path(point), fields[separator + 1], options))
+    return mounts
+
+
+def mount_warnings(*paths, mountinfo="/proc/self/mountinfo"):
+    """Mount options that break the device/inode identity checks publication depends on."""
+    mounts = _mounts(mountinfo)
+    warnings = []
+    for path in paths:
+        containing = [mount for mount in mounts if path.is_relative_to(mount[0])]
+        if not containing:
+            continue
+        point, kind, options = max(containing, key=lambda mount: len(mount[0].parts))
+        warning = (
+            f"{point} is an SMB mount using noserverino, so file identities can change "
+            "between checks and imports may be held. Remount it with serverino."
+        )
+        if kind in {"cifs", "smb3"} and "noserverino" in options and warning not in warnings:
+            warnings.append(warning)
+    return warnings
+
+
 def probe_download_folder(
     source_root: Path, relative: str, destination_root: Path, staging_root: Path
 ):
@@ -1086,7 +1252,7 @@ def probe_destination(
     *,
     source_kind: Literal["directory", "file"] = "directory",
 ):
-    """Probe an actual selected file's link route, plus empty-directory no-replace rename."""
+    """Probe an actual selected file's link route, no-replace renames and staging locks."""
     if source_kind == "file" and file.source != relative_parts(source_relative)[-1]:
         raise PublicationError("A single-file probe must use its selected file")
     if any(
@@ -1101,8 +1267,23 @@ def probe_destination(
     token = uuid4().hex
     staged, target, linked = f"probe-{token}", f".book-search-probe-{token}", f"link-{token}"
     report = {"hardlink": False, "copy": False, "no_replace": False}
-    created = {"link": None, "stage": None, "target": None, "write": None}
-    write_name = "write-" + token
+    created = dict.fromkeys(
+        ("link", "stage", "target", "marker", "write", "claim", "claimed", "lock")
+    )
+    write_name, marker, lock_name = "write-" + token, "marker", "lock-probe-" + token
+    claim_name, claimed_name = "publish-" + token, "published-" + token
+    target_handle = None
+    exclusive = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+
+    def refused(operation):
+        try:
+            operation()
+        except OSError as error:
+            if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                raise
+            return True
+        return False
+
     with (
         directory(source_root) as source_mount,
         source_scope(source_mount, source_relative, source_kind) as source,
@@ -1154,34 +1335,65 @@ def probe_destination(
                         report["hardlink"] = same_object(fd, file.identity)
                 except OSError as error:
                     report["hardlink_error"] = errno.errorcode.get(error.errno, "IO_ERROR")
+            # Publication journals are created with a file no-replace rename inside staging.
+            claim = os.open(claim_name, exclusive, 0o600, dir_fd=staging)
+            created["claim"] = object_id(claim)
+            os.close(claim)
+            report["receipt_mode"] = no_replace(staging, claim_name, staging, claimed_name)
+            created["claimed"], created["claim"] = created["claim"], None
+            claim = os.open(claim_name, exclusive, 0o600, dir_fd=staging)
+            created["claim"] = object_id(claim)
+            os.close(claim)
+            if not refused(lambda: no_replace(staging, claim_name, staging, claimed_name)):
+                created["claimed"], created["claim"] = created["claim"], None
+                raise PublicationError("Staging filesystem replaced an existing journal")
+            lock = os.open(lock_name, exclusive, 0o600, dir_fd=staging)
+            created["lock"] = object_id(lock)
+            handles.callback(os.close, lock)
+            _acquire(lock, "Another probe holds this lock")
+            fcntl.flock(lock, fcntl.LOCK_UN)
             os.mkdir(staged, mode=0o700, dir_fd=staging)
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
-            no_replace(staging, staged, destination, target)
+            report["no_replace_mode"] = no_replace(staging, staged, destination, target)
             created["target"], created["stage"] = created["stage"], None
+            target_handle = stage_handle
+            output = os.open(marker, exclusive, 0o600, dir_fd=target_handle)
+            created["marker"] = object_id(output)
+            os.close(output)
             os.mkdir(staged, mode=0o700, dir_fd=staging)
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
-            try:
-                no_replace(staging, staged, destination, target)
-            except OSError as error:
-                if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
-                    raise
-                report["no_replace"] = True
+            report["no_replace"] = refused(lambda: no_replace(staging, staged, destination, target))
+            if report["no_replace"]:
+                # The fallback relies on rename(2) refusing a non-empty directory.
+                observed = os.stat(target, dir_fd=destination, follow_symlinks=False)
+                if {"device": observed.st_dev, "inode": observed.st_ino} != created["target"]:
+                    raise PublicationError(
+                        "Probe object changed; unrecognized replacement preserved"
+                    )
+                report["no_replace"] = refused(
+                    lambda: os.rename(staged, target, src_dir_fd=staging, dst_dir_fd=destination)
+                )
             if not report["no_replace"]:
                 raise PublicationError("Filesystem failed the no-replace collision probe")
             sync_directory(destination)
             sync_directory(staging)
             space = os.fstatvfs(destination)
             report["available_bytes"] = space.f_bavail * space.f_frsize
+            report["warnings"] = mount_warnings(destination_root, staging_root)
             return report
         finally:
             changed = False
             for fd, name, folder, owned in (
                 (staging, linked, False, created["link"]),
                 (staging, staged, True, created["stage"]),
+                (target_handle, marker, False, created["marker"]),
                 (destination, target, True, created["target"]),
                 (staging, write_name, False, created["write"]),
+                (staging, claim_name, False, created["claim"]),
+                (staging, claimed_name, False, created["claimed"]),
+                (staging, lock_name, False, created["lock"]),
             ):
                 if not owned:
                     continue
