@@ -631,7 +631,9 @@ async def evaluate(db, user, intent):
             await validate_request(db, user, intent.work_id, spec)
         except HTTPException:
             allowed = False
-    outcomes = await assess(db, user, intent.work_id, spec) if allowed and active else []
+    outcomes = (
+        await assess(db, user, intent.work_id, spec) if allowed and (active or pending) else []
+    )
     targets = {
         target.slot: target
         for target in (
@@ -642,11 +644,24 @@ async def evaluate(db, user, intent):
             )
         ).all()
     }
+    from app.db.models import RequestQuotaCharge
+    from app.domain.request_quotas import admin_exempt, effective
+
+    quota_rules, _ = await effective(db, user) if user else (None, None)
+    if quota_rules and await admin_exempt(db, intent, quota_rules):
+        for charge in await db.scalars(
+            select(RequestQuotaCharge).where(
+                RequestQuotaCharge.target_id.in_([target.id for target in targets.values()])
+            )
+        ):
+            charge.exempt = True
     for slot in spec.slots():
         target = targets.get(slot)
         if not target:
-            target = AcquisitionTarget(intent_id=intent.id, slot=slot)
+            target = AcquisitionTarget(intent_id=intent.id, slot=slot, message="Evaluating request")
             db.add(target)
+            await db.flush()
+        target.quota_waiting, target.quota_retry_at = False, None
         previous_reservation_id = target.reservation_id
         target.reservation_id, target.satisfied_asset_id = None, None
         if not active or not allowed:
@@ -654,6 +669,15 @@ async def evaluate(db, user, intent):
                 target.state, target.message = "paused", "Request access needs attention"
             elif pending:
                 target.state, target.message = "paused", "Waiting for approval"
+                outcome = next(item for item in outcomes if item["slot"] == slot)
+                if outcome["state"] == "wanted":
+                    from app.domain.request_quotas import QuotaExceeded, admit
+
+                    try:
+                        await admit(db, user, intent, target, outcome["medium"], pending=True)
+                    except QuotaExceeded as exc:
+                        target.quota_waiting, target.quota_retry_at = True, exc.retry_at
+                        target.message = "Waiting for quota. " + exc.detail
             elif declined:
                 target.state, target.message = "cancelled", "Request declined"
             else:
@@ -667,6 +691,33 @@ async def evaluate(db, user, intent):
             continue
         reservation = await reserve(db, user, intent, spec, slot)
         target.reservation_id = reservation.id
+        from app.domain.request_quotas import QuotaExceeded, admit, reserve_size
+
+        # Committed transfers are observation-only: a later quota change never cancels them.
+        if reservation.state != "committed":
+            try:
+                await admit(db, user, intent, target, reservation.requirements["medium"])
+                if target.quota_requirement:
+                    await reserve_size(db, user, target, **target.quota_requirement)
+                    target.quota_requirement = None
+            except QuotaExceeded as exc:
+                target.state, target.reservation_id = "paused", None
+                target.quota_waiting, target.quota_retry_at = True, exc.retry_at
+                target.message = "Waiting for quota. " + exc.detail
+                continue
+        else:
+            selected_owner_target = await db.scalar(
+                select(AcquisitionSelection.target_id)
+                .where(
+                    AcquisitionSelection.reservation_id == reservation.id,
+                    AcquisitionSelection.state == "committed",
+                )
+                .limit(1)
+            )
+            if selected_owner_target and selected_owner_target != target.id:
+                await admit(
+                    db, user, intent, target, reservation.requirements["medium"], shared=True
+                )
         target.message = (
             "Acquisition pending; check download activity"
             if reservation.state == "committed"
@@ -692,6 +743,7 @@ async def submit(
     expected_preference_revision=None,
     series_reference=None,
     hold_for_approval=True,
+    automatic=False,
 ):
     if get_settings().recovery_mode:
         raise HTTPException(409, "Request evaluation is paused for recovery")
@@ -839,6 +891,18 @@ async def submit(
         record.decision_note = None
     await db.flush()
     await evaluate(db, user, intent)
+    if not (automatic or policy_reference or series_reference):
+        from app.domain.request_quotas import QuotaExceeded
+
+        held = await db.scalar(
+            select(AcquisitionTarget).where(
+                AcquisitionTarget.intent_id == intent.id, AcquisitionTarget.quota_waiting.is_(True)
+            )
+        )
+        if held:
+            raise QuotaExceeded(
+                held.message.removeprefix("Waiting for quota. "), held.quota_retry_at
+            )
     operation = Operation(
         owner_id=user.id,
         kind="acquisition.evaluate",

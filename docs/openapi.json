@@ -12585,7 +12585,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PolicyView"
+                  "$ref": "#/components/schemas/app__api__automatic_imports__PolicyView"
                 }
               }
             }
@@ -12636,7 +12636,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PolicyView"
+                  "$ref": "#/components/schemas/app__api__automatic_imports__PolicyView"
                 }
               }
             }
@@ -12900,6 +12900,197 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas/me": {
+      "get": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Mine",
+        "operationId": "mine_api_request_quotas_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas/users": {
+      "get": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Users",
+        "operationId": "users_api_request_quotas_users_get",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Usage"
+                  },
+                  "title": "Response Users Api Request Quotas Users Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas": {
+      "get": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Policies",
+        "operationId": "policies_api_request_quotas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/app__api__request_quotas__PolicyView"
+                  },
+                  "type": "array",
+                  "title": "Response Policies Api Request Quotas Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas/{scope}": {
+      "put": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Save",
+        "operationId": "save_api_request_quotas__scope__put",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scope"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Rules"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__request_quotas__PolicyView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Inherit",
+        "operationId": "inherit_api_request_quotas__scope__delete",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -21172,6 +21363,8 @@
             "type": "string",
             "enum": [
               "qbittorrent",
+              "transmission",
+              "deluge",
               "sabnzbd",
               "nzbget"
             ],
@@ -21331,6 +21524,8 @@
             "type": "string",
             "enum": [
               "qbittorrent",
+              "transmission",
+              "deluge",
               "sabnzbd",
               "nzbget"
             ],
@@ -21417,6 +21612,20 @@
             "type": "boolean",
             "title": "Dispatch Available",
             "default": false
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Capabilities"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
           }
         },
         "type": "object",
@@ -28331,40 +28540,6 @@
         ],
         "title": "PolicyRoute"
       },
-      "PolicyView": {
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "title": "Enabled"
-          },
-          "generation": {
-            "type": "integer",
-            "title": "Generation"
-          },
-          "ready": {
-            "type": "boolean",
-            "title": "Ready"
-          },
-          "can_enable": {
-            "type": "boolean",
-            "title": "Can Enable"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "enabled",
-          "generation",
-          "ready",
-          "can_enable",
-          "message"
-        ],
-        "title": "PolicyView"
-      },
       "PreReleaseCandidate": {
         "properties": {
           "title": {
@@ -32273,6 +32448,39 @@
         ],
         "title": "RoleView"
       },
+      "Rules": {
+        "properties": {
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/Window"
+            },
+            "type": "array",
+            "maxItems": 9,
+            "title": "Windows"
+          },
+          "pending_cap": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Cap"
+          },
+          "exempt_admin_approved": {
+            "type": "boolean",
+            "title": "Exempt Admin Approved",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Rules"
+      },
       "RunView": {
         "properties": {
           "id": {
@@ -35863,6 +36071,63 @@
         ],
         "title": "TorrentFile"
       },
+      "Usage": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "user_name": {
+            "type": "string",
+            "title": "User Name"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "bypass": {
+            "type": "boolean",
+            "title": "Bypass"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending"
+          },
+          "pending_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Remaining"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/Rules"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/WindowUsage"
+            },
+            "type": "array",
+            "title": "Windows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "user_name",
+          "source",
+          "bypass",
+          "pending",
+          "pending_remaining",
+          "rules",
+          "windows"
+        ],
+        "title": "Usage"
+      },
       "UserInput": {
         "properties": {
           "username": {
@@ -36228,6 +36493,160 @@
           "needs_review"
         ],
         "title": "VersionView"
+      },
+      "Window": {
+        "properties": {
+          "medium": {
+            "type": "string",
+            "enum": [
+              "ebook",
+              "audio",
+              "combined"
+            ],
+            "title": "Medium",
+            "default": "combined"
+          },
+          "window": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Window",
+            "default": "week"
+          },
+          "books": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Books"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Window"
+      },
+      "WindowUsage": {
+        "properties": {
+          "medium": {
+            "type": "string",
+            "enum": [
+              "ebook",
+              "audio",
+              "combined"
+            ],
+            "title": "Medium",
+            "default": "combined"
+          },
+          "window": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Window",
+            "default": "week"
+          },
+          "books": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Books"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "used_books": {
+            "type": "integer",
+            "title": "Used Books"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "title": "Used Bytes"
+          },
+          "remaining_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Books"
+          },
+          "remaining_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Bytes"
+          },
+          "capacity_returns_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity Returns At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "used_books",
+          "used_bytes",
+          "remaining_books",
+          "remaining_bytes"
+        ],
+        "title": "WindowUsage"
       },
       "WorkInput": {
         "properties": {
@@ -36752,6 +37171,40 @@
         ],
         "title": "WritebackResolveInput"
       },
+      "app__api__automatic_imports__PolicyView": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "can_enable": {
+            "type": "boolean",
+            "title": "Can Enable"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled",
+          "generation",
+          "ready",
+          "can_enable",
+          "message"
+        ],
+        "title": "PolicyView"
+      },
       "app__api__catalog_grouping__GroupingView": {
         "properties": {
           "reason": {
@@ -37089,6 +37542,23 @@
         },
         "type": "object",
         "title": "FollowInput"
+      },
+      "app__api__request_quotas__PolicyView": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "rules"
+        ],
+        "title": "PolicyView"
       },
       "app__domain__community_lists__FollowInput": {
         "properties": {
