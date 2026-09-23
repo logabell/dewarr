@@ -58,7 +58,8 @@ def prepare_user(config: Path) -> None:
         key = config / "app_key"
         if key.exists() and not key.is_symlink():
             os.chown(key, uid, gid)
-        os.setgroups([])
+        # Keep groups granted with Compose group_add for shared media folders, never root's group.
+        os.setgroups(sorted({*os.getgroups(), gid} - {0}))
         os.setgid(gid)
         os.setuid(uid)
     elif (os.geteuid(), os.getegid()) != (uid, gid):

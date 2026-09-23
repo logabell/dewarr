@@ -54,6 +54,21 @@ def test_existing_book_settings_take_precedence(environment, monkeypatch):
     assert os.environ["BOOK_SECRET_KEY_FILE"] == "/run/secrets/app_key"
 
 
+def test_dropping_root_keeps_compose_groups_but_never_the_root_group(monkeypatch, tmp_path):
+    dropped = {}
+    monkeypatch.setenv("PUID", "1000")
+    monkeypatch.setenv("PGID", "1000")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "getgroups", lambda: [0, 1001, 44])
+    monkeypatch.setattr(os, "chown", lambda *args: None)
+    monkeypatch.setattr(os, "umask", lambda mask: None)
+    monkeypatch.setattr(os, "setgroups", lambda groups: dropped.update(groups=groups))
+    monkeypatch.setattr(os, "setgid", lambda gid: dropped.update(gid=gid))
+    monkeypatch.setattr(os, "setuid", lambda uid: dropped.update(uid=uid))
+    container.prepare_user(tmp_path)
+    assert dropped == {"groups": [44, 1000, 1001], "gid": 1000, "uid": 1000}
+
+
 DATABASE_URL = "postgresql://dewarr:s3cret@dewarr-postgres:5432/dewarr"
 
 
