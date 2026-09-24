@@ -5,6 +5,7 @@ or Grimmory release stays usable; a route fails only when a required library
 behavior is missing.
 """
 
+import asyncio
 import os
 import re
 from contextlib import contextmanager
@@ -13,6 +14,25 @@ from uuid import uuid4
 
 from app.importing.filesystem import beneath, directory
 from app.importing.publication import PublicationError, object_id, same_object, sync_directory
+
+MAPPING_VISIBILITY_TIMEOUT = 5.0
+MAPPING_POLL_INTERVAL = 0.1
+
+
+async def path_visible(adapter, root, name, *, expected):
+    """Observe a completed local change through bounded remote attribute caching.
+
+    The absent/present/absent challenge is unchanged. Transport/permission errors
+    still propagate; only a stale existence result is polled.
+    """
+    try:
+        async with asyncio.timeout(MAPPING_VISIBILITY_TIMEOUT):
+            # The remote filesystem offers no event/change notification here.
+            while await adapter.path_exists(root, name) is not expected:  # noqa: ASYNC110
+                await asyncio.sleep(MAPPING_POLL_INTERVAL)
+            return True
+    except TimeoutError:
+        return False
 
 
 @contextmanager
@@ -67,9 +87,9 @@ async def verify_grimmory(adapter, library_id, backend_root, worker_root, medium
     if await adapter.path_exists(backend_root, name):
         raise PublicationError("Unexpected existing mapping challenge; no directory was changed")
     with mapping_marker(worker_root, name):
-        if not await adapter.path_exists(backend_root, name):
+        if not await path_visible(adapter, backend_root, name, expected=True):
             raise PublicationError("Worker and Grimmory do not see the same library folder")
-    if await adapter.path_exists(backend_root, name):
+    if not await path_visible(adapter, backend_root, name, expected=False):
         raise PublicationError("Grimmory still sees the removed challenge; mapping is not reliable")
     if await adapter.import_configuration(library_id) != configuration:
         raise PublicationError("Grimmory library settings changed during mapping verification")
@@ -122,9 +142,9 @@ async def verify_backend(adapter, library_id, backend_root, worker_root, medium)
     if await adapter.path_exists(backend_root, name):
         raise PublicationError("Unexpected existing mapping challenge; no directory was changed")
     with mapping_marker(worker_root, name):
-        if not await adapter.path_exists(backend_root, name):
+        if not await path_visible(adapter, backend_root, name, expected=True):
             raise PublicationError("Worker and ABS do not see the same library folder")
-    if await adapter.path_exists(backend_root, name):
+    if not await path_visible(adapter, backend_root, name, expected=False):
         raise PublicationError("ABS still sees the removed challenge; mapping is not reliable")
     if await adapter.import_configuration(library_id) != configuration:
         raise PublicationError("ABS library settings changed during mapping verification")
