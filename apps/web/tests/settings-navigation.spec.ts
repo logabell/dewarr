@@ -24,6 +24,8 @@ for (const role of ["admin", "member", "viewer"]) {
         };
       else if (url.pathname === "/api/setup/onboarding")
         data = { status: "completed" };
+      else if (url.pathname === "/api/request-quotas/me")
+        data = { bypass: false, windows: [], pending_remaining: null };
       else if (
         url.pathname === "/api/requests" ||
         url.pathname === "/api/acquisition/downloads"
