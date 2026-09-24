@@ -399,6 +399,30 @@ def test_probe_preserves_replaced_destination_during_cleanup(specification, monk
     assert not list(spec.staging_root.iterdir())
 
 
+def test_probe_accepts_a_post_rename_directory_inode_change(specification, monkeypatch):
+    spec = specification
+    real_stat = os.stat
+
+    def changed_inode(path, *args, **kwargs):
+        info = real_stat(path, *args, **kwargs)
+        if str(path).startswith(".book-search-probe-") and kwargs.get("dir_fd") is not None:
+            values = list(info)
+            values[1] += 1
+            return os.stat_result(values)
+        return info
+
+    monkeypatch.setattr(publication.os, "stat", changed_inode)
+    result = probe_destination(
+        spec.source_root,
+        spec.source_relative,
+        spec.files[0],
+        spec.destination_root,
+        spec.staging_root,
+    )
+    assert result["no_replace"]
+    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
+
+
 def test_concurrent_publishers_cannot_create_two_items(specification):
     def run():
         try:

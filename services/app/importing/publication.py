@@ -1271,6 +1271,7 @@ def probe_destination(
         ("link", "stage", "target", "marker", "write", "claim", "claimed", "lock")
     )
     write_name, marker, lock_name = "write-" + token, "marker", "lock-probe-" + token
+    marker_content = f"book-search destination probe {token}\n".encode()
     claim_name, claimed_name = "publish-" + token, "published-" + token
     target_handle = None
     exclusive = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
@@ -1283,6 +1284,17 @@ def probe_destination(
                 raise
             return True
         return False
+
+    def has_marker(folder):
+        try:
+            with beneath(folder, marker) as current:
+                info = os.fstat(current)
+                if info.st_size != len(marker_content):
+                    return False
+                os.lseek(current, 0, os.SEEK_SET)
+                return os.read(current, len(marker_content) + 1) == marker_content
+        except (FileNotFoundError, InspectionError):
+            return False
 
     with (
         directory(source_root) as source_mount,
@@ -1360,18 +1372,32 @@ def probe_destination(
             target_handle = stage_handle
             output = os.open(marker, exclusive, 0o600, dir_fd=target_handle)
             created["marker"] = object_id(output)
-            os.close(output)
+            try:
+                write_all(output, marker_content)
+                os.fsync(output)
+            finally:
+                os.close(output)
+            # Some FUSE and network filesystems report a different inode for a directory
+            # after it is renamed. Recognize the random marker through the destination
+            # name before accepting the post-rename identity.
+            with beneath(destination, target, folder=True) as current_target:
+                if not has_marker(current_target):
+                    raise PublicationError(
+                        "Probe object changed; unrecognized replacement preserved"
+                    )
+                created["target"] = object_id(current_target)
             os.mkdir(staged, mode=0o700, dir_fd=staging)
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
             report["no_replace"] = refused(lambda: no_replace(staging, staged, destination, target))
             if report["no_replace"]:
                 # The fallback relies on rename(2) refusing a non-empty directory.
-                observed = os.stat(target, dir_fd=destination, follow_symlinks=False)
-                if {"device": observed.st_dev, "inode": observed.st_ino} != created["target"]:
-                    raise PublicationError(
-                        "Probe object changed; unrecognized replacement preserved"
-                    )
+                with beneath(destination, target, folder=True) as current_target:
+                    if not has_marker(current_target):
+                        raise PublicationError(
+                            "Probe object changed; unrecognized replacement preserved"
+                        )
+                    created["target"] = object_id(current_target)
                 report["no_replace"] = refused(
                     lambda: os.rename(staged, target, src_dir_fd=staging, dst_dir_fd=destination)
                 )
@@ -1388,8 +1414,6 @@ def probe_destination(
             for fd, name, folder, owned in (
                 (staging, linked, False, created["link"]),
                 (staging, staged, True, created["stage"]),
-                (target_handle, marker, False, created["marker"]),
-                (destination, target, True, created["target"]),
                 (staging, write_name, False, created["write"]),
                 (staging, claim_name, False, created["claim"]),
                 (staging, claimed_name, False, created["claimed"]),
@@ -1403,6 +1427,32 @@ def probe_destination(
                         changed = True
                         continue
                     (os.rmdir if folder else os.unlink)(name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+            marker_removed = False
+            if created["target"]:
+                try:
+                    with beneath(destination, target, folder=True) as current_target:
+                        if created["marker"] and has_marker(current_target):
+                            os.unlink(marker, dir_fd=current_target)
+                            marker_removed = True
+                            os.rmdir(target, dir_fd=destination)
+                        elif object_id(current_target) == created["target"]:
+                            os.rmdir(target, dir_fd=destination)
+                        else:
+                            changed = True
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    changed = True
+            # If the probe directory was moved away and replaced, its open descriptor
+            # still lets us remove only our random marker while preserving both folders.
+            if target_handle is not None and created["marker"] and not marker_removed:
+                try:
+                    if has_marker(target_handle):
+                        os.unlink(marker, dir_fd=target_handle)
+                    else:
+                        changed = True
                 except FileNotFoundError:
                     pass
             if changed:
