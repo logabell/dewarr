@@ -17,7 +17,7 @@ from app.db.models import (
     SourceConnection,
     User,
 )
-from app.domain.downloaders import DOWNLOAD_KINDS, mappings_current
+from app.domain.downloaders import TRANSFER_KINDS, mappings_current
 from app.importing.destination_view import view as destination_view
 from app.importing.storage import storage_settings
 
@@ -104,7 +104,12 @@ async def readiness(admin: Admin, db: Database):
                 publication_available=current.publication_available,
             )
         )
-    source_names = {"mam": "MAM", "audiobookbay": "AudiobookBay", "prowlarr": "Prowlarr"}
+    source_names = {
+        "mam": "MAM",
+        "audiobookbay": "AudiobookBay",
+        "prowlarr": "Prowlarr",
+        "slskd": "Soulseek",
+    }
     sources = await db.scalars(
         select(SourceConnection)
         .where(SourceConnection.key.in_(source_names))
@@ -142,7 +147,7 @@ async def readiness(admin: Admin, db: Database):
                 mappings_current=mappings_current(row, settings.import_sources),
             )
             for row in integrations
-            if row.kind in DOWNLOAD_KINDS
+            if row.kind in TRANSFER_KINDS
         ],
         destinations=destinations,
         download_roots=len(settings.import_sources),

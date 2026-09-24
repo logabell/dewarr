@@ -1,5 +1,6 @@
 import { lazy } from "react";
 
+const Notifications = lazy(() => import("./Notifications"));
 const Logs = lazy(() => import("./Activity"));
 const Display = lazy(() => import("./DisplaySettings"));
 const ReadingAccounts = lazy(() => import("./ReadingAccounts"));
@@ -9,6 +10,8 @@ const Sources = lazy(() => import("./SourceSettings"));
 const Downloaders = lazy(() => import("./Downloaders"));
 const Preferences = lazy(() => import("./DownloadPreferences"));
 const Naming = lazy(() => import("./Organization"));
+const Recovery = lazy(() => import("./DownloadRecoverySettings"));
+const Quotas = lazy(() => import("./RequestQuotas"));
 const Accounts = lazy(() => import("./Accounts"));
 
 export function settingsSections(role: string, permissions: string[] = []) {
@@ -46,7 +49,9 @@ export function settingsSections(role: string, permissions: string[] = []) {
             title: "Libraries",
             content: <Libraries embedded />,
           },
+          { id: "quotas", title: "Request quotas", content: <Quotas /> },
           { id: "sources", title: "Download sources", content: <Sources /> },
+          { id: "recovery", title: "Download recovery", content: <Recovery /> },
           {
             id: "downloaders",
             title: "Download clients",
@@ -75,6 +80,11 @@ export function settingsSections(role: string, permissions: string[] = []) {
           },
         ]
       : []),
+    {
+      id: "notifications",
+      title: "Notifications",
+      content: <Notifications admin={admin} />,
+    },
     { id: "logs", title: "Logs", content: <Logs admin={admin} /> },
   ];
 }

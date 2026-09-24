@@ -30,10 +30,10 @@ SEARCH_PATH = "tor/js/loadSearchJSONbasic.php"
 VIP_POINTS_PER_WEEK = 1250
 VIP_MAX_WEEKS = 12.85
 UPLOAD_CREDIT_GB = 50
-RATIO_FLOOR = 1.5
+RATIO_FLOOR = 2.5
 BUFFER_FLOOR_GB = 10
 BONUS_CEILING = 5000
-UPLOAD_CHECK_HOURS = 6
+UPLOAD_CHECK_HOURS = 3
 UPLOAD_PURCHASE_CAP = 12
 VIP_DOWNLOAD_BLOCKED = "This torrent requires active MyAnonamouse VIP."
 SEEDBOX_REFRESH = timedelta(hours=24)
@@ -742,14 +742,18 @@ class MAMClient:
                         retry_after=int(self.cooldown),
                     )
                 if status == 407 or 300 <= status < 400:
-                    raise AdapterError(
+                    error = AdapterError(
                         FailureKind.ROUTE,
                         "The source or proxy rejected the route. Check connection settings.",
                     )
+                    error.proxy_retryable = self.uses_proxy and status == 407
+                    raise error
                 if status != 200:
-                    raise AdapterError(
+                    error = AdapterError(
                         FailureKind.UNAVAILABLE, "MAM could not complete the request."
                     )
+                    error.proxy_retryable = self.uses_proxy and status in {502, 503, 504}
+                    raise error
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
@@ -778,7 +782,9 @@ class MAMClient:
                     raise AdapterError(FailureKind.PARSER, "MAM returned an unexpected response.")
                 return value
         except (httpx.TimeoutException, TimeoutError) as error:
-            raise AdapterError(FailureKind.TIMEOUT, "MAM did not respond in time.") from error
+            failure = AdapterError(FailureKind.TIMEOUT, "MAM did not respond in time.")
+            failure.proxy_retryable = self.uses_proxy
+            raise failure from error
         except httpx.HTTPError as error:
             message = "The configured MAM route could not be reached."
             cause = error
@@ -799,10 +805,12 @@ class MAMClient:
                 )
             if self.uses_proxy:
                 message += " No direct fallback was attempted."
-            raise AdapterError(
+            failure = AdapterError(
                 FailureKind.ROUTE,
                 message,
-            ) from error
+            )
+            failure.proxy_retryable = self.uses_proxy
+            raise failure from error
 
     async def search(self, query):
         return parse_page(await self.request(SEARCH_PATH, query.payload()), query)

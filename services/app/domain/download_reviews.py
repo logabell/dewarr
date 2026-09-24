@@ -16,6 +16,7 @@ from app.db.models import (
     DownloadAttempt,
     DownloadHandoff,
     DownloadInspection,
+    DownloadRecovery,
     FrozenImportPlan,
     ImportDestination,
     ImportEntry,
@@ -162,6 +163,11 @@ async def validate_shared_inspection(
 ):
     inspection = await db.get(DownloadInspection, attempt.inspection_id)
     for item in members:
+        if inspection.snapshot and item.frozen.get("recovery_profile"):
+            enforce_inspected_profile(
+                inspection.snapshot["files"],
+                ProfileSnapshot.model_validate(item.frozen["recovery_profile"]),
+            )
         if inspection.snapshot and item.frozen.get("profile"):
             enforce_inspected_profile(
                 inspection.snapshot["files"], ProfileSnapshot.model_validate(item.frozen["profile"])
@@ -222,6 +228,10 @@ async def validate_inspection(
         select(DownloadAttempt).where(DownloadAttempt.inspection_id == inspection_id)
     )
     if attempt:
+        if await db.scalar(
+            select(DownloadRecovery.id).where(DownloadRecovery.attempt_id == attempt.id).limit(1)
+        ):
+            raise HTTPException(409, "This release was rejected; review its replacement download")
         members = await download_memberships.for_attempt(db, attempt.id)
         if len(members) > 1:
             await validate_shared_inspection(
@@ -249,6 +259,11 @@ async def validate_inspection(
                 not narrators.accepts(required, names) for names in facts.narrators
             ):
                 raise HTTPException(422, "Inspected audio does not confirm every required narrator")
+        if inspection.snapshot and selection.frozen.get("recovery_profile"):
+            enforce_inspected_profile(
+                inspection.snapshot["files"],
+                ProfileSnapshot.model_validate(selection.frozen["recovery_profile"]),
+            )
         if inspection.snapshot and selection.frozen.get("profile"):
             enforce_inspected_profile(
                 inspection.snapshot["files"],

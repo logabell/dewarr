@@ -6,6 +6,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.mam import MAMClient
 from app.db.models import AuditEvent, SourceConnection, User
 from app.domain import source_network
@@ -201,7 +202,7 @@ async def test_proxy_secrets_endpoint_changes_and_disabled_state(
     configured = await configure(client, **body)
     assert configured.status_code == 200
     assert (
-        configured.json()["route"] == "required-proxy"
+        configured.json()["route"] == "proxy-preferred"
         and configured.json()["has_proxy_credentials"]
     )
     assert "proxy-secret" not in configured.text and "proxy-user" not in configured.text
@@ -352,3 +353,61 @@ async def test_network_ip_lookup_failure_does_not_reject_authenticated_cookie(
     assert data["proxy"] is None and data["proxy_status"] == "not-configured"
     assert data["direct"]["ip"] is None
     assert data["connection"]["status"] == "connected"
+
+
+async def test_unavailable_proxy_falls_back_direct_unless_strict_mode_is_enabled(
+    client, admin, monkeypatch
+):
+    from app.api import sources
+    from app.domain.mam_diagnostics import EgressResult
+
+    attempts = []
+
+    class RoutedClient:
+        def __init__(self, *args, proxy_url=None, **kwargs):
+            self.proxy_url = proxy_url
+            self.rotated_cookie = None
+            self.cooldown = 0
+            self.automation = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def test(self):
+            attempts.append(self.proxy_url)
+            if self.proxy_url:
+                error = AdapterError(FailureKind.ROUTE, "Proxy unavailable")
+                error.proxy_retryable = True
+                raise error
+
+    async def probe(proxy=None, *args):
+        return (
+            EgressResult(error="Proxy unavailable") if proxy else EgressResult(ip="198.51.100.20")
+        )
+
+    monkeypatch.setattr(source_network, "MAMClient", RoutedClient)
+    monkeypatch.setattr(sources, "probe_egress", probe)
+    configured = await configure(client, proxy_url="http://proxy.test:8888")
+    assert configured.json()["proxy_fallback_direct"] is True
+
+    fallback = (await client.post("/api/sources/mam/network/test")).json()
+    assert fallback["status"] == "degraded"
+    assert fallback["route"] == "direct-fallback"
+    assert fallback["cookie_status"] == "authenticated"
+    assert attempts == ["http://proxy.test:8888", None]
+
+    strict = await configure(
+        client,
+        expected_generation=1,
+        mam_id=None,
+        proxy_url="http://proxy.test:8888",
+        proxy_fallback_direct=False,
+    )
+    assert strict.json()["route"] == "required-proxy"
+    failed = (await client.post("/api/sources/mam/network/test")).json()
+    assert failed["status"] == "unhealthy"
+    assert failed["route"] == "proxy"
+    assert attempts == ["http://proxy.test:8888", None, "http://proxy.test:8888"]

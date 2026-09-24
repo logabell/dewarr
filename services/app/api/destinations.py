@@ -17,7 +17,7 @@ from app.db.models import (
     Library,
     Operation,
 )
-from app.domain.downloaders import connection_or_404, mapped_path
+from app.domain.downloaders import mapped_path, transfer_connection
 from app.domain.operations import transaction_lock
 from app.importing.destination_view import DestinationView, view
 from app.importing.destinations import destination_configuration, permitted
@@ -135,7 +135,7 @@ async def setup_probe(
     configuration = await destination_configuration(db, row)
     if (await view(db, row)).revision != body.expected_revision:
         raise HTTPException(409, "Destination settings changed; review them before probing")
-    downloader = await connection_or_404(db, body.downloader_id)
+    downloader = await transfer_connection(db, body.downloader_id)
     if not downloader.enabled or downloader.status != "connected":
         raise HTTPException(409, "Enable and test the downloader before checking its save folder")
     if downloader.credential_generation != body.downloader_generation:

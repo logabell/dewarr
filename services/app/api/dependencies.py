@@ -3,6 +3,7 @@ import ipaddress
 import re
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
@@ -69,9 +70,46 @@ def client_host(request: Request) -> str:
     return _forwarded_client(request) or peer
 
 
+def _origin(value: str) -> tuple[str, str, int] | None:
+    # Compare browser origins, including default ports, without accepting URL paths
+    # or credentials. urlsplit alone silently strips some control characters.
+    if any(ord(char) <= 32 or ord(char) == 127 or char == "\\" for char in value):
+        return None
+    try:
+        parts = urlsplit(value)
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.path
+            or "?" in value
+            or "#" in value
+        ):
+            return None
+        port = parts.port
+        return (
+            parts.scheme,
+            parts.hostname,
+            port if port is not None else (443 if parts.scheme == "https" else 80),
+        )
+    except ValueError:
+        return None
+
+
 def require_origin(request: Request) -> None:
-    if request.headers.get("origin") != get_settings().public_url:
-        raise HTTPException(403, "The request origin is not allowed")
+    origins = request.headers.getlist("origin")
+    origin = _origin(origins[0]) if len(origins) == 1 else None
+    # Direct LAN access may use a different hostname or published port from PUBLIC_URL.
+    # The configured origin also supports HTTPS proxies whose upstream is HTTP.
+    # Do not derive trusted origins from visitor-supplied forwarding headers.
+    request_origin = _origin(str(request.url.replace(path="", query="", fragment="")))
+    if origin is None or origin not in {request_origin, _origin(get_settings().public_url)}:
+        raise HTTPException(
+            403,
+            "The request origin is not allowed. Set PUBLIC_URL (BOOK_PUBLIC_URL for a native "
+            "installation) to the browser's scheme, hostname and port, then restart Dewarr.",
+        )
 
 
 async def current_user(request: Request, db: Database) -> User:

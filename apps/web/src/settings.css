@@ -193,10 +193,24 @@
 }
 .settings-section-body .connection-state,
 .connection-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--muted);
   text-transform: capitalize;
   font-weight: 450;
+}
+.settings-section-body .connection-state[data-state="connected"],
+.connection-state[data-state="connected"] {
+  color: #93d6bc;
+}
+.settings-section-body .connection-state[data-state="attention"],
+.connection-state[data-state="attention"] {
+  color: #e9bd75;
+}
+.connection-state svg {
+  flex-shrink: 0;
 }
 .settings-section-body .settings-block > .connection-state {
   margin: -6px 0 12px;
@@ -279,9 +293,74 @@
 .source-connection > form > .check-label {
   grid-column: 1 / -1;
 }
-.settings-section-body .source-connection > form > p[role="status"] {
-  display: none;
-} /* Status is already in the source header. */
+.credential-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.saved-secret-indicator {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.connection-action-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding-top: 2px;
+}
+.connection-action-bar > .button-row {
+  margin: 0;
+}
+.connection-test-status {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.connection-test-status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.connection-test-status:not([data-state="connected"])
+  .connection-test-status-label::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.connection-test-status[data-state="connected"] .connection-test-status-label {
+  color: #81c9a3;
+}
+.connection-test-status:is([data-state="failed"], [data-state="attention"])
+  .connection-test-status-label {
+  color: #e9bd75;
+}
+.connection-test-status[data-state="pending"] .connection-test-status-label {
+  color: var(--accent);
+}
+.connection-test-status-detail {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .connection-action-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 .setting-help {
   display: inline-flex;
   position: relative;
@@ -1451,14 +1530,38 @@ button.help-button:hover {
   max-width: 220px;
 }
 .reading-accounts .reading-connect-form {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 12px;
 }
-.reading-connect-form label {
-  flex: 1 1 240px;
+.settings-section-body .reading-connect-form label {
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+}
+.settings-section-body .reading-accounts .reading-connect-form input {
+  max-width: none;
+}
+.settings-section-body .reading-accounts .reading-connect-form > button {
+  min-height: 38px;
+  margin: 0;
+  align-self: end;
+}
+.reading-accounts .reading-connect-form-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.reading-connect-form-pair > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+@container (max-width: 580px) {
+  .reading-accounts .reading-connect-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .reading-connect-form > button {
+    justify-self: start;
+  }
 }
 .storygraph-setup ol {
   margin: 0;
@@ -2158,14 +2261,17 @@ button.help-button:hover {
   color: var(--accent);
 }
 .settings-section-body .reading-accounts {
+  --control-height: 38px;
+  --control-radius: 8px;
+  --control-font-size: 12px;
   max-width: 960px;
-  gap: 0;
+  gap: 14px;
 }
 .settings-section-body .reading-accounts > .reading-account,
 .reading-accounts .reading-account {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
+  background: color-mix(in srgb, var(--surface) 25%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 10px;
   padding: 0;
   margin: 0;
   gap: 0;
@@ -2177,10 +2283,70 @@ button.help-button:hover {
   margin-left: auto;
   text-transform: none;
 }
-.reading-connection-body {
+.reading-accounts .reading-connection {
+  border: 0;
+  margin: 0;
+}
+.settings-section-body .reading-connection > summary {
+  padding: 14px 18px;
+  min-height: 60px;
+}
+.reading-account-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.reading-accounts .reading-account-heading .help-button {
+  --control-height: 28px;
+  width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.reading-accounts .reading-account-heading .help-button:hover {
+  color: var(--accent);
+  background: var(--surface);
+}
+.settings-section-body .reading-connection > .reading-connection-body {
   display: grid;
-  gap: 12px;
-  padding: 2px 0 16px;
+  gap: 16px;
+  padding: 0 18px 18px;
+  margin: 0;
+}
+.reading-connection-note,
+.reading-connection-tools p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.reading-connection-tools .reading-sign-in {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 550;
+}
+.reading-sign-in:hover {
+  background: var(--surface);
+}
+@container (max-width: 400px) {
+  .settings-section-body .reading-connection > summary {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .reading-connection > summary > .connection-state {
+    font-size: 10px;
+  }
+  .settings-section-body .reading-connection > .reading-connection-body {
+    padding: 0 12px 14px;
+  }
 }
 .settings-section-body .reading-account details:not([open]) > :not(summary) {
   display: none;
@@ -2192,14 +2358,10 @@ button.help-button:hover {
   gap: 12px;
   min-width: 0;
 }
-.reading-connection-tools a,
-.reading-connection-tools .reading-profile-link {
+.reading-connection-tools a:not(.reading-sign-in) {
   margin-left: 0;
   font-size: 12px;
   color: var(--muted);
-}
-.reading-connection-tools .setting-help {
-  margin-left: auto;
 }
 .reading-account-title p {
   margin: 4px 0 0;
@@ -2672,9 +2834,15 @@ button.help-button:hover {
   background: #81c9a312;
 }
 .mam-network[data-health="unhealthy"] .mam-network-badge,
-.mam-network[data-health="degraded"] .mam-network-badge {
+.mam-network[data-health="degraded"] .mam-network-badge,
+.mam-action-status[data-health="unhealthy"] .mam-network-badge,
+.mam-action-status[data-health="degraded"] .mam-network-badge {
   color: #e9bd75;
   background: #e9bd7512;
+}
+.mam-action-status[data-health="healthy"] .mam-network-badge {
+  color: #81c9a3;
+  background: #81c9a312;
 }
 .mam-network .mam-network-description {
   margin: 8px 0 0;
@@ -2726,16 +2894,51 @@ button.help-button:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   margin: 0;
-  padding: 12px 14px 14px;
+  padding: 0;
   min-width: 0;
   max-width: 100%;
-  display: grid;
-  gap: 10px;
 }
-.account-automation legend {
-  padding: 0 4px;
+.account-automation > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  min-height: 44px;
   font-size: 13px;
   font-weight: 600;
+}
+.account-automation > summary::-webkit-details-marker {
+  display: none;
+}
+.account-automation > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+  margin-right: 3px;
+  flex-shrink: 0;
+}
+.account-automation[open] > summary::before {
+  transform: rotate(45deg);
+}
+.account-automation-state {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.account-automation[open] {
+  padding-bottom: 14px;
+}
+.account-automation[open] > :not(summary) {
+  margin: 0 14px 10px;
+}
+.account-automation[open] > :last-child {
+  margin-bottom: 0;
 }
 .account-automation .muted,
 .account-automation .setting-subheading {
@@ -2768,6 +2971,28 @@ button.help-button:hover {
 }
 .account-automation input[type="number"] {
   max-width: 160px;
+}
+.mam-connection-footer {
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
+}
+.mam-action-status {
+  display: grid;
+  gap: 8px;
+  max-width: 640px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mam-action-status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mam-action-status .notice {
+  margin: 0;
 }
 
 /* Compact log ledger; expand a row for its full context. */

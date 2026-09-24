@@ -130,6 +130,35 @@ async def connect(client):
     assert "hc-private" not in response.text
 
 
+async def test_verified_connection_survives_unchanged_saves(client, admin, database, provider):
+    await connect(client)
+    tested = (await client.post("/api/metadata/account/test")).json()
+    assert tested["status"] == "connected"
+    assert tested["last_success_at"]
+
+    for payload in ({"enabled": True}, {"token": "hc-private-test-token", "enabled": True}):
+        saved = await client.put("/api/metadata/account", json=payload)
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "connected"
+        assert datetime.fromisoformat(saved.json()["last_success_at"]) == datetime.fromisoformat(
+            tested["last_success_at"]
+        )
+        reloaded = (await client.get("/api/metadata/account")).json()
+        assert reloaded == saved.json()
+
+    changed = await client.put("/api/metadata/account", json={"token": "replacement-token"})
+    assert changed.json()["status"] == "untested"
+    assert changed.json()["last_success_at"] is None
+
+    await client.post("/api/metadata/account/test")
+    disabled = await client.put("/api/metadata/account", json={"enabled": False})
+    assert disabled.json()["status"] == "disabled"
+    assert not disabled.json()["enabled"]
+    enabled = await client.put("/api/metadata/account", json={"enabled": True})
+    assert enabled.json()["status"] == "untested"
+    assert enabled.json()["last_success_at"] is None
+
+
 async def test_catalog_import_provenance_locks_and_version_identity(
     client, admin, database, provider
 ):

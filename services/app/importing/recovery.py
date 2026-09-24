@@ -12,6 +12,7 @@ from app.importing.publication import (
     PublicationSpec,
     checked_source,
     conversion_inputs,
+    has_publication_marker,
     object_id,
     private_staging,
     published_names,
@@ -85,7 +86,10 @@ def read_publication(entry, roots):
                 if (
                     not receipt
                     or not receipt.get("stage_identity")
-                    or not same_object(folder, receipt["stage_identity"])
+                    or (
+                        not same_object(folder, receipt["stage_identity"])
+                        and not has_publication_marker(folder, receipt)
+                    )
                 ):
                     return (
                         "conflict",
@@ -94,7 +98,7 @@ def read_publication(entry, roots):
                         receipt,
                     )
                 files = publication_identities(folder, spec)
-                verify_item(folder, spec, deadline, receipt.get("derived"))
+                verify_item(folder, spec, deadline, receipt.get("derived"), receipt)
                 if files != publication_identities(folder, spec):
                     raise ScanHeld("Published media or metadata changed during observation")
                 evidence["media_identities"] = {name: files[name] for name in published_names(spec)}

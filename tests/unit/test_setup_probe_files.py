@@ -14,6 +14,7 @@ from app.importing.destinations import (
     holds_journals,
 )
 from app.importing.filesystem import InspectionError, describe_os_error
+from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
 
 
 @pytest.fixture
@@ -50,6 +51,80 @@ def test_failed_link_reports_copy_capability_without_claiming_a_hardlink(roots, 
     assert not report["hardlink"] and report["hardlink_error"] == "EXDEV"
     assert report["copy"] and report["no_replace"]
     assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_setup_probe_freezes_identity_after_the_writer_is_closed(roots, monkeypatch):
+    """SMB can finalize mtime on reopening/closing a newly written file."""
+    source, target, stage = roots
+    real_open, real_close = os.open, os.close
+    writers = {}
+
+    def settle(path):
+        if path.exists():
+            observed = path.stat()
+            os.utime(path, ns=(observed.st_atime_ns, observed.st_mtime_ns + 1_000_000))
+
+    def opening(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if str(path).startswith(".book-search-route-"):
+            full_path = source / path
+            if flags & os.O_CREAT:
+                writers[fd] = full_path
+            elif full_path in writers.values():
+                settle(full_path)
+        return fd
+
+    def closing(fd):
+        path = writers.pop(fd, None)
+        if path is not None:
+            settle(path)
+        return real_close(fd)
+
+    monkeypatch.setattr(publication.os, "open", opening)
+    monkeypatch.setattr(publication.os, "close", closing)
+    report = publication.probe_download_folder(source, "", target, stage)
+    assert report["copy"] and report["no_replace"]
+    assert not writers
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_writer_close_error_does_not_retry_a_reused_descriptor(roots, monkeypatch):
+    source, target, stage = roots
+    real_open, real_close = os.open, os.close
+    writer = None
+    replacement = None
+
+    def opening(path, flags, *args, **kwargs):
+        nonlocal writer
+        fd = real_open(path, flags, *args, **kwargs)
+        if str(path).startswith(".book-search-route-") and flags & os.O_CREAT:
+            writer = fd
+        return fd
+
+    def closing(fd):
+        nonlocal replacement
+        if fd == writer and replacement is None:
+            real_close(fd)
+            replacement = real_open(os.devnull, os.O_RDONLY)
+            assert replacement == fd
+            raise OSError(errno.EIO, "synthetic close error after descriptor release")
+        return real_close(fd)
+
+    monkeypatch.setattr(publication.os, "open", opening)
+    monkeypatch.setattr(publication.os, "close", closing)
+    try:
+        with pytest.raises(OSError, match="synthetic close error"):
+            publication.probe_download_folder(source, "", target, stage)
+        assert replacement is not None
+        os.fstat(replacement)  # A second close must not consume this unrelated FD.
+        assert all(not list(root.iterdir()) for root in roots)
+    finally:
+        if replacement is not None:
+            try:
+                real_close(replacement)
+            except OSError as error:
+                if error.errno != errno.EBADF:
+                    raise
 
 
 def test_failed_probe_removes_owned_source_file(roots, monkeypatch):
@@ -180,3 +255,53 @@ def test_staging_with_receipts_is_recognized(media):
 def test_os_errors_are_explained_with_their_code(code, expected):
     message = describe_os_error(OSError(code, os.strerror(code)))
     assert expected in message and message.endswith(f"({errno.errorcode[code]})")
+
+
+@pytest.mark.usefixtures("path_bound_directory_handles")
+def test_probe_copy_fallback_does_not_use_a_moved_directory_handle(roots, monkeypatch):
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EPERM, "Hardlinks not supported")
+
+    monkeypatch.setattr(publication.os, "link", unsupported)
+    source, target, stage = roots
+    result = publication.probe_download_folder(source, "", target, stage)
+    assert not result["hardlink"] and result["hardlink_error"] == "EPERM"
+    assert result["copy"] and result["no_replace"]
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_probe_error_preserves_failed_operation_and_cleans_up(roots, monkeypatch):
+    real_move = publication.no_replace
+
+    def fail_library_move(source_fd, source_name, destination_fd, destination_name):
+        if source_name.startswith("probe-"):
+            raise OSError(errno.ENOENT, "Synthetic rename failure")
+        return real_move(source_fd, source_name, destination_fd, destination_name)
+
+    monkeypatch.setattr(publication, "no_replace", fail_library_move)
+    source, target, stage = roots
+    with pytest.raises(OSError) as caught:
+        publication.probe_download_folder(source, "", target, stage)
+    assert caught.value.errno == errno.ENOENT
+    assert caught.value.probe_report["failure_step"] == "checking safe library publication"
+    assert caught.value.probe_report["error_code"] == "ENOENT"
+    assert caught.value.probe_report["copy"]
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_incomplete_probe_marker_keeps_original_error_and_cleans_owned_files(roots, monkeypatch):
+    real_write = publication.write_all
+
+    def fail_marker(fd, content):
+        if content.startswith(b"book-search destination probe "):
+            os.write(fd, content[:4])
+            raise OSError(errno.ENOSPC, "Synthetic full disk")
+        return real_write(fd, content)
+
+    monkeypatch.setattr(publication, "write_all", fail_marker)
+    source, target, stage = roots
+    with pytest.raises(OSError) as caught:
+        publication.probe_download_folder(source, "", target, stage)
+    assert caught.value.errno == errno.ENOSPC
+    assert caught.value.probe_report["error_code"] == "ENOSPC"
+    assert all(not list(root.iterdir()) for root in roots)

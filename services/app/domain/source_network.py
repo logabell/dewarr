@@ -1,6 +1,7 @@
 """Shared source sessions: short database transactions surround bounded HTTP calls."""
 
 import asyncio
+import logging
 import math
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -16,6 +17,7 @@ from app.security import decrypt_secrets, encrypt_secrets
 
 REQUEST_INTERVAL = 2.0
 LEASE_SECONDS = 90
+logger = logging.getLogger(__name__)
 
 
 async def check_actor(db, user_id, *, admin=False):
@@ -32,6 +34,7 @@ async def source_call(
     argument=None,
     *,
     with_generation=False,
+    with_route=False,
     expected_generation=None,
     recovery_guard=None,
 ):
@@ -71,11 +74,23 @@ async def source_call(
         row.lease_token, row.lease_until = token, now + timedelta(seconds=lease_for)
         row.next_request_at = due + timedelta(seconds=REQUEST_INTERVAL)
         generation, endpoint, proxy = row.generation, row.base_url, row.proxy_url
+        proxy_fallback_direct = row.proxy_fallback_direct
         automation = stored_automation(row.automation)
         secrets = decrypt_secrets(row.encrypted_secrets)
     client = None
     failure = None
     value = None
+    used_route = "proxy" if proxy else "direct"
+
+    async def invoke(active_client):
+        active_client.automation = automation
+        async with active_client:
+            return (
+                await getattr(active_client, operation)(argument)
+                if argument is not None
+                else await active_client.test()
+            )
+
     try:
         if wait:
             await asyncio.sleep(wait)
@@ -87,13 +102,33 @@ async def source_call(
             proxy_password=secrets.get("proxy_password"),
             request_interval=REQUEST_INTERVAL,
         )
-        client.automation = automation
-        async with client:
-            value = (
-                await getattr(client, operation)(argument)
-                if argument is not None
-                else await client.test()
+        try:
+            value = await invoke(client)
+        except AdapterError as error:
+            if not (proxy and proxy_fallback_direct and getattr(error, "proxy_retryable", False)):
+                raise
+            logger.warning(
+                "Configured MAM proxy failed; retrying through the direct route (%s)",
+                error.kind.value,
             )
+            fallback_cookie = client.rotated_cookie or secrets["mam_id"]
+            client = MAMClient(
+                endpoint,
+                fallback_cookie,
+                request_interval=REQUEST_INTERVAL,
+            )
+            if fallback_cookie != secrets["mam_id"]:
+                client.rotated_cookie = fallback_cookie
+            try:
+                value = await invoke(client)
+            except AdapterError as direct_error:
+                raise AdapterError(
+                    direct_error.kind,
+                    "The configured MAM proxy failed and the direct fallback also failed. "
+                    + str(direct_error),
+                    retry_after=direct_error.retry_after,
+                ) from direct_error
+            used_route = "direct-fallback"
     except AdapterError as error:
         failure = error
     except BaseException:
@@ -142,4 +177,10 @@ async def source_call(
         await check_actor(db, user_id, admin=operation in {"test", "maintain"})
     if failure:
         raise failure
-    return (value, generation) if with_generation else value
+    if with_generation and with_route:
+        return value, generation, used_route
+    if with_generation:
+        return value, generation
+    if with_route:
+        return value, used_route
+    return value

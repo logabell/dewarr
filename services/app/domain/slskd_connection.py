@@ -9,10 +9,9 @@ from sqlalchemy import select
 
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.slskd import SEARCH_BUDGET_SECONDS, SEARCH_CALL_TIMEOUT, SlskdClient
-from app.config import get_settings
 from app.db.models import AuditEvent, Integration, SourceConnection
 from app.db.session import session_factory
-from app.domain.downloaders import SETTINGS_LOCK, relative_to
+from app.domain.downloaders import SETTINGS_LOCK, remember_download_root
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
 from app.security import decrypt_secrets, encrypt_secrets
@@ -33,26 +32,6 @@ async def integration(db):
         .order_by(Integration.created_at)
         .limit(1)
     )
-
-
-def remember_download_root(row, observed_path):
-    mappings = list(row.config.get("mappings") or [])
-    if not mappings:
-        candidates = [
-            (key, str(root))
-            for key, root in get_settings().import_sources.items()
-            if relative_to(observed_path, str(root)) is not None
-        ]
-        if candidates:
-            key, root = max(candidates, key=lambda item: len(item[1]))
-            mappings = [{"download_root": root, "source_key": key, "source_path": root}]
-    row.config = {
-        **row.config,
-        "save_path": observed_path,
-        "category": row.config.get("category", ""),
-        "mappings": mappings,
-        "client_managed": True,
-    }
 
 
 async def save(db, admin, body):
@@ -154,7 +133,7 @@ async def test_connection(user_id):
                     "protocols": ["soulseek"],
                     "version": observed["version"],
                 }
-                remember_download_root(client_row, observed["download_root"])
+                await remember_download_root(db, client_row, observed["download_root"])
         if failure:
             source.next_request_at = datetime.now(UTC) + timedelta(
                 seconds=max(60, failure.retry_after or 0)

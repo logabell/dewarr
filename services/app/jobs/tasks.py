@@ -259,7 +259,7 @@ async def schedule_downloads(timestamp: int) -> None:
         rows = await db.scalars(
             select(DownloadAttempt)
             .where(
-                DownloadAttempt.state.not_in(["complete", "cancelled", "held"]),
+                DownloadAttempt.state.not_in(["complete", "cancelled"]),
                 DownloadAttempt.next_check_at <= now,
                 or_(DownloadAttempt.lease_until.is_(None), DownloadAttempt.lease_until <= now),
             )
@@ -296,6 +296,9 @@ async def schedule_downloads(timestamp: int) -> None:
     from app.domain.series_acquisition import schedule as schedule_series
 
     await schedule_series()
+    from app.domain.download_recovery import schedule as schedule_recovery
+
+    await schedule_recovery()
 
 
 @tasks.task(
@@ -482,3 +485,25 @@ async def schedule_mam_account(timestamp: int) -> None:
     from app.domain.account_automation import run
 
     await run()
+
+
+@tasks.periodic(cron="* * * * *")
+@tasks.task(name="notifications.dispatch", queue="notifications", lock="notifications.dispatch")
+async def dispatch_notifications(timestamp: int = 0) -> None:
+    from app.notifications.delivery import tick
+
+    await tick()
+
+
+@tasks.task(name="acquisition.recover-download", queue="downloads", retry=3)
+async def recover_failed_download(recovery_id: str) -> None:
+    from app.domain.download_recovery import run
+
+    await run(UUID(recovery_id))
+
+
+@tasks.task(name="acquisition.reject-download", queue="downloads", retry=3)
+async def reject_failed_import(attempt_id: str) -> None:
+    from app.domain.download_recovery import reject_inspected
+
+    await reject_inspected(UUID(attempt_id))

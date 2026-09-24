@@ -7,14 +7,17 @@ from uuid import uuid4
 
 from app.importing.filesystem import beneath, directory
 from app.importing.publication import (
+    PUBLICATION_MARKER,
     PublicationError,
     entry_lock,
     generated_files,
+    has_publication_marker,
     object_id,
     private_staging,
     publication_lock,
     published_names,
     read_receipt,
+    remove_publication_marker,
     same_object,
     specification_fingerprint,
     sync_directory,
@@ -32,12 +35,20 @@ def remove_stage(staging, receipt, spec, checkpoint):
             raise PublicationError("Cancellation staging identity changed")
         media = {file.name: file for file in spec.files}
         known = published_names(spec) | set(generated_files(spec))
+        if receipt.get("publication_marker"):
+            known.add(PUBLICATION_MARKER)
         names = os.listdir(folder)
         if set(names) - known:
             raise PublicationError("Unrecognized staged files need review before cancellation")
         identities = {}
         # Validate every existing file before removing any of them.
         for filename in names:
+            if filename == PUBLICATION_MARKER:
+                if not has_publication_marker(folder, receipt):
+                    raise PublicationError("Staged publication marker changed")
+                with beneath(folder, filename) as file:
+                    identities[filename] = object_id(file)
+                continue
             expected = receipt.get("partial_files", {}).get(filename)
             if filename in media and spec.mode == "hardlink":
                 expected = media[filename].identity
@@ -134,13 +145,16 @@ def cancel_files(spec, *, guard=nullcontext, checkpoint=lambda _: None):
                 return cancel_renamed(root, staging, name, receipt, spec)
             try:
                 with beneath(root, spec.folder, folder=True) as item:
-                    if receipt.get("stage_identity") and same_object(
-                        item, receipt["stage_identity"]
+                    if receipt.get("stage_identity") and (
+                        same_object(item, receipt["stage_identity"])
+                        or has_publication_marker(item, receipt)
                     ):
                         # Keep published bytes, including later metadata edits. The
                         # ordinary confirmation path still verifies media and ABS.
+                        receipt["stage_identity"] = object_id(item)
                         receipt["state"] = "published"
                         write_receipt(staging, name, receipt)
+                        remove_publication_marker(item, receipt)
                         return receipt
             except FileNotFoundError:
                 pass

@@ -518,3 +518,89 @@ async def test_remote_path_map_translates_client_paths_to_a_worker_folder(
     assert replaced.json()["mappings"][0]["worker_path"] == str(moved)
     async with database() as db:
         assert (await db.get(ImportStorageSettings, 1)).sources == {"elsewhere": str(moved)}
+
+
+@pytest.mark.parametrize("shared, protected", [(True, False), (False, False), (True, True)])
+async def test_client_managed_shared_volume_is_automatically_bound(
+    client, admin, database, monkeypatch, tmp_path, shared, protected
+):
+    from app.domain import download_folders
+
+    volume = tmp_path / "mounted"
+    folder = volume / "torrents" / "ebooks"
+    folder.mkdir(parents=True)
+    reported = str(folder) if shared else "/remote/torrents/ebooks"
+    expected_mapping = shared and not protected
+    monkeypatch.setattr(
+        get_settings(), "import_destinations", {"ebooks": folder} if protected else {}
+    )
+    monkeypatch.setattr(get_settings(), "import_sources", {})
+    monkeypatch.setattr(download_folders, "volume_roots", lambda: {volume})
+
+    async def handler(request):
+        assert request.method == "GET"
+        return {
+            "app/version": httpx.Response(200, text="v5.2.3"),
+            "app/webapiVersion": httpx.Response(200, text="2.15.1"),
+            "app/preferences": httpx.Response(200, json={"save_path": reported}),
+            "torrents/categories": httpx.Response(200, json={}),
+        }[request.url.path.removeprefix("/api/v2/")]
+
+    monkeypatch.setattr(
+        downloaders,
+        "QbitClient",
+        lambda *args: QbitClient(*args, transport=httpx.MockTransport(handler)),
+    )
+    record = (await client.post("/api/downloaders", json={"base_url": "http://qbit.test"})).json()
+    response = await client.post(f"/api/downloaders/{record['id']}/test")
+    assert response.status_code == 200, response.text
+    tested = response.json()
+    assert tested["status"] == "connected"
+    assert tested["mappings_current"] is expected_mapping
+    assert tested["save_path"] == reported
+    async with database() as db:
+        storage = await db.get(ImportStorageSettings, 1)
+        if expected_mapping:
+            assert tested["mappings"][0]["worker_path"] == reported
+            assert storage.sources == {"ebooks": reported}
+        else:
+            assert not tested["mappings"]
+            assert storage is None
+
+
+async def test_download_folder_browser_is_admin_only(client):
+    assert (await client.get("/api/downloaders/folders")).status_code == 401
+
+
+async def test_download_folder_browser_lists_mounted_directories(
+    client, admin, monkeypatch, tmp_path
+):
+    from app.domain import download_folders
+
+    (tmp_path / "ebooks").mkdir()
+    monkeypatch.setattr(download_folders, "volume_roots", lambda: {tmp_path})
+    monkeypatch.setattr(get_settings(), "import_sources", {})
+    assert (await client.get("/api/downloaders/folders")).json()["directories"] == [str(tmp_path)]
+    listed = await client.get("/api/downloaders/folders", params={"path": str(tmp_path)})
+    assert listed.json()["directories"] == [str(tmp_path / "ebooks")]
+    assert (
+        await client.get("/api/downloaders/folders", params={"path": "/etc"})
+    ).status_code == 422
+
+
+async def test_mapping_can_be_removed_and_endpoint_changes_clear_detected_folder(
+    client, admin, downloader_http
+):
+    record = await create(client)
+    cleared = await client.put(
+        f"/api/downloaders/{record['id']}",
+        json={"base_url": record["base_url"], "expected_generation": 1, "mappings": []},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["mappings"] == []
+    changed = await client.put(
+        f"/api/downloaders/{record['id']}",
+        json={"base_url": "http://different.test", "expected_generation": 2},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["save_path"] == ""

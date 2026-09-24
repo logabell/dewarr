@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Dewarr",
-    "version": "0.2.3"
+    "version": "0.3.0"
   },
   "paths": {
     "/api/application/release": {
@@ -34,6 +34,286 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApplicationReleaseHistory"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Settings",
+        "operationId": "settings_api_notifications_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettingsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/channels": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Create",
+        "operationId": "create_api_notifications_channels_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationChannelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/channels/{channel_id}": {
+      "put": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Save",
+        "operationId": "save_api_notifications_channels__channel_id__put",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationChannelInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Remove",
+        "operationId": "remove_api_notifications_channels__channel_id__delete",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/policy": {
+      "put": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Policy",
+        "operationId": "policy_api_notifications_policy_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPolicyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPolicyInput"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/channels/{channel_id}/deliveries": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "History",
+        "operationId": "history_api_notifications_channels__channel_id__deliveries_get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationDeliveryView"
+                  },
+                  "title": "Response History Api Notifications Channels  Channel Id  Deliveries Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/channels/{channel_id}/test": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Test",
+        "operationId": "test_api_notifications_channels__channel_id__test_post",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5665,6 +5945,157 @@
         }
       }
     },
+    "/api/following": {
+      "get": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Following",
+        "operationId": "following_api_following_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogFollowView"
+                  },
+                  "type": "array",
+                  "title": "Response Following Api Following Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Follow",
+        "operationId": "follow_api_following_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogFollowInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogFollowView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/following/{list_id}": {
+      "patch": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Edit",
+        "operationId": "edit_api_following__list_id__patch",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogFollowView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Unfollow",
+        "operationId": "unfollow_api_following__list_id__delete",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/lists/{list_id}/subscription": {
       "get": {
         "tags": [
@@ -10992,6 +11423,23 @@
               "format": "uuid",
               "title": "Attempt Id"
             }
+          },
+          {
+            "name": "work_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Work Id"
+            }
           }
         ],
         "responses": {
@@ -11192,6 +11640,275 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RepairView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/approvals": {
+      "get": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Pending Approvals",
+        "operationId": "pending_approvals_api_acquisition_recovery_approvals_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecoveryApprovalView"
+                  },
+                  "type": "array",
+                  "title": "Response Pending Approvals Api Acquisition Recovery Approvals Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/settings": {
+      "get": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Settings",
+        "operationId": "settings_api_acquisition_recovery_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryConfiguration"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Save Settings",
+        "operationId": "save_settings_api_acquisition_recovery_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryConfiguration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/blocklist": {
+      "get": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Blocklist",
+        "operationId": "blocklist_api_acquisition_recovery_blocklist_get",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BlockView"
+                  },
+                  "title": "Response Blocklist Api Acquisition Recovery Blocklist Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/blocklist/{block_id}": {
+      "delete": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Remove Block",
+        "operationId": "remove_block_api_acquisition_recovery_blocklist__block_id__delete",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/reports": {
+      "post": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Report",
+        "operationId": "report_api_acquisition_recovery_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DownloadRecoveryView"
+                  },
+                  "type": "array",
+                  "title": "Response Report Api Acquisition Recovery Reports Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/acquisition/recovery/{recovery_id}/approve": {
+      "post": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Approve",
+        "operationId": "approve_api_acquisition_recovery__recovery_id__approve_post",
+        "parameters": [
+          {
+            "name": "recovery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Recovery Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadRecoveryView"
                 }
               }
             }
@@ -12451,6 +13168,56 @@
         }
       }
     },
+    "/api/organization/library-folders/browse": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "summary": "Browse Library Folders",
+        "operationId": "browse_library_folders_api_organization_library_folders_browse_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFolderBrowseView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/organization/library-folders/{medium}": {
       "put": {
         "tags": [
@@ -12585,7 +13352,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PolicyView"
+                  "$ref": "#/components/schemas/app__api__automatic_imports__PolicyView"
                 }
               }
             }
@@ -12636,7 +13403,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PolicyView"
+                  "$ref": "#/components/schemas/app__api__automatic_imports__PolicyView"
                 }
               }
             }
@@ -12900,6 +13667,197 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas/me": {
+      "get": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Mine",
+        "operationId": "mine_api_request_quotas_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas/users": {
+      "get": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Users",
+        "operationId": "users_api_request_quotas_users_get",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Usage"
+                  },
+                  "title": "Response Users Api Request Quotas Users Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas": {
+      "get": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Policies",
+        "operationId": "policies_api_request_quotas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/app__api__request_quotas__PolicyView"
+                  },
+                  "type": "array",
+                  "title": "Response Policies Api Request Quotas Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/request-quotas/{scope}": {
+      "put": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Save",
+        "operationId": "save_api_request_quotas__scope__put",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scope"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Rules"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__request_quotas__PolicyView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "request-quotas"
+        ],
+        "summary": "Inherit",
+        "operationId": "inherit_api_request_quotas__scope__delete",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -14476,6 +15434,56 @@
         }
       }
     },
+    "/api/downloaders/folders": {
+      "get": {
+        "tags": [
+          "downloaders"
+        ],
+        "summary": "Folders",
+        "operationId": "folders_api_downloaders_folders_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadFolderView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/downloaders/{connection_id}": {
       "put": {
         "tags": [
@@ -14608,6 +15616,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PathPreviewView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/downloaders/{connection_id}/mappings": {
+      "put": {
+        "tags": [
+          "downloaders"
+        ],
+        "summary": "Update Mappings",
+        "operationId": "update_mappings_api_downloaders__connection_id__mappings_put",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloaderView"
                 }
               }
             }
@@ -16056,7 +17117,7 @@
             "maximum": 1000.0,
             "exclusiveMinimum": 0.0,
             "title": "Ratio Below",
-            "default": 1.5
+            "default": 2.5
           },
           "ratio_buy_gb": {
             "type": "integer",
@@ -16108,7 +17169,7 @@
             "maximum": 168.0,
             "minimum": 1.0,
             "title": "Upload Interval Hours",
-            "default": 6
+            "default": 3
           }
         },
         "type": "object",
@@ -16282,6 +17343,13 @@
             },
             "type": "array",
             "title": "Records"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
           },
           "total": {
             "type": "integer",
@@ -16987,6 +18055,37 @@
             },
             "type": "array",
             "title": "Import Continuations"
+          },
+          "attempt_chain": {
+            "items": {
+              "$ref": "#/components/schemas/RecoveryStepView"
+            },
+            "type": "array",
+            "title": "Attempt Chain"
+          },
+          "recoveries": {
+            "items": {
+              "$ref": "#/components/schemas/RecoveryStatusView"
+            },
+            "type": "array",
+            "title": "Recoveries"
+          },
+          "can_report_problem": {
+            "type": "boolean",
+            "title": "Can Report Problem",
+            "default": false
+          },
+          "imported_asset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imported Asset Id"
           }
         },
         "type": "object",
@@ -17883,6 +18982,73 @@
         ],
         "title": "BatchView"
       },
+      "BlockView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "work_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Work Id"
+          },
+          "medium": {
+            "type": "string",
+            "title": "Medium"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Actor Id"
+          },
+          "automatic": {
+            "type": "boolean",
+            "title": "Automatic"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "work_title": {
+            "type": "string",
+            "title": "Work Title"
+          },
+          "actor_name": {
+            "type": "string",
+            "title": "Actor Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "work_id",
+          "medium",
+          "source",
+          "title",
+          "reason",
+          "actor_id",
+          "automatic",
+          "created_at",
+          "work_title",
+          "actor_name"
+        ],
+        "title": "BlockView"
+      },
       "BookData": {
         "properties": {
           "rating": {
@@ -18329,6 +19495,92 @@
         ],
         "title": "CapacityView"
       },
+      "CatalogFollowInput": {
+        "properties": {
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "series"
+            ],
+            "title": "Source Kind"
+          },
+          "external_id": {
+            "type": "integer",
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "External Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/FollowFilters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_kind",
+          "external_id",
+          "name"
+        ],
+        "title": "CatalogFollowInput"
+      },
+      "CatalogFollowView": {
+        "properties": {
+          "list_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "List Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "series"
+            ],
+            "title": "Source Kind"
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/FollowFilters"
+          },
+          "subscription": {
+            "$ref": "#/components/schemas/SubscriptionView"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_id",
+          "name",
+          "source_kind",
+          "external_id",
+          "filters",
+          "subscription",
+          "mode",
+          "active"
+        ],
+        "title": "CatalogFollowView"
+      },
       "CatalogPreparationItem": {
         "properties": {
           "external_id": {
@@ -18493,6 +19745,33 @@
           "can_undo"
         ],
         "title": "ChangeView"
+      },
+      "ChannelSecrets": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Url",
+            "default": ""
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Urls"
+          },
+          "token": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Token",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ChannelSecrets"
       },
       "ChoicePage": {
         "properties": {
@@ -21009,6 +22288,51 @@
         "type": "object",
         "title": "DownloadConstraints"
       },
+      "DownloadFolderView": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directories"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "parent",
+          "directories",
+          "truncated"
+        ],
+        "title": "DownloadFolderView"
+      },
       "DownloadMapping": {
         "properties": {
           "download_root": {
@@ -21116,6 +22440,60 @@
         ],
         "title": "DownloadMemberView"
       },
+      "DownloadRecoveryView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "replacement_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "selection_id",
+          "attempt_id",
+          "state",
+          "reason",
+          "message",
+          "replacement_id"
+        ],
+        "title": "DownloadRecoveryView"
+      },
       "DownloaderChoice": {
         "properties": {
           "id": {
@@ -21135,7 +22513,8 @@
             "type": "string",
             "enum": [
               "torrent",
-              "nzb"
+              "nzb",
+              "soulseek"
             ],
             "title": "Protocol"
           },
@@ -21172,6 +22551,8 @@
             "type": "string",
             "enum": [
               "qbittorrent",
+              "transmission",
+              "deluge",
               "sabnzbd",
               "nzbget"
             ],
@@ -21260,8 +22641,7 @@
                   "$ref": "#/components/schemas/DownloadMapping"
                 },
                 "type": "array",
-                "maxItems": 20,
-                "minItems": 1
+                "maxItems": 20
               },
               {
                 "type": "null"
@@ -21331,8 +22711,11 @@
             "type": "string",
             "enum": [
               "qbittorrent",
+              "transmission",
+              "deluge",
               "sabnzbd",
-              "nzbget"
+              "nzbget",
+              "slskd"
             ],
             "title": "Kind"
           },
@@ -21417,6 +22800,20 @@
             "type": "boolean",
             "title": "Dispatch Available",
             "default": false
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Capabilities"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
           }
         },
         "type": "object",
@@ -22213,6 +23610,74 @@
           "server_kind"
         ],
         "title": "FolderOption"
+      },
+      "FollowEdit": {
+        "properties": {
+          "expected_generation": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Generation"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/FollowFilters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_generation",
+          "enabled",
+          "filters"
+        ],
+        "title": "FollowEdit"
+      },
+      "FollowFilters": {
+        "properties": {
+          "compilations": {
+            "type": "boolean",
+            "title": "Compilations",
+            "default": false
+          },
+          "box_sets": {
+            "type": "boolean",
+            "title": "Box Sets",
+            "default": false
+          },
+          "anthologies": {
+            "type": "boolean",
+            "title": "Anthologies",
+            "default": false
+          },
+          "non_main_series": {
+            "type": "boolean",
+            "title": "Non Main Series",
+            "default": false
+          },
+          "coauthored": {
+            "type": "boolean",
+            "title": "Coauthored",
+            "default": true
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z]{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FollowFilters"
       },
       "FollowReadingList": {
         "properties": {
@@ -23829,6 +25294,52 @@
         ],
         "title": "LibraryDiscoveryShelf"
       },
+      "LibraryFolderBrowseView": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directories"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "parent",
+          "directories",
+          "truncated"
+        ],
+        "title": "LibraryFolderBrowseView"
+      },
       "LibraryGroup": {
         "properties": {
           "name": {
@@ -24916,6 +26427,11 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct",
+            "default": true
+          },
           "mam_id": {
             "anyOf": [
               {
@@ -25009,6 +26525,10 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct"
+          },
           "has_session": {
             "type": "boolean",
             "title": "Has Session"
@@ -25062,6 +26582,7 @@
           "enabled",
           "base_url",
           "proxy_url",
+          "proxy_fallback_direct",
           "has_session",
           "has_proxy_credentials",
           "generation",
@@ -25085,6 +26606,15 @@
           "status": {
             "type": "string",
             "title": "Status"
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "proxy",
+              "direct-fallback"
+            ],
+            "title": "Route"
           },
           "cookie_status": {
             "type": "string",
@@ -25117,6 +26647,7 @@
           "connection",
           "checked_at",
           "status",
+          "route",
           "cookie_status",
           "proxy_status",
           "proxy",
@@ -25640,6 +27171,29 @@
           "records"
         ],
         "title": "ManualPackPreview"
+      },
+      "MappingInput": {
+        "properties": {
+          "expected_generation": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Generation"
+          },
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadMapping"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Mappings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected_generation",
+          "mappings"
+        ],
+        "title": "MappingInput"
       },
       "MatchCandidate": {
         "properties": {
@@ -26711,6 +28265,286 @@
         "type": "object",
         "title": "NamingProfile"
       },
+      "NotificationChannelInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "apprise",
+              "discord",
+              "ntfy",
+              "webhook"
+            ],
+            "title": "Kind"
+          },
+          "installation": {
+            "type": "boolean",
+            "title": "Installation",
+            "default": false
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "title": "Events"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "digest_minutes": {
+            "type": "integer",
+            "enum": [
+              0,
+              5,
+              15,
+              60,
+              1440
+            ],
+            "title": "Digest Minutes",
+            "default": 15
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChannelSecrets"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "events"
+        ],
+        "title": "NotificationChannelInput"
+      },
+      "NotificationChannelView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "installation": {
+            "type": "boolean",
+            "title": "Installation"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "digest_minutes": {
+            "type": "integer",
+            "title": "Digest Minutes"
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": true
+          },
+          "last_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Status"
+          },
+          "last_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message"
+          },
+          "last_delivery_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delivery At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "installation",
+          "events",
+          "enabled",
+          "digest_minutes"
+        ],
+        "title": "NotificationChannelView"
+      },
+      "NotificationDeliveryView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "event_type": {
+            "type": "string",
+            "title": "Event Type"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "attempted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempted At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "event_type",
+          "state",
+          "message",
+          "created_at",
+          "attempted_at",
+          "finished_at"
+        ],
+        "title": "NotificationDeliveryView"
+      },
+      "NotificationPolicyInput": {
+        "properties": {
+          "member_events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "title": "Member Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "member_events"
+        ],
+        "title": "NotificationPolicyInput"
+      },
+      "NotificationSettingsView": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationChannelView"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
+          "event_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Event Labels"
+          },
+          "allowed_events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Events"
+          },
+          "member_events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Member Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channels",
+          "event_labels",
+          "allowed_events",
+          "member_events"
+        ],
+        "title": "NotificationSettingsView"
+      },
       "NzbDescriptor": {
         "properties": {
           "protocol": {
@@ -26910,6 +28744,17 @@
           "present": {
             "type": "boolean",
             "title": "Present"
+          },
+          "filter_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter Reason"
           },
           "first_seen_at": {
             "type": "string",
@@ -28330,40 +30175,6 @@
           "destination_revision"
         ],
         "title": "PolicyRoute"
-      },
-      "PolicyView": {
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "title": "Enabled"
-          },
-          "generation": {
-            "type": "integer",
-            "title": "Generation"
-          },
-          "ready": {
-            "type": "boolean",
-            "title": "Ready"
-          },
-          "can_enable": {
-            "type": "boolean",
-            "title": "Can Enable"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "enabled",
-          "generation",
-          "ready",
-          "can_enable",
-          "message"
-        ],
-        "title": "PolicyView"
       },
       "PreReleaseCandidate": {
         "properties": {
@@ -30415,6 +32226,95 @@
         ],
         "title": "RecoveryABSSettings"
       },
+      "RecoveryApprovalView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "replacement_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Id"
+          },
+          "work_title": {
+            "type": "string",
+            "title": "Work Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "selection_id",
+          "attempt_id",
+          "state",
+          "reason",
+          "message",
+          "replacement_id",
+          "work_title"
+        ],
+        "title": "RecoveryApprovalView"
+      },
+      "RecoveryConfiguration": {
+        "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/RecoveryPolicy"
+          },
+          "sources": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RecoveryPolicy"
+            },
+            "type": "object",
+            "maxProperties": 100,
+            "title": "Sources"
+          },
+          "attempt_cap": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Attempt Cap",
+            "default": 3
+          },
+          "approve_reports": {
+            "type": "boolean",
+            "title": "Approve Reports",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RecoveryConfiguration"
+      },
       "RecoveryPathMapping": {
         "properties": {
           "download_root": {
@@ -30437,6 +32337,49 @@
           "worker_path"
         ],
         "title": "RecoveryPathMapping"
+      },
+      "RecoveryPolicy": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "stall_hours": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 8760.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stall Hours",
+            "default": 24
+          },
+          "error_minutes": {
+            "type": "number",
+            "maximum": 10080.0,
+            "minimum": 0.0,
+            "title": "Error Minutes",
+            "default": 5
+          },
+          "cleanup": {
+            "type": "string",
+            "enum": [
+              "leave",
+              "pause",
+              "remove"
+            ],
+            "title": "Cleanup",
+            "default": "leave"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RecoveryPolicy"
       },
       "RecoveryQbitSettings": {
         "properties": {
@@ -30520,6 +32463,10 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct"
+          },
           "has_credentials": {
             "type": "boolean",
             "title": "Has Credentials"
@@ -30554,12 +32501,87 @@
           "base_url",
           "enabled",
           "proxy_url",
+          "proxy_fallback_direct",
           "has_credentials",
           "has_proxy_credentials",
           "excluded_indexers",
           "metadata_downloader_id"
         ],
         "title": "RecoverySourceSettings"
+      },
+      "RecoveryStatusView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "cleanup": {
+            "type": "string",
+            "title": "Cleanup"
+          },
+          "can_approve": {
+            "type": "boolean",
+            "title": "Can Approve"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "reason",
+          "message",
+          "cleanup",
+          "can_approve"
+        ],
+        "title": "RecoveryStatusView"
+      },
+      "RecoveryStepView": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "release_title": {
+            "type": "string",
+            "title": "Release Title"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "selection_id",
+          "release_title",
+          "state",
+          "reason"
+        ],
+        "title": "RecoveryStepView"
       },
       "RecoveryView": {
         "properties": {
@@ -31435,6 +33457,52 @@
         ],
         "title": "RepairView"
       },
+      "ReportInput": {
+        "properties": {
+          "selection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Selection Id"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "wrong-book",
+              "wrong-language",
+              "bad-audio",
+              "missing-chapters",
+              "wrong-narrator",
+              "drm",
+              "incomplete"
+            ],
+            "title": "Reason"
+          },
+          "require_approval": {
+            "type": "boolean",
+            "title": "Require Approval",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "selection_id",
+          "reason"
+        ],
+        "title": "ReportInput"
+      },
       "RequestInput": {
         "properties": {
           "work_id": {
@@ -32272,6 +34340,39 @@
           "permissions"
         ],
         "title": "RoleView"
+      },
+      "Rules": {
+        "properties": {
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/Window"
+            },
+            "type": "array",
+            "maxItems": 9,
+            "title": "Windows"
+          },
+          "pending_cap": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Cap"
+          },
+          "exempt_admin_approved": {
+            "type": "boolean",
+            "title": "Exempt Admin Approved",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Rules"
       },
       "RunView": {
         "properties": {
@@ -34820,6 +36921,11 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct",
+            "default": true
+          },
           "mam_id": {
             "anyOf": [
               {
@@ -35539,6 +37645,21 @@
             "type": "string",
             "title": "Acquisition Mode",
             "default": "browse"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "author",
+                  "series"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
           }
         },
         "type": "object",
@@ -35631,6 +37752,11 @@
               }
             ],
             "title": "Attempt Id"
+          },
+          "can_view_download_history": {
+            "type": "boolean",
+            "title": "Can View Download History",
+            "default": false
           },
           "can_cancel": {
             "type": "boolean",
@@ -35862,6 +37988,63 @@
           "size_bytes"
         ],
         "title": "TorrentFile"
+      },
+      "Usage": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "user_name": {
+            "type": "string",
+            "title": "User Name"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "bypass": {
+            "type": "boolean",
+            "title": "Bypass"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending"
+          },
+          "pending_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Remaining"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/Rules"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/WindowUsage"
+            },
+            "type": "array",
+            "title": "Windows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "user_name",
+          "source",
+          "bypass",
+          "pending",
+          "pending_remaining",
+          "rules",
+          "windows"
+        ],
+        "title": "Usage"
       },
       "UserInput": {
         "properties": {
@@ -36228,6 +38411,160 @@
           "needs_review"
         ],
         "title": "VersionView"
+      },
+      "Window": {
+        "properties": {
+          "medium": {
+            "type": "string",
+            "enum": [
+              "ebook",
+              "audio",
+              "combined"
+            ],
+            "title": "Medium",
+            "default": "combined"
+          },
+          "window": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Window",
+            "default": "week"
+          },
+          "books": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Books"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Window"
+      },
+      "WindowUsage": {
+        "properties": {
+          "medium": {
+            "type": "string",
+            "enum": [
+              "ebook",
+              "audio",
+              "combined"
+            ],
+            "title": "Medium",
+            "default": "combined"
+          },
+          "window": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Window",
+            "default": "week"
+          },
+          "books": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Books"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "used_books": {
+            "type": "integer",
+            "title": "Used Books"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "title": "Used Bytes"
+          },
+          "remaining_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Books"
+          },
+          "remaining_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Bytes"
+          },
+          "capacity_returns_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity Returns At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "used_books",
+          "used_bytes",
+          "remaining_books",
+          "remaining_bytes"
+        ],
+        "title": "WindowUsage"
       },
       "WorkInput": {
         "properties": {
@@ -36752,6 +39089,40 @@
         ],
         "title": "WritebackResolveInput"
       },
+      "app__api__automatic_imports__PolicyView": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "can_enable": {
+            "type": "boolean",
+            "title": "Can Enable"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled",
+          "generation",
+          "ready",
+          "can_enable",
+          "message"
+        ],
+        "title": "PolicyView"
+      },
       "app__api__catalog_grouping__GroupingView": {
         "properties": {
           "reason": {
@@ -37089,6 +39460,23 @@
         },
         "type": "object",
         "title": "FollowInput"
+      },
+      "app__api__request_quotas__PolicyView": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "rules"
+        ],
+        "title": "PolicyView"
       },
       "app__domain__community_lists__FollowInput": {
         "properties": {

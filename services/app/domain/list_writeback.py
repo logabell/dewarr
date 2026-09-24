@@ -122,6 +122,8 @@ def binding(account, subscription):
     if not subscription or subscription.provider != "hardcover":
         raise HTTPException(409, "Follow a Hardcover list before configuring write-back")
     config = decrypt_secrets(subscription.encrypted_config)
+    if config.get("source_kind"):
+        raise HTTPException(422, "Author and series catalogs are read-only sources")
     if not config.get("complete") or not subscription.baseline_at:
         raise HTTPException(
             409, "Complete the first Hardcover list observation before enabling write-back"

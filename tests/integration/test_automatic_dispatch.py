@@ -74,6 +74,11 @@ async def test_automatic_consent_requires_installation_and_standing_import_permi
         headers={"Idempotency-Key": "unauthorized-auto-dispatch"},
     )
     assert result.status_code == 409, result.text
+    if missing == "dispatch":
+        assert "BOOK_DOWNLOAD_DISPATCH_ENABLED=true" in result.json()["detail"]
+    elif missing == "recovery":
+        assert "recovery" in result.json()["detail"]
+        assert "BOOK_DOWNLOAD_DISPATCH_ENABLED" not in result.json()["detail"]
     async with database() as db:
         assert not await db.scalar(select(DownloadAttempt.id))
         assert not await db.scalar(select(Operation.id).where(Operation.kind == automatic.KIND))

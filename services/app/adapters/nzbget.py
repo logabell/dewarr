@@ -174,15 +174,24 @@ def category_folder(options, category):
             continue
         folder = options.get(f"Category{index}.DestDir") or ""
         if not folder:
-            return root
+            return (
+                absolute_path(str(PurePosixPath(root) / category))
+                if options.get("AppendCategoryDir", "yes").casefold() == "yes"
+                else root
+            )
         try:
-            chosen = folder if folder.startswith("/") else f"{root}/{folder.strip('/')}"
+            chosen = (
+                folder if folder.startswith("/") else str(PurePosixPath(root) / folder.strip("/"))
+            )
             return absolute_path(chosen)
         except ValueError as error:
             raise AdapterError(
                 FailureKind.PARSER, "NZBGet returned an invalid download location."
             ) from error
-    return root
+    raise AdapterError(
+        FailureKind.NOT_FOUND,
+        f'The NZBGet category "{category}" does not exist.',
+    )
 
 
 class NzbClient:
@@ -238,7 +247,7 @@ class NzbClient:
             )
         if len(response.content) > limit:
             raise AdapterError(
-                FailureKind.UNAVAILABLE,
+                FailureKind.UNCERTAIN if mutating else FailureKind.UNAVAILABLE,
                 "NZBGet response exceeded the size limit.",
             )
         try:
@@ -274,7 +283,13 @@ class NzbClient:
         await self.capabilities()
         if not re.fullmatch(r"[A-Za-z0-9_-]{0,100}", category):
             raise ValueError("Use one simple download category")
-        return category_folder(option_map(await self._rpc("config")), category)
+        options = option_map(await self._rpc("config"))
+        if options.get("KeepHistory") == "0":
+            raise AdapterError(
+                FailureKind.UNSUPPORTED,
+                "NZBGet must keep download history so completed jobs can be reconciled.",
+            )
+        return category_folder(options, category)
 
     async def _matching(self, tag):
         queue = groups(await self._rpc("listgroups", [0]))

@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Path
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/sources/mam", tags=["sources"])
 class MAMConnectionInput(BaseModel):
     base_url: str = Field(default="https://www.myanonamouse.net", max_length=2000)
     proxy_url: str | None = Field(default=None, max_length=2000)
+    proxy_fallback_direct: bool = True
     mam_id: SecretStr | None = Field(default=None, min_length=1, max_length=8192)
     proxy_username: SecretStr | None = Field(default=None, min_length=1, max_length=300)
     proxy_password: SecretStr | None = Field(default=None, min_length=1, max_length=1000)
@@ -70,6 +72,7 @@ class MAMConnectionView(BaseModel):
     enabled: bool
     base_url: str
     proxy_url: str | None
+    proxy_fallback_direct: bool
     has_session: bool
     has_proxy_credentials: bool
     generation: int
@@ -87,13 +90,20 @@ def view(row):
         enabled=bool(row and row.enabled),
         base_url=row.base_url if row else "https://www.myanonamouse.net",
         proxy_url=row.proxy_url if row else None,
+        proxy_fallback_direct=row.proxy_fallback_direct if row else True,
         has_session=bool(secrets.get("mam_id")),
         has_proxy_credentials=bool(secrets.get("proxy_password")),
         generation=row.generation if row else 0,
         status=row.status if row else "not-configured",
         last_error=row.last_error if row else None,
         last_success_at=row.last_success_at if row else None,
-        route="required-proxy" if row and row.proxy_url else "direct",
+        route=(
+            "proxy-preferred"
+            if row and row.proxy_url and row.proxy_fallback_direct
+            else "required-proxy"
+            if row and row.proxy_url
+            else "direct"
+        ),
         automation=stored_automation(row.automation) if row else AccountAutomation(),
     )
 
@@ -128,6 +138,7 @@ async def save_connection(body: MAMConnectionInput, admin: Admin, db: Database):
             proxy_password=body.proxy_password.get_secret_value(),
         )
     row.base_url, row.proxy_url, row.enabled = body.base_url, body.proxy_url, body.enabled
+    row.proxy_fallback_direct = body.proxy_fallback_direct
     row.automation = body.automation.model_dump()
     row.encrypted_secrets = encrypt_secrets(secrets)
     row.generation += 1
@@ -173,6 +184,7 @@ class MAMNetworkView(BaseModel):
     connection: MAMConnectionView
     checked_at: datetime
     status: str
+    route: Literal["direct", "proxy", "direct-fallback"]
     cookie_status: str
     proxy_status: str
     proxy: EgressResult | None
@@ -192,10 +204,15 @@ async def test_network(admin: Admin, db: Database):
 
     async def test_cookie():
         try:
-            await source_call(user_id, "test", expected_generation=generation)
-            return None
+            _, route = await source_call(
+                user_id,
+                "test",
+                expected_generation=generation,
+                with_route=True,
+            )
+            return None, route
         except AdapterError as error:
-            return error
+            return error, None
 
     async def test_proxy():
         if not proxy_url:
@@ -204,16 +221,24 @@ async def test_network(admin: Admin, db: Database):
             proxy_url, secrets.get("proxy_username"), secrets.get("proxy_password")
         )
 
-    failure, proxy, direct = await asyncio.gather(test_cookie(), test_proxy(), probe_egress())
+    cookie_result, proxy, direct = await asyncio.gather(test_cookie(), test_proxy(), probe_egress())
+    failure, used_route = cookie_result
     row = await db.get(SourceConnection, "mam", populate_existing=True)
     if not row or row.generation != generation or not row.enabled:
         raise HTTPException(409, "MAM settings changed during the network test. Test again.")
     authenticated = failure is None
-    healthy = authenticated and bool(direct.ip) and (proxy is None or bool(proxy.ip))
+    route = used_route or ("proxy" if proxy_url else "direct")
+    healthy = (
+        authenticated
+        and route != "direct-fallback"
+        and bool(direct.ip)
+        and (proxy is None or bool(proxy.ip))
+    )
     return MAMNetworkView(
         connection=view(row),
         checked_at=datetime.now(UTC),
         status="healthy" if healthy else "degraded" if authenticated else "unhealthy",
+        route=route,
         cookie_status="authenticated"
         if authenticated
         else ("rejected" if failure.kind == FailureKind.AUTHENTICATION else "unverified"),
@@ -222,11 +247,16 @@ async def test_network(admin: Admin, db: Database):
         else ("healthy" if proxy.ip else "unavailable"),
         proxy=proxy,
         direct=direct,
-        message=str(failure)
-        if failure
-        else (
-            "MAM authenticated through the configured proxy."
-            if proxy_url
-            else "MAM authenticated through the direct connection."
+        message=(
+            "The configured MAM proxy could not be reached. MAM authenticated through "
+            "the direct fallback route."
+            if route == "direct-fallback"
+            else str(failure)
+            if failure
+            else (
+                "MAM authenticated through the configured proxy."
+                if proxy_url
+                else "MAM authenticated through the direct connection."
+            )
         ),
     )

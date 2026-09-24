@@ -99,16 +99,20 @@ export default function AutomaticSelection({
     usenetId,
     protocolPreference(preferences, "nzb", downloaders),
   );
+  const soulseek = downloaders.find((d) => d.protocol === "soulseek");
   const primary =
-    [torrent, usenet].find((item) => item?.id === preferences.downloader_id) ||
+    [torrent, usenet, soulseek].find(
+      (item) => item?.id === preferences.downloader_id,
+    ) ||
     torrent ||
-    usenet;
+    usenet ||
+    soulseek;
   const alternate =
-    torrent && usenet && primary
-      ? primary.id === torrent.id
-        ? usenet
-        : torrent
-      : undefined;
+    primary?.protocol === "torrent"
+      ? usenet
+      : primary?.protocol === "nzb"
+        ? torrent
+        : undefined;
   const matchingDestinations = (client?: { source_key?: string | null }) =>
     options.data?.destinations.filter(
       (d) =>
@@ -118,7 +122,7 @@ export default function AutomaticSelection({
         (!library || d.library_id === library),
     ) || [];
   const sameFolder =
-    !!torrent && !!usenet && torrent.source_key === usenet.source_key;
+    !!primary && !!alternate && primary.source_key === alternate.source_key;
   const destinations = matchingDestinations(primary);
   const destination = chooseRoute(
     destinations,
@@ -265,6 +269,14 @@ export default function AutomaticSelection({
           cancel.error
         }
       />
+      {soulseek && (
+        <p className="muted">
+          Soulseek searches download through {soulseek.name}.{" "}
+          {primary?.id === soulseek.id
+            ? "Choose its verified library destination below."
+            : "Its download folder must also have a verified library route."}
+        </p>
+      )}
       <label>
         Torrent downloader
         <select

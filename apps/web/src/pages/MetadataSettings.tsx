@@ -1,4 +1,4 @@
-import { connectionLabel } from "./settingLabels";
+import ConnectionStatus from "../components/ConnectionStatus";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, result } from "../api/client";
@@ -94,10 +94,15 @@ export default function MetadataSettings({
       result(await api.POST("/api/metadata/account/test")),
     onSuccess: (value) => {
       client.setQueryData(["metadata-account"], value);
+      if (value.status === "connected") {
+        void client.invalidateQueries({
+          queryKey: ["reading-hardcover-lists"],
+        });
+      }
       setMessage(
         value.status === "connected"
           ? "Hardcover catalog access verified."
-          : "Connection needs attention.",
+          : "",
       );
     },
   });
@@ -126,9 +131,9 @@ export default function MetadataSettings({
             </span>
           </SettingHelp>
           {account.data && (
-            <span className="connection-state">
-              {connectionLabel(account.data.status)}
-            </span>
+            <ConnectionStatus
+              status={test.isPending ? "checking" : account.data.status}
+            />
           )}
         </div>
         <Notice
@@ -162,7 +167,10 @@ export default function MetadataSettings({
                 />
               </label>
               <div className="button-row metadata-actions">
-                <button className="primary" disabled={save.isPending}>
+                <button
+                  className="primary"
+                  disabled={save.isPending || test.isPending}
+                >
                   Save connection
                 </button>
                 {account.data.configured && (
@@ -170,14 +178,19 @@ export default function MetadataSettings({
                     <button
                       type="button"
                       onClick={() => test.mutate()}
-                      disabled={!account.data.enabled || test.isPending}
+                      disabled={
+                        !account.data.enabled ||
+                        test.isPending ||
+                        save.isPending ||
+                        !!token
+                      }
                     >
                       {test.isPending ? "Testing…" : "Test connection"}
                     </button>
                     <button
                       type="button"
                       onClick={() => save.mutate(!account.data!.enabled)}
-                      disabled={save.isPending}
+                      disabled={save.isPending || test.isPending}
                     >
                       {account.data.enabled
                         ? "Disable connection"

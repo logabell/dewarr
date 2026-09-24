@@ -255,7 +255,11 @@ async def test_unconfirmed_child_records_publication_without_fabricating_ownersh
     if reason == "abs-missing":
         backend.items.clear()
     elif reason == "inode":
-        next(iter(backend.items.values()))["libraryFiles"][0]["ino"] = "unrelated-inode"
+        next(
+            file
+            for file in next(iter(backend.items.values()))["libraryFiles"]
+            if file["metadata"]["ext"] == ".epub"
+        )["ino"] = "unrelated-inode"
     elif reason == "metadata":
         next(iter(backend.items.values()))["media"]["metadata"]["title"] = "Different book"
     else:

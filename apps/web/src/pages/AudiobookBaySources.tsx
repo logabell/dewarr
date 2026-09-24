@@ -5,6 +5,9 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Empty, Notice } from "../components";
+import ConnectionTestStatus, {
+  SavedSecretIndicator,
+} from "../components/ConnectionTestStatus";
 
 type Connection = components["schemas"]["ABBConnectionView"];
 type Search = components["schemas"]["ABBSearch"];
@@ -260,20 +263,24 @@ export function AudiobookBayConnectionForm({ value }: { value: Connection }) {
           },
         }),
       ),
-    onSuccess: () => {
+    onSuccess: (connection) => {
       setUsername("");
       setPassword("");
+      cache.setQueryData(["abb-connection"], connection);
       refresh();
     },
   });
   const test = useMutation({
     mutationFn: async () =>
       result(await api.POST("/api/sources/audiobookbay/connection/test")),
+    onSuccess: (connection) =>
+      cache.setQueryData(["abb-connection"], connection),
     onSettled: refresh,
   });
   return (
     <form
       className="panel editor"
+      aria-label="AudiobookBay connection settings"
       onSubmit={(event) => {
         event.preventDefault();
         save.mutate();
@@ -349,8 +356,12 @@ export function AudiobookBayConnectionForm({ value }: { value: Connection }) {
           />
         </label>
         <label>
-          Proxy password
+          <span className="credential-label">
+            <span>Proxy password</span>
+            <SavedSecretIndicator saved={value.has_proxy_credentials} />
+          </span>
           <input
+            aria-label="Proxy password"
             type="password"
             autoComplete="new-password"
             placeholder={
@@ -383,25 +394,33 @@ export function AudiobookBayConnectionForm({ value }: { value: Connection }) {
         />
         Enable AudiobookBay
       </label>
-      <Notice error={save.error || test.error || clients.error} />
-      {value.last_error && <p className="notice">{value.last_error}</p>}
-      <div className="button-row">
-        <button className="primary" disabled={save.isPending || test.isPending}>
-          Save connection
-        </button>
-        <button
-          type="button"
-          disabled={save.isPending || test.isPending || !value.enabled}
-          onClick={() => test.mutate()}
-        >
-          Test connection
-        </button>
+      <div className="connection-action-bar">
+        <div className="button-row">
+          <button
+            className="primary"
+            disabled={save.isPending || test.isPending}
+          >
+            {save.isPending ? "Saving…" : "Save connection"}
+          </button>
+          <button
+            type="button"
+            disabled={save.isPending || test.isPending || !value.enabled}
+            onClick={() => test.mutate()}
+          >
+            {test.isPending ? "Testing…" : "Test connection"}
+          </button>
+        </div>
+        <ConnectionTestStatus
+          configured={value.configured}
+          status={value.status}
+          lastSuccessAt={value.last_success_at}
+          isPending={test.isPending}
+          error={test.error}
+        />
       </div>
-      {test.isSuccess && (
-        <p role="status">
-          Site connection verified. Torrent metadata capability is checked
-          during inspection.
-        </p>
+      <Notice error={save.error || test.error || clients.error} />
+      {value.last_error && !test.error && (
+        <p className="notice">{value.last_error}</p>
       )}
     </form>
   );

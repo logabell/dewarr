@@ -1,5 +1,6 @@
 import Destinations from "./Destinations";
 import SettingHelp from "../components/SettingHelp";
+import ConnectionStatus from "../components/ConnectionStatus";
 import {
   CheckCircle2,
   ChevronDown,
@@ -120,11 +121,9 @@ export default function Connections({
             <article className="panel" key={connection.id}>
               <div className="section-heading">
                 <h2>{connection.name}</h2>
-                <span className="status">
-                  {connection.enabled
-                    ? connection.status.replaceAll("-", " ")
-                    : "Disabled"}
-                </span>
+                <ConnectionStatus
+                  status={connection.enabled ? connection.status : "disabled"}
+                />
               </div>
               {connection.library_count != null && (
                 <p className="connection-result success">

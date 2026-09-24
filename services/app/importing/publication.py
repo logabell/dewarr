@@ -44,6 +44,9 @@ class PublicationBusy(PublicationError):
     pass
 
 
+PUBLICATION_MARKER = ".book-search-publication"
+
+
 class PublishFile(StrictModel):
     source: str
     name: str
@@ -112,6 +115,8 @@ class PublicationSpec(StrictModel):
             ):
                 raise ValueError("Generated cover is not a bounded JPEG")
         names.extend(self.binary_sidecars)
+        if PUBLICATION_MARKER in names:
+            raise ValueError("The publication marker name is reserved")
         if len({collision_key(name) for name in names}) != len(names):
             raise ValueError("Published filenames collide")
         for root in (self.source_root, self.destination_root, self.staging_root):
@@ -155,6 +160,63 @@ def object_id(fd):
 
 def same_object(fd, expected):
     return object_id(fd) == {key: expected[key] for key in ("device", "inode")}
+
+
+def publication_marker_content(receipt):
+    token = receipt.get("publication_marker")
+    if not token:
+        return None
+    return f"book-search publication {receipt['entry_id']} {token}\n".encode()
+
+
+def has_publication_marker(folder, receipt):
+    content = publication_marker_content(receipt)
+    if content is None:
+        return False
+    try:
+        with beneath(folder, PUBLICATION_MARKER) as marker:
+            info = os.fstat(marker)
+            if info.st_size != len(content) or info.st_nlink != 1:
+                return False
+            os.lseek(marker, 0, os.SEEK_SET)
+            return os.read(marker, len(content) + 1) == content
+    except (FileNotFoundError, InspectionError):
+        return False
+
+
+def ensure_publication_marker(stage, staging, receipt_name, receipt):
+    if not receipt.get("publication_marker"):
+        receipt["publication_marker"] = uuid4().hex
+        write_receipt(staging, receipt_name, receipt)
+    content = publication_marker_content(receipt)
+    try:
+        marker = os.open(
+            PUBLICATION_MARKER,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o644,
+            dir_fd=stage,
+        )
+    except FileExistsError:
+        if not has_publication_marker(stage, receipt):
+            raise PublicationError("Staged publication marker changed") from None
+        return
+    try:
+        write_all(marker, content)
+        os.fsync(marker)
+    finally:
+        os.close(marker)
+    sync_directory(stage)
+
+
+def remove_publication_marker(folder, receipt):
+    try:
+        if not has_publication_marker(folder, receipt):
+            return False
+        os.unlink(PUBLICATION_MARKER, dir_fd=folder)
+        sync_directory(folder)
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def seeding_same_file(fd, expected):
@@ -465,9 +527,14 @@ def leaf_names(folder, spec):
     return present
 
 
-def verify_item(folder, spec, deadline, derived=None):
+def verify_item(folder, spec, deadline, derived=None, receipt=None):
     expected = published_names(spec) | set(generated_files(spec))
-    if leaf_names(folder, spec) != expected:
+    present = leaf_names(folder, spec)
+    if PUBLICATION_MARKER in present:
+        if not receipt or not has_publication_marker(folder, receipt):
+            raise PublicationError("Item contains an unrecognized publication marker")
+        present.remove(PUBLICATION_MARKER)
+    if present != expected:
         raise PublicationError("Item contains missing or unplanned files")
     if spec.conversion:
         recorded = (derived or {}).get(spec.conversion.output_name)
@@ -529,6 +596,7 @@ def prepare_stage(staging, receipt_name, receipt, spec):
         with beneath(staging, name, folder=True) as fd:
             if not same_object(fd, receipt["stage_identity"]):
                 raise PublicationError("Staged item identity changed")
+            ensure_publication_marker(fd, staging, receipt_name, receipt)
         return
     # A crash between mkdir and identity journaling leaves an unconfirmed, unwatched orphan.
     # Allocate another private staging path; never adopt or remove an unrecognized directory.
@@ -544,6 +612,8 @@ def prepare_stage(staging, receipt_name, receipt, spec):
     with beneath(staging, name, folder=True) as fd:
         receipt["stage_identity"] = object_id(fd)
     write_receipt(staging, receipt_name, receipt)
+    with beneath(staging, name, folder=True) as fd:
+        ensure_publication_marker(fd, staging, receipt_name, receipt)
 
 
 def stage_conversion(
@@ -780,7 +850,7 @@ def remaining_stage_bytes(staging, receipt, spec, deadline):
         try:
             with beneath(staging, receipt["stage_name"], folder=True) as stage:
                 if same_object(stage, receipt["stage_identity"]):
-                    verify_item(stage, spec, deadline, receipt.get("derived"))
+                    verify_item(stage, spec, deadline, receipt.get("derived"), receipt)
                     return 0
         except (FileNotFoundError, PublicationError):
             pass  # Incomplete staging conservatively reserves a fresh complete copy.
@@ -813,11 +883,12 @@ def remaining_import_bytes(spec, *, timeout=600):
             if receipt:
                 try:
                     with beneath(target, spec.folder, folder=True) as existing:
-                        if not receipt.get("stage_identity") or not same_object(
-                            existing, receipt["stage_identity"]
+                        if not receipt.get("stage_identity") or (
+                            not same_object(existing, receipt["stage_identity"])
+                            and not has_publication_marker(existing, receipt)
                         ):
                             raise PublicationError("Destination belongs to another item")
-                        verify_item(existing, spec, deadline, receipt.get("derived"))
+                        verify_item(existing, spec, deadline, receipt.get("derived"), receipt)
                         return 0
                 except FileNotFoundError:
                     pass
@@ -1067,13 +1138,16 @@ def publish_item(
             # may have succeeded even when DB acknowledgement or receipt update was interrupted.
             try:
                 with beneath(destination, spec.folder, folder=True) as existing:
-                    if not receipt.get("stage_identity") or not same_object(
-                        existing, receipt["stage_identity"]
+                    if not receipt.get("stage_identity") or (
+                        not same_object(existing, receipt["stage_identity"])
+                        and not has_publication_marker(existing, receipt)
                     ):
                         raise PublicationError("Destination exists and belongs to another item")
-                    verify_item(existing, spec, deadline, receipt.get("derived"))
+                    verify_item(existing, spec, deadline, receipt.get("derived"), receipt)
+                    receipt["stage_identity"] = object_id(existing)
                     receipt["state"] = "published"
                     write_receipt(staging, receipt_name, receipt)
+                    remove_publication_marker(existing, receipt)
                     return receipt
             except FileNotFoundError:
                 if receipt["state"] == "published":
@@ -1106,7 +1180,7 @@ def publish_item(
                         on_progress=on_progress,
                         pause_library_lock=pause,
                     )
-                    verify_item(stage, spec, deadline, receipt.get("derived"))
+                    verify_item(stage, spec, deadline, receipt.get("derived"), receipt)
                     for file in (*spec.files, *conversion_inputs(spec)):
                         checked_source(source, file, deadline)
                     receipt["state"] = "prepared"
@@ -1147,9 +1221,16 @@ def publish_item(
                             sync_directory(parent)
                             sync_directory(staging)
                             checkpoint("published-before-receipt")
-                            receipt["state"] = "published"
-                            write_receipt(staging, receipt_name, receipt)
-                            return receipt
+                            with beneath(parent, leaf, folder=True) as published:
+                                if not has_publication_marker(published, receipt):
+                                    raise PublicationError(
+                                        "Published directory lost its ownership marker"
+                                    )
+                                receipt["stage_identity"] = object_id(published)
+                                receipt["state"] = "published"
+                                write_receipt(staging, receipt_name, receipt)
+                                remove_publication_marker(published, receipt)
+                                return receipt
 
 
 def _mounts(mountinfo="/proc/self/mountinfo"):
@@ -1213,6 +1294,14 @@ def probe_download_folder(
             try:
                 write_all(fd, content)
                 os.fsync(fd)
+                # SMB may finalize write timestamps when the writer closes. Keep
+                # the inode pinned by a checked read handle, then freeze its
+                # identity exactly as we would for a completed download.
+                reader = handles.enter_context(beneath(parent, name))
+                if not same_object(reader, owned):
+                    raise PublicationError("Setup probe changed; replacement preserved")
+                writer, fd = fd, None
+                os.close(writer)
                 source = f"{relative}/{name}" if relative else name
                 return probe_destination(
                     source_root,
@@ -1221,7 +1310,7 @@ def probe_download_folder(
                         source=name,
                         name="probe",
                         sha256=hashlib.sha256(content).hexdigest(),
-                        identity=identity(os.fstat(fd)),
+                        identity=identity(os.fstat(reader)),
                     ),
                     destination_root,
                     staging_root,
@@ -1240,7 +1329,8 @@ def probe_download_folder(
                     os.unlink(name, dir_fd=parent)
                     sync_directory(parent)
         finally:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
 
 
 def probe_destination(
@@ -1271,6 +1361,7 @@ def probe_destination(
         ("link", "stage", "target", "marker", "write", "claim", "claimed", "lock")
     )
     write_name, marker, lock_name = "write-" + token, "marker", "lock-probe-" + token
+    marker_content = f"book-search destination probe {token}\n".encode()
     claim_name, claimed_name = "publish-" + token, "published-" + token
     target_handle = None
     exclusive = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
@@ -1283,6 +1374,17 @@ def probe_destination(
                 raise
             return True
         return False
+
+    def has_marker(folder):
+        try:
+            with beneath(folder, marker) as current:
+                info = os.fstat(current)
+                if info.st_size != len(marker_content):
+                    return False
+                os.lseek(current, 0, os.SEEK_SET)
+                return os.read(current, len(marker_content) + 1) == marker_content
+        except (FileNotFoundError, InspectionError):
+            return False
 
     with (
         directory(source_root) as source_mount,
@@ -1297,6 +1399,7 @@ def probe_destination(
         report.update(
             destination_identity=object_id(destination), staging_identity=object_id(staging)
         )
+        phase = "writing to the staging folder"
         try:
             output = os.open(
                 write_name,
@@ -1335,6 +1438,7 @@ def probe_destination(
                         report["hardlink"] = same_object(fd, file.identity)
                 except OSError as error:
                     report["hardlink_error"] = errno.errorcode.get(error.errno, "IO_ERROR")
+            phase = "checking safe journal creation"
             # Publication journals are created with a file no-replace rename inside staging.
             claim = os.open(claim_name, exclusive, 0o600, dir_fd=staging)
             created["claim"] = object_id(claim)
@@ -1347,31 +1451,51 @@ def probe_destination(
             if not refused(lambda: no_replace(staging, claim_name, staging, claimed_name)):
                 created["claimed"], created["claim"] = created["claim"], None
                 raise PublicationError("Staging filesystem replaced an existing journal")
+            phase = "checking filesystem locks"
             lock = os.open(lock_name, exclusive, 0o600, dir_fd=staging)
             created["lock"] = object_id(lock)
             handles.callback(os.close, lock)
             _acquire(lock, "Another probe holds this lock")
             fcntl.flock(lock, fcntl.LOCK_UN)
+            phase = "checking safe library publication"
             os.mkdir(staged, mode=0o700, dir_fd=staging)
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
+            # Write proof of ownership before moving the directory. Some mounted
+            # filesystems resolve an open directory handle through its old path,
+            # so creating a child through that handle after rename raises ENOENT.
+            target_handle = stage_handle
+            output = os.open(marker, exclusive, 0o600, dir_fd=stage_handle)
+            created["marker"] = object_id(output)
+            handles.callback(os.close, os.dup(output))
+            try:
+                write_all(output, marker_content)
+                os.fsync(output)
+            finally:
+                os.close(output)
             report["no_replace_mode"] = no_replace(staging, staged, destination, target)
             created["target"], created["stage"] = created["stage"], None
-            target_handle = stage_handle
-            output = os.open(marker, exclusive, 0o600, dir_fd=target_handle)
-            created["marker"] = object_id(output)
-            os.close(output)
+            # Some FUSE and network filesystems report a different inode for a directory
+            # after it is renamed. Recognize the random marker through the destination
+            # name before accepting the post-rename identity.
+            with beneath(destination, target, folder=True) as current_target:
+                if not has_marker(current_target):
+                    raise PublicationError(
+                        "Probe object changed; unrecognized replacement preserved"
+                    )
+                created["target"] = object_id(current_target)
             os.mkdir(staged, mode=0o700, dir_fd=staging)
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
             report["no_replace"] = refused(lambda: no_replace(staging, staged, destination, target))
             if report["no_replace"]:
                 # The fallback relies on rename(2) refusing a non-empty directory.
-                observed = os.stat(target, dir_fd=destination, follow_symlinks=False)
-                if {"device": observed.st_dev, "inode": observed.st_ino} != created["target"]:
-                    raise PublicationError(
-                        "Probe object changed; unrecognized replacement preserved"
-                    )
+                with beneath(destination, target, folder=True) as current_target:
+                    if not has_marker(current_target):
+                        raise PublicationError(
+                            "Probe object changed; unrecognized replacement preserved"
+                        )
+                    created["target"] = object_id(current_target)
                 report["no_replace"] = refused(
                     lambda: os.rename(staged, target, src_dir_fd=staging, dst_dir_fd=destination)
                 )
@@ -1383,13 +1507,41 @@ def probe_destination(
             report["available_bytes"] = space.f_bavail * space.f_frsize
             report["warnings"] = mount_warnings(destination_root, staging_root)
             return report
+        except OSError as error:
+            # Keep the failed operation and original errno. A post-rename ENOENT
+            # is not evidence that the operator entered an unmounted folder.
+            error.probe_report = {
+                **report,
+                "failure_step": phase,
+                "error_code": errno.errorcode.get(error.errno, "IO_ERROR"),
+            }
+            raise
         finally:
             changed = False
+            marker_removed = False
+            # A refused move leaves our marker in staging, not in the existing
+            # library object. Remove only our own marker before removing staging.
+            if created["stage"] and created["marker"] and not created["target"]:
+                try:
+                    with beneath(staging, staged, folder=True) as original_stage:
+                        with beneath(original_stage, marker) as original_marker:
+                            owned = (
+                                object_id(original_stage) == created["stage"]
+                                and object_id(original_marker) == created["marker"]
+                            )
+                        if owned:
+                            # A failed write may leave our marker incomplete. Its
+                            # retained handle proves ownership without matching bytes.
+                            os.unlink(marker, dir_fd=original_stage)
+                            marker_removed = True
+                        else:
+                            changed = True
+                            created["stage"] = None
+                except FileNotFoundError:
+                    pass
             for fd, name, folder, owned in (
                 (staging, linked, False, created["link"]),
                 (staging, staged, True, created["stage"]),
-                (target_handle, marker, False, created["marker"]),
-                (destination, target, True, created["target"]),
                 (staging, write_name, False, created["write"]),
                 (staging, claim_name, False, created["claim"]),
                 (staging, claimed_name, False, created["claimed"]),
@@ -1403,6 +1555,31 @@ def probe_destination(
                         changed = True
                         continue
                     (os.rmdir if folder else os.unlink)(name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+            if created["target"]:
+                try:
+                    with beneath(destination, target, folder=True) as current_target:
+                        if created["marker"] and has_marker(current_target):
+                            os.unlink(marker, dir_fd=current_target)
+                            marker_removed = True
+                            os.rmdir(target, dir_fd=destination)
+                        elif object_id(current_target) == created["target"]:
+                            os.rmdir(target, dir_fd=destination)
+                        else:
+                            changed = True
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    changed = True
+            # If the probe directory was moved away and replaced, its open descriptor
+            # still lets us remove only our random marker while preserving both folders.
+            if target_handle is not None and created["marker"] and not marker_removed:
+                try:
+                    if has_marker(target_handle):
+                        os.unlink(marker, dir_fd=target_handle)
+                    else:
+                        changed = True
                 except FileNotFoundError:
                     pass
             if changed:

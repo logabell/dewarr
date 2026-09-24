@@ -28,6 +28,7 @@ from app.api import (
     download_attempts,
     download_reviews,
     downloaders,
+    follows,
     identity,
     import_runs,
     imports,
@@ -48,6 +49,7 @@ from app.api import (
     list_writeback_review,
     lists,
     metadata,
+    notifications,
     oidc,
     operations,
     organization,
@@ -57,6 +59,7 @@ from app.api import (
     recovery,
     release_profiles,
     releases,
+    request_quotas,
     requests,
     series,
     series_discovery,
@@ -92,8 +95,9 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Dewarr", version="0.2.3", lifespan=lifespan)
+    app = FastAPI(title="Dewarr", version="0.3.0", lifespan=lifespan)
     app.include_router(application_release.router, prefix="/api")
+    app.include_router(notifications.router, prefix="/api")
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exception: RequestValidationError):
@@ -156,6 +160,7 @@ def create_app() -> FastAPI:
     app.include_router(series.router, prefix="/api")
     app.include_router(series_requests.router, prefix="/api")
     app.include_router(lists.router, prefix="/api")
+    app.include_router(follows.router, prefix="/api")
     app.include_router(list_subscriptions.router, prefix="/api")
     app.include_router(list_writeback.router, prefix="/api")
     app.include_router(list_writeback_review.router, prefix="/api")
@@ -173,6 +178,9 @@ def create_app() -> FastAPI:
     app.include_router(identity.router, prefix="/api")
     app.include_router(requests.router, prefix="/api")
     app.include_router(download_attempts.router, prefix="/api")
+    from app.api import download_recovery
+
+    app.include_router(download_recovery.router, prefix="/api")
     app.include_router(download_reviews.router, prefix="/api")
     app.include_router(organization.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")
@@ -184,6 +192,7 @@ def create_app() -> FastAPI:
     app.include_router(automatic_imports.router, prefix="/api")
     app.include_router(automatic_selection.router, prefix="/api")
     app.include_router(capacity.router, prefix="/api")
+    app.include_router(request_quotas.router, prefix="/api")
     app.include_router(sources.router, prefix="/api")
     app.include_router(book_sources.router, prefix="/api")
     app.include_router(release_profiles.router, prefix="/api")

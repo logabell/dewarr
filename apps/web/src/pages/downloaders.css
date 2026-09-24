@@ -1,0 +1,208 @@
+.downloader-settings {
+  min-width: 0;
+}
+.downloader-settings .downloader-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.downloader-settings .downloader-card {
+  padding: 20px;
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.downloader-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.downloader-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+.downloader-identity {
+  flex: 1;
+  min-width: 140px;
+}
+.downloader-heading h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.downloader-settings p {
+  margin: 0;
+  line-height: 1.5;
+}
+.downloader-settings .downloader-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 48px;
+  margin: 0;
+}
+.downloader-facts dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.downloader-facts dd {
+  margin: 0;
+  font-size: 13px;
+}
+.downloader-folder {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.downloader-folder > svg {
+  color: var(--muted);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.downloader-folder > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.downloader-folder h3 {
+  font-size: 13px;
+  margin: 0;
+}
+.downloader-folder code,
+.download-folder-location code {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.downloader-folder-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 12px;
+}
+.downloader-folder-status > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.downloader-folder-status[data-ready="true"] > svg {
+  color: var(--accent);
+}
+.downloader-folder-status strong {
+  font-weight: 600;
+}
+.downloader-folder-status p {
+  color: var(--muted);
+  margin-top: 4px;
+  max-width: 75ch;
+}
+.downloader-details {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  font-size: 13px;
+}
+.downloader-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.downloader-details summary span {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+}
+.downloader-details[open] > p {
+  margin-top: 12px;
+}
+.downloader-example {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.downloader-mappings form {
+  margin-top: 14px;
+}
+.downloader-mappings fieldset {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.downloader-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: end;
+}
+.downloader-settings .downloader-map-row label {
+  display: grid;
+  gap: 7px;
+  width: auto;
+  max-width: none;
+  font-size: 12px;
+  min-width: 0;
+}
+.downloader-map-row input {
+  width: 100%;
+  min-width: 0;
+  font-family: monospace;
+}
+.downloader-map-arrow {
+  align-self: end;
+  margin-bottom: 10px;
+  color: var(--muted);
+}
+.downloader-path-input {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+}
+.downloader-settings .downloader-path-input button,
+.downloader-settings .downloader-remove {
+  padding: 8px;
+  flex-shrink: 0;
+}
+.downloader-actions {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.download-folder-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+.download-folder-dialog .book-dialog-content {
+  display: grid;
+  gap: 16px;
+}
+@media (max-width: 640px) {
+  .downloader-settings .downloader-card {
+    padding: 14px;
+    gap: 14px;
+  }
+  .downloader-heading .connection-test-status {
+    flex-basis: 100%;
+  }
+  .downloader-map-row {
+    grid-template-columns: minmax(0, 1fr) 34px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .downloader-map-row label {
+    grid-column: 1;
+  }
+  .downloader-map-arrow {
+    display: none;
+  }
+  .downloader-remove {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}

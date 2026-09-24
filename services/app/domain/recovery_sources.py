@@ -51,6 +51,7 @@ class SourceChoice(BaseModel):
     base_url: str = Field(max_length=2000)
     enabled: bool
     proxy_url: str | None = Field(default=None, max_length=2000)
+    proxy_fallback_direct: bool = True
     mam_id: SecretStr | None = Field(default=None, min_length=1, max_length=8192)
     api_key: SecretStr | None = Field(default=None, min_length=1, max_length=1000)
     proxy_username: SecretStr | None = Field(default=None, min_length=1, max_length=300)
@@ -129,7 +130,17 @@ def signature(row, *, allow_rotation=False):
         secrets.pop("mam_id", None)
     return digest(
         {
-            **{k: row[k] for k in ("key", "base_url", "proxy_url", "enabled", "generation")},
+            **{
+                k: row[k]
+                for k in (
+                    "key",
+                    "base_url",
+                    "proxy_url",
+                    "proxy_fallback_direct",
+                    "enabled",
+                    "generation",
+                )
+            },
             "credentials": credential_marker(secrets),
         }
     )
@@ -142,6 +153,7 @@ def public_settings(row):
         "base_url": row["base_url"],
         "enabled": row["enabled"],
         "proxy_url": row["proxy_url"],
+        "proxy_fallback_direct": row["proxy_fallback_direct"],
         "has_credentials": bool(secrets.get("mam_id") or secrets.get("api_key")),
         "has_proxy_credentials": bool(secrets.get("proxy_password")),
         "excluded_indexers": secrets.get("excluded_indexers", [])
@@ -272,7 +284,10 @@ async def prepare(db, checkpoint, owner_id, scan_id, choice, key):
         )
     )
     route_changed = (
-        row.base_url != choice.base_url or row.proxy_url != choice.proxy_url or proxy_auth_changed
+        row.base_url != choice.base_url
+        or row.proxy_url != choice.proxy_url
+        or row.proxy_fallback_direct != choice.proxy_fallback_direct
+        or proxy_auth_changed
     )
     if (
         row.key == "mam"
@@ -313,6 +328,7 @@ async def prepare(db, checkpoint, owner_id, scan_id, choice, key):
         "key": row.key,
         "base_url": choice.base_url,
         "proxy_url": choice.proxy_url,
+        "proxy_fallback_direct": choice.proxy_fallback_direct,
         "enabled": choice.enabled,
         "encrypted_secrets": encrypt_secrets(secrets),
     }

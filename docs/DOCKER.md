@@ -44,6 +44,20 @@ Use the same paths in Dewarr, qBittorrent, and your library server (Audiobookshe
 
 Choose those folders in Settings and verify your library routes. If Audiobookshelf sees `/audiobooks` while Dewarr sees `/data/audiobooks`, set that mapping in Dewarr. If qBittorrent sees a different path for the download folder, map that path in **Settings → Download clients**. A shared parent mount allows hardlinks when the filesystem supports them. When the download and library folders are on different filesystems, Dewarr copies the files into the library instead. A library folder can instead ask qBittorrent to rename the seeding files into that folder, so the seeding file and the library file are the same copy. That option stays off unless you turn it on.
 
+### Choosing folders and path mappings
+
+In **Settings → Libraries**, choose the library folder first. If Dewarr sees that folder at a different path, choose **Other folder** to browse the volumes mounted inside Dewarr. The browser shows directories, not files on your computer. Select the corresponding existing folder; this does not move your library. **Save & verify folder** checks filesystem operations and library access before activating the route.
+
+Being in the same Compose stack does not guarantee matching paths: each service has its own volume configuration. No translation is needed when both containers see the same files at the same path. A path mapping only translates a path; it cannot mount a missing volume or enable hardlinks.
+
+On WSL2 Windows-backed mounts (DrvFs), hardlinks can be unavailable even when both folders are on the same filesystem. Dewarr automatically uses copy mode when hardlink checks fail and safe publication checks pass. Original downloads remain available for seeding. A failed publication or permission check still blocks activation, and the error identifies the failed operation; changing a path mapping cannot repair filesystem capabilities.
+
+### Soulseek / slskd
+
+Soulseek uses one slskd connection for both searching and downloading. Configure it under **Download clients** or **Download sources**; saving tests the connection automatically. Dewarr reads slskd's completed-download folder and recognizes the same mounted path, including folders already saved through setup. There is no separate “worker import root” to configure for a shared path.
+
+If slskd reports `/media/downloads` but Dewarr sees those files at `/data/downloads`, open Soulseek's **Advanced · path mappings** under Download clients and browse to the corresponding Dewarr folder. Then choose and verify your library folder. Connection health, folder access, and the server's download enablement are separate checks: `BOOK_DOWNLOAD_DISPATCH_ENABLED=true` is still required to start downloads, and recovery mode still pauses dispatch.
+
 ### Network shares (NFS and SMB)
 
 NFS and SMB/CIFS libraries work when the staging folder is on the same mounted share as the library. These filesystems do not support the atomic no-replace rename flag, so Dewarr uses a fallback that still never overwrites an existing book or journal. The route test checks that fallback on your actual mount.
@@ -55,6 +69,21 @@ SMB/CIFS mounts need a few options, because the share, not Linux, decides owners
 - `nobrl` on older kernels, if the route test reports that the staging filesystem does not support file locks.
 
 Shares without hardlink support, such as many NAS SMB exports, fall back to copying.
+
+### mergerfs and pooled storage
+
+Mount the pooled parent once, such as `/mnt/user/data:/data`, and choose library and download
+folders below `/data`. Do not give Dewarr separate Docker mounts for the download and library
+subfolders, and do not mix a mergerfs pool path with one of its underlying branch paths. A single
+shared view lets mergerfs place hardlinks on the same branch and matches the path layout recommended
+for Sonarr and Radarr.
+
+mergerfs can report a different directory inode after a rename because its default `hybrid-hash`
+mode derives directory identities from their paths. Dewarr supports that behavior: route tests and
+interrupted imports use private random ownership markers while a directory moves, then record the
+identity at its final library path. File hardlinks are still verified independently. See the
+[mergerfs inode calculation documentation](https://github.com/trapexit/mergerfs/blob/master/mkdocs/docs/config/inodecalc.md)
+for the available policies and their tradeoffs.
 
 ## Existing PostgreSQL
 
@@ -77,6 +106,8 @@ Existing `BOOK_DATABASE_URL`, `BOOK_SECRET_KEY`, and `BOOK_SECRET_KEY_FILE` over
 ## HTTPS / reverse proxy
 
 Proxy to port 8000 and set `PUBLIC_URL=https://books.example.com`. Secure cookies are enabled automatically for HTTPS. Keep the browser's original Host header. A proxy on the Compose network can use `http://dewarr:8000` as its upstream.
+
+Form submissions accept the request's own origin (scheme, hostname and port) or the configured `PUBLIC_URL`. Direct LAN access through another hostname, IP or published port works without changing that setting. For a proxy that terminates HTTPS or rewrites the Host header, set `PUBLIC_URL` to the external browser address and recreate the container. Forwarded host/protocol headers do not authorize additional origins. `PUBLIC_URL` also remains the canonical address for identity-provider redirects and automatic secure-cookie configuration.
 
 Set `BOOK_PROXY_TOKEN` to a long random value. The proxy must send that value in `X-Dewarr-Proxy-Token`, set `X-Real-IP` to the connecting client, and append that client to `X-Forwarded-For`. When a header is repeated, the last value is the one that counts. Sign-in limits use that client when those two addresses agree, or when only one is present. If they disagree, Dewarr keeps the connection's own address, so a visitor-supplied address cannot replace the one the proxy appended. Requests without the token keep that connection address too, including visitors who open port 8000 directly.
 
@@ -126,7 +157,7 @@ Changing `POSTGRES_PASSWORD` in Compose does not change an existing database pas
 
 ## Troubleshooting
 
-- **Cannot sign in:** make `PUBLIC_URL` exactly match the browser address. Identity provider sign-in uses that same address for its redirect URL; see [OpenID Connect](OIDC.md). Plex sign-in uses it the same way; see [Plex](PLEX.md).
+- **The request origin is not allowed / cannot sign in:** set `PUBLIC_URL` to the browser's scheme, hostname and port (no path), then recreate the container. Native installations use `BOOK_PUBLIC_URL` and require a restart. This is especially important when an HTTPS proxy forwards requests to Dewarr over HTTP. Identity provider sign-in uses that same address for its redirect URL; see [OpenID Connect](OIDC.md). Plex sign-in uses it the same way; see [Plex](PLEX.md).
 - **Permission denied:** check `PUID`, `PGID`, and shared-folder ownership.
 - **Database unavailable:** the log names the failed step. If `DB_HOST` does not resolve, Dewarr and PostgreSQL are not on the same Docker network. Check with `docker network inspect <network>`, then run `docker compose down` followed by `docker compose up -d` to recreate the containers and network. Your data is kept unless you add `-v`. A rejected password means the value differs from the one the database was created with.
 - **Existing database / missing key:** restore the original key to `config/app_key`.

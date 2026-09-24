@@ -117,6 +117,58 @@ async def test_disabled_authentication_sends_no_authorization_header():
         assert (await client.capabilities()).version == "21.1"
 
 
+@pytest.mark.parametrize("version", ["21.1-r2311", "25.4", "26.3"])
+async def test_supported_nzbget_versions(version):
+    def handler(request):
+        return httpx.Response(200, json={"jsonrpc": "2.0", "result": version, "id": 1})
+
+    async with open_client(handler) as client:
+        assert (await client.capabilities()).version == version
+
+
+@pytest.mark.parametrize(
+    ("append_category", "expected"),
+    [("yes", "/downloads/complete/books"), ("no", "/downloads/complete")],
+)
+def test_empty_category_folder_honors_append_category_dir(append_category, expected):
+    from app.adapters.nzbget import category_folder
+
+    options = {
+        "DestDir": "/downloads/complete",
+        "AppendCategoryDir": append_category,
+        "Category1.Name": "books",
+        "Category1.DestDir": "",
+    }
+
+    assert category_folder(options, "books") == expected
+
+
+def test_missing_nzbget_category_is_rejected():
+    from app.adapters.nzbget import category_folder, option_map
+
+    with pytest.raises(AdapterError) as caught:
+        category_folder(option_map(config()), "missing")
+
+    assert caught.value.kind is FailureKind.NOT_FOUND
+    assert "missing" in str(caught.value)
+
+
+async def test_disabled_nzbget_history_is_rejected():
+    def handler(request):
+        method = json.loads(request.content)["method"]
+        result = (
+            "26.3" if method == "version" else config() + [{"Name": "KeepHistory", "Value": "0"}]
+        )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "result": result, "id": 1})
+
+    async with open_client(handler) as client:
+        with pytest.raises(AdapterError) as caught:
+            await client.download_location("books")
+
+    assert caught.value.kind is FailureKind.UNSUPPORTED
+    assert "history" in str(caught.value)
+
+
 async def test_old_nzbget_is_unsupported():
     def handler(request):
         return httpx.Response(200, json={"jsonrpc": "2.0", "result": "16.0", "id": 1})
@@ -151,6 +203,20 @@ async def test_unconfirmed_append_stays_uncertain():
             await client.submit(
                 nzb_bytes(), attempt_tag=TAG, save_path="/downloads", category="books"
             )
+    assert caught.value.kind is FailureKind.UNCERTAIN
+
+
+async def test_oversized_append_response_stays_uncertain():
+    def handler(request):
+        return httpx.Response(
+            200,
+            content=b'{"jsonrpc":"2.0","result":42,"id":1}' + b" " * 20,
+        )
+
+    async with open_client(handler) as client:
+        with pytest.raises(AdapterError) as caught:
+            await client._rpc("append", mutating=True, limit=20)
+
     assert caught.value.kind is FailureKind.UNCERTAIN
 
 

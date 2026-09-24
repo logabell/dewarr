@@ -24,6 +24,7 @@ from app.importing.publication import (
     remember_rename_plan,
 )
 from app.importing.recovery import journal_census
+from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
 from tests.media_fixtures import epub
 
 
@@ -193,6 +194,56 @@ def test_retry_recognizes_published_item_even_if_download_was_later_removed(spec
     publish_item(spec)
     (spec.source_root / "pack/book.epub").unlink()
     assert publish_item(spec)["state"] == "published"
+
+
+@pytest.mark.parametrize("mode", ["hardlink", "copy"])
+@pytest.mark.usefixtures("path_bound_directory_handles")
+def test_post_rename_inode_change_recovers_by_publication_marker(specification, mode):
+    spec = specification.model_copy(update={"mode": mode})
+
+    def crash(phase):
+        if phase == "published-before-receipt":
+            raise RuntimeError("simulated mergerfs rename")
+
+    with pytest.raises(RuntimeError, match="mergerfs"):
+        publish_item(spec, checkpoint=crash)
+    receipt_path = spec.staging_root / f"{spec.entry_id}.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["stage_identity"]["inode"] += 1
+    receipt_path.write_text(json.dumps(receipt))
+    published = spec.destination_root / spec.folder
+    assert (published / publication.PUBLICATION_MARKER).is_file()
+    assert publication.remaining_import_bytes(spec) == 0
+    recovered = publish_item(spec)
+    assert recovered["state"] == "published"
+    assert recovered["stage_identity"]["inode"] == published.stat().st_ino
+    assert not (published / publication.PUBLICATION_MARKER).exists()
+    assert publish_item(spec)["state"] == "published"
+
+
+def test_publication_marker_does_not_adopt_an_identical_replacement(specification):
+    spec = specification
+
+    def crash(phase):
+        if phase == "published-before-receipt":
+            raise RuntimeError("stop after rename")
+
+    with pytest.raises(RuntimeError, match="after rename"):
+        publish_item(spec, checkpoint=crash)
+    published = spec.destination_root / spec.folder
+    moved = published.with_name("Moved original")
+    published.rename(moved)
+    published.mkdir()
+    for source in moved.iterdir():
+        if source.name != publication.PUBLICATION_MARKER:
+            shutil.copy2(source, published / source.name)
+    with pytest.raises(PublicationError, match="another item"):
+        publish_item(spec)
+    assert sorted(path.name for path in published.iterdir()) == [
+        "First Harbor.epub",
+        "metadata.opf",
+    ]
+    assert (moved / publication.PUBLICATION_MARKER).is_file()
 
 
 def test_same_filesystem_rename_reserves_sidecar_bytes_only(specification):
@@ -397,6 +448,31 @@ def test_probe_preserves_replaced_destination_during_cleanup(specification, monk
     assert replacements and replacements[0].is_dir()
     assert (spec.destination_root / "moved-original-probe").is_dir()
     assert not list(spec.staging_root.iterdir())
+
+
+@pytest.mark.usefixtures("path_bound_directory_handles")
+def test_probe_accepts_a_post_rename_directory_inode_change(specification, monkeypatch):
+    spec = specification
+    real_stat = os.stat
+
+    def changed_inode(path, *args, **kwargs):
+        info = real_stat(path, *args, **kwargs)
+        if str(path).startswith(".book-search-probe-") and kwargs.get("dir_fd") is not None:
+            values = list(info)
+            values[1] += 1
+            return os.stat_result(values)
+        return info
+
+    monkeypatch.setattr(publication.os, "stat", changed_inode)
+    result = probe_destination(
+        spec.source_root,
+        spec.source_relative,
+        spec.files[0],
+        spec.destination_root,
+        spec.staging_root,
+    )
+    assert result["no_replace"]
+    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
 
 
 def test_concurrent_publishers_cannot_create_two_items(specification):
@@ -703,3 +779,14 @@ def test_smb_noserverino_mounts_are_reported(tmp_path):
     )
     assert len(warnings) == 1 and "/data/My Media" in warnings[0] and "serverino" in warnings[0]
     assert publication.mount_warnings(Path("/data/x"), mountinfo=tmp_path / "missing") == []
+
+
+@pytest.mark.usefixtures("path_bound_directory_handles")
+def test_copy_publication_with_path_bound_handles_preserves_download(specification, no_hardlinks):
+    spec = specification.model_copy(update={"mode": "copy"})
+    original = spec.source_root / "pack/book.epub"
+    before = original.read_bytes()
+    assert publish_item(spec)["state"] == "published"
+    assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == before
+    assert original.read_bytes() == before
+    assert publish_item(spec)["state"] == "published"

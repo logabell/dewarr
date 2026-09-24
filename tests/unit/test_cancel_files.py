@@ -67,11 +67,16 @@ def test_cancel_preserves_published_item_and_external_sidecar_edits(specificatio
     with pytest.raises(RuntimeError):
         publish_item(spec, checkpoint=interrupt_at("published-before-receipt"))
     folder = spec.destination_root / spec.folder
+    receipt_path = spec.staging_root / f"{spec.entry_id}.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["stage_identity"]["inode"] += 1
+    receipt_path.write_text(json.dumps(receipt))
     (folder / "metadata.opf").write_text("Later library edit")
     inode = (folder / "First Harbor.epub").stat().st_ino
     assert cancel_files(spec)["state"] == "published"
     assert (folder / "metadata.opf").read_text() == "Later library edit"
     assert (folder / "First Harbor.epub").stat().st_ino == inode
+    assert not (folder / ".book-search-publication").exists()
 
 
 @pytest.mark.parametrize("change", ["extra", "replacement", "symlink"])

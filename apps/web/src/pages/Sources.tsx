@@ -392,7 +392,7 @@ const AUTOMATION_DEFAULTS: AutomationSettings = {
   wedge_min_size: false,
   wedge_min_size_mb: 0,
   protect_ratio: false,
-  ratio_below: 1.5,
+  ratio_below: 2.5,
   ratio_buy_gb: 50,
   maintain_buffer: false,
   buffer_below_gb: 10,
@@ -400,7 +400,7 @@ const AUTOMATION_DEFAULTS: AutomationSettings = {
   spend_bonus: false,
   bonus_above: 5000,
   bonus_buy_gb: 50,
-  upload_interval_hours: 6,
+  upload_interval_hours: 3,
 };
 
 function automationSettings(connection: Connection): AutomationSettings {
@@ -424,9 +424,22 @@ function AccountAutomation({
   value: AutomationSettings;
   onChange: (value: AutomationSettings) => void;
 }) {
+  const enabledCount = [
+    value.seedbox_ip,
+    value.auto_vip,
+    value.use_wedge,
+    value.protect_ratio,
+    value.maintain_buffer,
+    value.spend_bonus,
+  ].filter(Boolean).length;
   return (
-    <fieldset className="account-automation">
-      <legend>Account automation</legend>
+    <details className="account-automation">
+      <summary>
+        <span>Account automation</span>
+        <span className="account-automation-state">
+          {enabledCount ? `${enabledCount} enabled` : "All off"}
+        </span>
+      </summary>
       <p className="muted">
         These stay off until you turn them on. They can spend bonus points, use
         a Freeleech wedge you already own, or change the IP MyAnonamouse treats
@@ -736,7 +749,7 @@ function AccountAutomation({
           />
         </label>
       )}
-    </fieldset>
+    </details>
   );
 }
 
@@ -744,7 +757,11 @@ export function MamConnectionForm({ value }: { value: Connection }) {
   const cache = useQueryClient();
   const [base, setBase] = useState(value.base_url);
   const [proxy, setProxy] = useState(value.proxy_url || "");
+  const [proxyFallback, setProxyFallback] = useState(
+    value.proxy_fallback_direct,
+  );
   const [cookie, setCookie] = useState("");
+  const [retainedCookie, setRetainedCookie] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [clearAuth, setClearAuth] = useState(false);
@@ -756,7 +773,13 @@ export function MamConnectionForm({ value }: { value: Connection }) {
   const dirty =
     base !== value.base_url ||
     proxy !== (value.proxy_url || "") ||
-    Boolean(cookie || username || password || clearAuth) ||
+    proxyFallback !== value.proxy_fallback_direct ||
+    Boolean(
+      (cookie && cookie !== retainedCookie) ||
+      username ||
+      password ||
+      clearAuth,
+    ) ||
     enabled !== value.enabled ||
     JSON.stringify(automation) !== JSON.stringify(savedAutomation);
   const persist = async () =>
@@ -765,6 +788,7 @@ export function MamConnectionForm({ value }: { value: Connection }) {
         body: {
           base_url: base,
           proxy_url: proxy || null,
+          proxy_fallback_direct: proxyFallback,
           mam_id: cookie || null,
           proxy_username: username || null,
           proxy_password: password || null,
@@ -779,6 +803,7 @@ export function MamConnectionForm({ value }: { value: Connection }) {
     mutationFn: persist,
     onSuccess: (connection) => {
       setCookie("");
+      setRetainedCookie(null);
       setUsername("");
       setPassword("");
       cache.setQueryData(["mam-connection"], connection);
@@ -801,10 +826,15 @@ export function MamConnectionForm({ value }: { value: Connection }) {
         diagnostics,
       );
       cache.setQueryData(["mam-connection"], diagnostics.connection);
-      setCookie("");
-      setUsername("");
-      setPassword("");
-      setClearAuth(false);
+      if (diagnostics.cookie_status === "authenticated") {
+        setCookie("");
+        setRetainedCookie(null);
+        setUsername("");
+        setPassword("");
+        setClearAuth(false);
+      } else {
+        setRetainedCookie(cookie || null);
+      }
     },
     onError: () => cache.invalidateQueries({ queryKey: ["mam-connection"] }),
   });
@@ -846,7 +876,9 @@ export function MamConnectionForm({ value }: { value: Connection }) {
             HTTP proxy URL
             <SettingHelp label="connection options">
               {proxy
-                ? "Proxy required: a failed proxy will never fall back to a direct request."
+                ? proxyFallback
+                  ? "Proxy preferred: MAM requests fall back to the direct route when the proxy is unavailable."
+                  : "Proxy required: a failed proxy will not fall back to a direct request."
                 : "MAM requests use a direct connection."}{" "}
               This setting routes source HTTP requests; torrent traffic is
               configured separately.
@@ -864,6 +896,20 @@ export function MamConnectionForm({ value }: { value: Connection }) {
           Supports HTTP and HTTPS proxies. Enter authentication in the separate
           username and password fields below.
         </p>
+        <label className="check-label">
+          <input
+            type="checkbox"
+            checked={proxyFallback}
+            onChange={(event) => setProxyFallback(event.target.checked)}
+          />
+          Allow direct fallback when the proxy is unavailable
+        </label>
+        {proxyFallback && proxy && (
+          <p className="muted">
+            Fallback keeps MAM available, but MAM will see this server&apos;s
+            direct public IP until the proxy recovers.
+          </p>
+        )}
         <div className="settings-fields">
           <label>
             Proxy username
@@ -933,7 +979,17 @@ export function MamConnectionForm({ value }: { value: Connection }) {
           <div>
             <dt>Current route</dt>
             <dd>
-              {!enabled ? "Disabled" : proxy ? "Proxy (required)" : "Direct"}
+              {!enabled
+                ? "Disabled"
+                : health?.route === "direct-fallback"
+                  ? "Direct fallback"
+                  : health?.route === "proxy"
+                    ? "Proxy"
+                    : proxy
+                      ? proxyFallback
+                        ? "Proxy preferred"
+                        : "Proxy required"
+                      : "Direct"}
               {dirty ? " · unsaved" : ""}
             </dd>
           </div>
@@ -984,34 +1040,65 @@ export function MamConnectionForm({ value }: { value: Connection }) {
         />
         Enable MAM
       </label>
-      <Notice error={save.error || test.error} />
-      {value.last_error && !test.error && !save.error && (
-        <p className="notice">{value.last_error}</p>
-      )}
-      <p role="status">Connection: {value.status}</p>
       <AccountAutomation value={automation} onChange={setAutomation} />
-      <div className="actions">
-        <button className="primary" disabled={save.isPending || test.isPending}>
-          Save connection
-        </button>
-        <button
-          type="button"
-          disabled={
-            (!value.has_session && !cookie) ||
-            !enabled ||
-            save.isPending ||
-            test.isPending
-          }
-          onClick={(event) => {
-            if (event.currentTarget.form?.reportValidity()) test.mutate();
-          }}
+      <div className="mam-connection-footer">
+        <div className="actions">
+          <button
+            className="primary"
+            disabled={save.isPending || test.isPending}
+          >
+            Save connection
+          </button>
+          <button
+            type="button"
+            disabled={
+              (!value.has_session && !cookie) ||
+              !enabled ||
+              save.isPending ||
+              test.isPending
+            }
+            onClick={(event) => {
+              if (event.currentTarget.form?.reportValidity()) test.mutate();
+            }}
+          >
+            {test.isPending
+              ? "Testing…"
+              : dirty
+                ? "Save & test connection"
+                : "Test connection"}
+          </button>
+        </div>
+        <div
+          className="mam-action-status"
+          data-health={test.error ? "unhealthy" : health?.status || "unknown"}
+          role="status"
+          aria-label="Connection test status"
+          aria-live="polite"
         >
-          {test.isPending
-            ? "Testing…"
-            : dirty
-              ? "Save & test connection"
-              : "Test connection"}
-        </button>
+          <div className="mam-action-status-line">
+            <span className="mam-network-badge">
+              {test.isPending
+                ? "Testing…"
+                : test.error
+                  ? "Failed"
+                  : health
+                    ? health.status
+                    : value.status}
+            </span>
+            <span>
+              {test.isPending
+                ? "Checking the MAM session and network route."
+                : test.error
+                  ? "Connection test failed. Your entered credentials are still available above."
+                  : health?.message ||
+                    "Test the connection to verify this route."}
+            </span>
+          </div>
+          <Notice error={save.error || test.error} />
+          {value.last_error && !test.error && !save.error && (
+            <p className="notice">{value.last_error}</p>
+          )}
+        </div>
       </div>
     </form>
   );

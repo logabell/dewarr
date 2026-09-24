@@ -92,6 +92,7 @@ function SourceEditor({
     source_key: evidence.before.source_key,
     base_url: evidence.before.base_url,
     proxy_url: evidence.before.proxy_url,
+    proxy_fallback_direct: evidence.before.proxy_fallback_direct,
     enabled: evidence.before.enabled,
     clear_proxy_credentials: false,
     excluded_indexers: evidence.before.excluded_indexers,
@@ -215,10 +216,24 @@ function SourceEditor({
               />
             </label>
             <p>
-              A configured proxy is required for every source request. Changing
-              its URL clears saved proxy credentials unless you replace them
-              below.
+              {choice.source_key === "mam" && choice.proxy_fallback_direct
+                ? "MAM prefers the configured proxy and falls back direct when it is unavailable."
+                : "A configured proxy is required for every source request."}{" "}
+              Changing its URL clears saved proxy credentials unless you replace
+              them below.
             </p>
+            {choice.source_key === "mam" && (
+              <label className="difference-choice">
+                <input
+                  type="checkbox"
+                  checked={choice.proxy_fallback_direct}
+                  onChange={(e) =>
+                    edit({ proxy_fallback_direct: e.target.checked })
+                  }
+                />
+                Allow direct fallback when the proxy is unavailable
+              </label>
+            )}
             <label>
               New proxy username
               <input

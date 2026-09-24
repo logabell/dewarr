@@ -149,6 +149,8 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
         cycle = f"series:{policy.id}:{cycle}"
     if target.state == "satisfied":
         return "available", target.message, now + timedelta(hours=24)
+    if target.quota_waiting:
+        return "held", target.message, target.quota_retry_at or next_tick(now)
     if target.state != "wanted":
         return "held", target.message, None
     reservation = await db.get(AcquisitionReservation, target.reservation_id)
@@ -213,6 +215,9 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
                 "Download queued; awaiting library confirmation",
                 next_tick(now),
             )
+        if operation.payload.get("waiting_for_quota"):
+            progress.update(search_id=None, selection_id=None, next_at=now.isoformat())
+            return "wanted", "Quota available; a fresh search is scheduled", now
         if policy.revision > progress.get("policy_revision", policy.revision):
             progress.update(search_id=None, selection_id=None, next_at=now.isoformat())
             progress["policy_revision"] = policy.revision
@@ -327,6 +332,10 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
 
 
 async def advance_book(db, user, policy, book, now):
+    from app.domain.follows import source, wait_for_release
+
+    if await wait_for_release(db, user, policy, book, now):
+        return
     from app.domain import list_series
     from app.domain.release_profiles import ProfileSnapshot
 
@@ -363,7 +372,7 @@ async def advance_book(db, user, policy, book, now):
             f"list-request:{book.id}:{policy.generation}:{book.progress.get('activation', 1)}",
             policy_reference=list_policies.reason_reference(policy),
             frozen_preferences=policy.configuration["profile"],
-            hold_for_approval=False,
+            hold_for_approval=bool(await source(db, policy.list_id)),
         )
         book.intent_id = intent.id
         await db.flush()

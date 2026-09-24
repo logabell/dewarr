@@ -327,6 +327,9 @@ class SourceConnection(Base):
     key: Mapped[str] = mapped_column(String(40), primary_key=True)
     base_url: Mapped[str] = mapped_column(Text)
     proxy_url: Mapped[str | None] = mapped_column(Text)
+    proxy_fallback_direct: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
     encrypted_secrets: Mapped[str] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     generation: Mapped[int] = mapped_column(Integer, default=1)
@@ -572,6 +575,14 @@ class ListCatalogBinding(Identity, Base):
 
 class ListSubscription(Identity, Base):
     __tablename__ = "list_subscriptions"
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind IS NULL OR "
+            "(provider = 'hardcover' AND source_kind IN ('author', 'series'))",
+            name="list_subscription_source_kind",
+        ),
+    )
+    source_kind: Mapped[str | None] = mapped_column(String(20))
     provider: Mapped[str] = mapped_column(
         String(20), default="goodreads", server_default="goodreads"
     )
@@ -885,6 +896,9 @@ class AcquisitionReservation(Identity, Base):
 
 
 class AcquisitionTarget(Identity, Base):
+    quota_requirement: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    quota_waiting: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    quota_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __tablename__ = "acquisition_targets"
     __table_args__ = (
         UniqueConstraint("intent_id", "slot"),
@@ -952,6 +966,7 @@ class DownloadAttempt(Identity, Base):
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     receipt: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     observation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    recovery_observation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     inspection_id: Mapped[UUID | None] = mapped_column(ForeignKey("download_inspections.id"))
 
 
@@ -964,6 +979,54 @@ class DownloadMembership(Base):
     )
     attempt_id: Mapped[UUID] = mapped_column(ForeignKey("download_attempts.id"), index=True)
     join_operation_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+
+
+class DownloadRecoverySettings(Base):
+    __tablename__ = "download_recovery_settings"
+    __table_args__ = (CheckConstraint("id = 1"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class ReleaseBlock(Identity, Base):
+    __tablename__ = "release_blocks"
+    __table_args__ = (UniqueConstraint("work_id", "medium", "release_key"),)
+    work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"), index=True)
+    medium: Mapped[str] = mapped_column(String(10))
+    release_key: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(String(1000))
+    identities: Mapped[list[str]] = mapped_column(JSONB)
+    reason: Mapped[str] = mapped_column(String(300))
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    automatic: Mapped[bool] = mapped_column(Boolean)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class DownloadRecovery(Identity, Base):
+    """One durable replacement command for each failed member of a transfer."""
+
+    __tablename__ = "download_recoveries"
+    selection_id: Mapped[UUID] = mapped_column(ForeignKey("acquisition_selections.id"), unique=True)
+    attempt_id: Mapped[UUID] = mapped_column(ForeignKey("download_attempts.id"), index=True)
+    root_selection_id: Mapped[UUID] = mapped_column(ForeignKey("acquisition_selections.id"))
+    state: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    reason: Mapped[str] = mapped_column(String(300))
+    message: Mapped[str] = mapped_column(String(300))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    search_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+    replacement_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+    job_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class ReportedDownloadAsset(Identity, Base):
+    """Exclude a reported copy from this reader's requests; never touch its files."""
+
+    __tablename__ = "reported_download_assets"
+    __table_args__ = (UniqueConstraint("owner_id", "asset_id"),)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    asset_id: Mapped[UUID] = mapped_column(ForeignKey("library_assets.id"))
+    recovery_id: Mapped[UUID] = mapped_column(ForeignKey("download_recoveries.id"))
 
 
 class CapacitySettings(Base):
@@ -1263,3 +1326,75 @@ class DiscoveryFollow(Base):
     generation: Mapped[int] = mapped_column(Integer, default=0)
     next_check_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(600))
+
+
+class NotificationPolicy(Base):
+    __tablename__ = "notification_policy"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    member_events: Mapped[list[str]] = mapped_column(JSONB)
+
+
+class NotificationChannel(Identity, Base):
+    __tablename__ = "notification_channels"
+    owner_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(30))
+    encrypted_secrets: Mapped[str] = mapped_column(Text)
+    events: Mapped[list[str]] = mapped_column(JSONB)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    digest_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class NotificationEvent(Identity, Base):
+    __tablename__ = "notification_events"
+    key: Mapped[str] = mapped_column(String(300), unique=True)
+    event_type: Mapped[str] = mapped_column(String(60))
+    owner_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    subject_id: Mapped[UUID | None] = mapped_column()
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    routed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class NotificationDelivery(Identity, Base):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (UniqueConstraint("channel_id", "event_id"),)
+    channel_id: Mapped[UUID] = mapped_column(
+        ForeignKey("notification_channels.id", ondelete="CASCADE")
+    )
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("notification_events.id", ondelete="CASCADE"))
+    generation: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    message: Mapped[str | None] = mapped_column(String(300))
+    batch_id: Mapped[UUID | None] = mapped_column()
+
+
+class NotificationRequestState(Base):
+    __tablename__ = "notification_request_states"
+    intent_id: Mapped[UUID] = mapped_column(
+        ForeignKey("acquisition_intents.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(20))
+    revision: Mapped[int] = mapped_column(Integer)
+
+
+class RequestQuotaPolicy(Base):
+    __tablename__ = "request_quota_policies"
+    scope: Mapped[str] = mapped_column(String(100), primary_key=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class RequestQuotaCharge(Base):
+    __tablename__ = "request_quota_charges"
+    target_id: Mapped[UUID] = mapped_column(
+        ForeignKey("acquisition_targets.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    medium: Mapped[str] = mapped_column(String(10))
+    admitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    size_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exempt: Mapped[bool] = mapped_column(Boolean, default=False)

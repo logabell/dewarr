@@ -2,7 +2,6 @@
 
 import asyncio
 import contextvars
-import ipaddress
 import logging
 import re
 import socket
@@ -14,6 +13,7 @@ import httpx
 
 from app.adapters.catalog_types import cover_url
 from app.importing.cover_image import MAX_INPUT, MAX_OUTPUT
+from app.network_addresses import public_address
 
 _cover_request = contextvars.ContextVar("cover_request", default=False)
 
@@ -29,20 +29,6 @@ logging.getLogger("httpx").addFilter(_CoverLogFilter())
 
 class CoverError(ValueError):
     pass
-
-
-def public_address(value):
-    address = ipaddress.ip_address(value)
-    if not address.is_global or address.is_multicast:
-        return False
-    if isinstance(address, ipaddress.IPv6Address):
-        if address.sixtofour or address.teredo or address.is_site_local:
-            return False
-        if address in ipaddress.ip_network("64:ff9b::/96"):
-            return False
-        if address.ipv4_mapped:
-            return public_address(str(address.ipv4_mapped))
-    return True
 
 
 def archive_member(value):

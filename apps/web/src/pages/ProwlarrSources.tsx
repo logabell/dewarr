@@ -5,6 +5,9 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Notice } from "../components";
+import ConnectionTestStatus, {
+  SavedSecretIndicator,
+} from "../components/ConnectionTestStatus";
 
 type Connection = components["schemas"]["ProwlarrConnectionView"];
 type Page = components["schemas"]["ProwlarrPage"];
@@ -281,6 +284,7 @@ export function ProwlarrConnectionForm({
   connection: Connection;
   onSaved: () => void;
 }) {
+  const cache = useQueryClient();
   const [url, setUrl] = useState(connection.base_url);
   const [key, setKey] = useState("");
   const [enabled, setEnabled] = useState(
@@ -310,19 +314,24 @@ export function ProwlarrConnectionForm({
         }),
       );
     },
-    onSuccess: () => {
+    onSuccess: (value) => {
       setKey("");
+      cache.setQueryData(["prowlarr-connection"], value);
       onSaved();
     },
   });
   const test = useMutation({
     mutationFn: async () =>
       result(await api.POST("/api/sources/prowlarr/connection/test")),
-    onSuccess: onSaved,
+    onSuccess: (value) => {
+      cache.setQueryData(["prowlarr-connection"], value);
+      onSaved();
+    },
   });
   return (
     <form
       className="panel editor"
+      aria-label="Prowlarr connection settings"
       onSubmit={(event) => {
         event.preventDefault();
         save.mutate();
@@ -339,8 +348,12 @@ export function ProwlarrConnectionForm({
         />
       </label>
       <label>
-        API key
+        <span className="credential-label">
+          <span>API key</span>
+          <SavedSecretIndicator saved={connection.has_api_key} />
+        </span>
         <input
+          aria-label="API key"
           type="password"
           autoComplete="new-password"
           value={key}
@@ -374,27 +387,36 @@ export function ProwlarrConnectionForm({
           />
         </label>
       </details>
+      <div className="connection-action-bar">
+        <div className="button-row">
+          <button disabled={save.isPending || test.isPending}>
+            {save.isPending ? "Saving…" : "Save connection"}
+          </button>
+          <button
+            type="button"
+            disabled={
+              !connection.configured ||
+              !connection.enabled ||
+              save.isPending ||
+              test.isPending
+            }
+            onClick={() => test.mutate()}
+          >
+            {test.isPending ? "Testing…" : "Test connection"}
+          </button>
+        </div>
+        <ConnectionTestStatus
+          configured={connection.configured}
+          status={connection.status}
+          lastSuccessAt={connection.last_success_at}
+          isPending={test.isPending}
+          error={test.error}
+        />
+      </div>
       <Notice error={save.error || test.error} />
-      {connection.last_error && (
+      {connection.last_error && !test.error && (
         <p className="notice error">{connection.last_error}</p>
       )}
-      <div className="button-row">
-        <button disabled={save.isPending || test.isPending}>
-          Save connection
-        </button>
-        <button
-          type="button"
-          disabled={
-            !connection.configured ||
-            !connection.enabled ||
-            save.isPending ||
-            test.isPending
-          }
-          onClick={() => test.mutate()}
-        >
-          Test connection
-        </button>
-      </div>
     </form>
   );
 }

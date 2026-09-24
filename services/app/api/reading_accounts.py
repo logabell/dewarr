@@ -168,6 +168,8 @@ async def retarget_storygraph_lists(db, user_id, previous, username):
     )
     for sub in rows:
         config = decrypt_secrets(sub.encrypted_config)
+        if config.get("source_kind"):
+            continue
         if config.get("username") != previous:
             continue
         config["username"] = username
@@ -298,6 +300,8 @@ async def subscriptions(user: Member, db: Database):
     results = []
     for item, sub in rows:
         config = decrypt_secrets(sub.encrypted_config)
+        if config.get("source_kind"):
+            continue
         if sub.provider == "goodreads":
             source = goodreads_profile.profile_input(config["url"])
             account_id, external_id = source["user_id"], source["selected"] or "all"
@@ -383,6 +387,8 @@ async def follow(body: FollowReadingList, user: Member, db: Database):
     ).all()
     for item, subscription in rows:
         saved = decrypt_secrets(subscription.encrypted_config)
+        if saved.get("source_kind"):
+            continue
         if body.provider == "goodreads":
             source = goodreads_profile.profile_input(saved["url"])
             saved_identity = f"{source['user_id']}:{source['selected']}"

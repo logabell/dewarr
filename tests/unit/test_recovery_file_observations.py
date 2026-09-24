@@ -45,6 +45,11 @@ def test_recovery_reads_partial_and_published_files_without_changing_any_receipt
     else:
         with pytest.raises(RuntimeError):
             publish_item(spec, checkpoint=crash)
+    if point == "published-before-receipt":
+        receipt_path = spec.staging_root / f"{spec.entry_id}.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt["stage_identity"]["inode"] += 1
+        receipt_path.write_text(json.dumps(receipt))
     before = {
         str(p): (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns)
         for p in spec.source_root.parent.rglob("*")

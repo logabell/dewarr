@@ -9,6 +9,7 @@
 - **Library integration** — connect Audiobookshelf or Grimmory, see what you own, and import completed downloads into verified library folders.
 - **Chapterized M4B** — merge a multi-file MP3 download into one audiobook, with a chapter per file, before library import. The download itself stays unchanged.
 - **Goodreads sync** — follow shelves, import CSV exports, and check for new books automatically.
+- **Author and series follows** — monitor future books with reviewed back-catalog selection, filters, exclusions, and release-day acquisition.
 - **Hardcover sync** — track your lists and lists you follow, including private lists your account can access.
 - **Custom Goodreads lists** — add public lists, track changes, and pin them to your discovery page.
 - **For you** — personalize shelves with followed lists, recommendations, trending books, and new releases.
@@ -16,6 +17,7 @@
 - **Download priorities** — rank sources and formats, apply size and seed preferences, and control download capacity.
 - **Book discovery** — browse collections, awards, authors, and series.
 - **Download sources** — connect MyAnonamouse, Prowlarr, and AudiobookBay; send transfers to qBittorrent.
+- **Notifications** — personal and installation alerts through Discord, ntfy, Apprise, and JSON webhooks, with discovery digests. [Setup and payload documentation](docs/NOTIFICATIONS.md).
 - **Shared library** — individual accounts, reading lists, permissions, and download activity.
 - **Self-hosted** — Docker, PostgreSQL, and an MIT license.
 
@@ -153,7 +155,7 @@ Before creating a Hardcover token, enable `read:catalog`, `read:me:content`, `re
 
 Dewarr creates its encryption key in `/config` on first start. Keep that folder and the PostgreSQL volume when updating.
 
-[Settings, folders, backups, and upgrades](docs/DOCKER.md) · [Contributing](docs/DEVELOPMENT.md)
+[Settings, folders, backups, and upgrades](docs/DOCKER.md) · [Download clients](docs/DOWNLOAD-CLIENTS.md) · [Request quotas](docs/REQUEST-QUOTAS.md) · [Contributing](docs/DEVELOPMENT.md)
 
 ## Screenshots
 

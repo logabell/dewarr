@@ -142,7 +142,9 @@ test("onboarding defers, resumes and completes once; settings show one focused s
   await mam
     .getByRole("button", { name: "Test connection", exact: true })
     .click();
-  await expect(mam).toContainText("Connection: connected");
+  await expect(
+    mam.getByRole("status", { name: "Connection test status" }),
+  ).toContainText("MAM authenticated through the direct connection.");
   await page.goto("/settings#naming");
   await expect(page).toHaveURL(/\/settings#naming$/);
   await expect(
