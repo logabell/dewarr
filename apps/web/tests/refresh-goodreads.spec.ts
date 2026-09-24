@@ -4,6 +4,11 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/**", (route) =>
     route.fulfill({ json: { items: [], total: 0, statuses: [], kinds: [] } }),
   );
+  await page.route("**/api/request-quotas/me", (route) =>
+    route.fulfill({
+      json: { bypass: false, windows: [], pending_remaining: null },
+    }),
+  );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
       json: {
