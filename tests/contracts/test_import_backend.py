@@ -1,3 +1,4 @@
+import asyncio
 import copy
 
 import httpx
@@ -5,6 +6,7 @@ import pytest
 
 from app.adapters.audiobookshelf import Audiobookshelf
 from app.adapters.contracts import AdapterError
+from app.importing import backend
 from app.importing.backend import verify_backend
 from app.importing.publication import PublicationError
 from tests.abs_import_fixture import ImportBackendFixture
@@ -17,6 +19,82 @@ async def test_actual_folder_mapping_challenge_with_watcher_only_token(tmp_path)
         result = await verify_backend(adapter, "synthetic", "/books", fixture.root, "ebook")
     assert result["root_mapping"] and not result["scan_capable"] and result["watcher_enabled"]
     assert fixture.path_checks == [False, True, False]
+    assert not list(fixture.root.iterdir())
+
+
+async def test_mapping_waits_for_cached_creation_and_removal(tmp_path, monkeypatch):
+    fixture = ImportBackendFixture(tmp_path.resolve())
+    monkeypatch.setattr(backend, "MAPPING_POLL_INTERVAL", 0, raising=False)
+    observed = []
+    async with fixture.client() as adapter:
+        real_exists = adapter.path_exists
+        previous = False
+
+        async def cached_exists(root, name):
+            nonlocal previous
+            current = await real_exists(root, name)
+            result, previous = previous, current
+            observed.append(result)
+            return result
+
+        monkeypatch.setattr(adapter, "path_exists", cached_exists)
+        result = await verify_backend(adapter, "synthetic", "/books", fixture.root, "ebook")
+    assert result["root_mapping"]
+    assert observed == [False, False, True, True, False]
+    assert not list(fixture.root.iterdir())
+
+
+@pytest.mark.parametrize("stale_phase", ["creation", "removal"])
+async def test_mapping_cache_deadline_fails_closed(tmp_path, monkeypatch, stale_phase):
+    fixture = ImportBackendFixture(tmp_path.resolve())
+    monkeypatch.setattr(backend, "MAPPING_VISIBILITY_TIMEOUT", 0.02)
+    monkeypatch.setattr(backend, "MAPPING_POLL_INTERVAL", 0.001)
+    calls = []
+    async with fixture.client() as adapter:
+        real_exists = adapter.path_exists
+
+        async def stale_exists(root, name):
+            current = await real_exists(root, name)
+            calls.append(current)
+            return False if stale_phase == "creation" else len(calls) > 1
+
+        monkeypatch.setattr(adapter, "path_exists", stale_exists)
+        message = "same library folder" if stale_phase == "creation" else "removed challenge"
+        with pytest.raises(PublicationError, match=message):
+            await verify_backend(adapter, "synthetic", "/books", fixture.root, "ebook")
+    assert len(calls) > 2
+    assert not list(fixture.root.iterdir())
+
+
+async def test_existing_mapping_challenge_is_never_polled_or_modified(tmp_path, monkeypatch):
+    fixture = ImportBackendFixture(tmp_path.resolve())
+    calls = []
+    async with fixture.client() as adapter:
+
+        async def exists(root, name):
+            calls.append(name)
+            return True
+
+        monkeypatch.setattr(adapter, "path_exists", exists)
+        with pytest.raises(PublicationError, match="Unexpected existing"):
+            await verify_backend(adapter, "synthetic", "/books", fixture.root, "ebook")
+    assert len(calls) == 1
+    assert not list(fixture.root.iterdir())
+
+
+async def test_cancelled_mapping_poll_cleans_its_marker(tmp_path, monkeypatch):
+    fixture = ImportBackendFixture(tmp_path.resolve())
+    async with fixture.client() as adapter:
+        real_exists = adapter.path_exists
+
+        async def cancel_when_created(root, name):
+            if await real_exists(root, name):
+                raise asyncio.CancelledError
+            return False
+
+        monkeypatch.setattr(adapter, "path_exists", cancel_when_created)
+        with pytest.raises(asyncio.CancelledError):
+            await verify_backend(adapter, "synthetic", "/books", fixture.root, "ebook")
     assert not list(fixture.root.iterdir())
 
 
