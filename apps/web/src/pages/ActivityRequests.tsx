@@ -1,3 +1,4 @@
+import QuotaSummary from "../components/QuotaSummary";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -25,6 +26,7 @@ import { usePagedQuery } from "../hooks/usePagedQuery";
 import { randomUUID } from "../randomUUID";
 import DownloadConstraints from "./DownloadConstraints";
 import DownloadRepair from "./DownloadRepair";
+import DownloadRecoveryDetails from "../components/DownloadRecoveryDetails";
 import { EffectivePreferences } from "./PreferenceFields";
 import {
   nextRequestOffset,
@@ -338,6 +340,7 @@ export default function ActivityRequests({
   });
   return (
     <section className="requests-board" aria-label="Requests">
+      <QuotaSummary />
       <Notice
         error={
           requests.error ||
@@ -680,6 +683,12 @@ function RequestCard({
                 )}
                 {target.can_repair && target.attempt_id && (
                   <DownloadRepair attemptId={target.attempt_id} />
+                )}
+                {target.attempt_id && target.can_view_download_history && (
+                  <DownloadRecoveryDetails
+                    attemptId={target.attempt_id}
+                    workId={request.work_id}
+                  />
                 )}
               </div>
             );

@@ -26,7 +26,7 @@ router = APIRouter(prefix="/downloaders", tags=["downloaders"])
 
 class DownloaderInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["qbittorrent", "sabnzbd", "nzbget"] = "qbittorrent"
+    kind: Literal["qbittorrent", "transmission", "deluge", "sabnzbd", "nzbget"] = "qbittorrent"
     name: str = Field(default="qBittorrent", min_length=1, max_length=120)
     base_url: str = Field(max_length=2000)
     username: SecretStr | None = Field(default=None, min_length=1, max_length=300)
@@ -77,7 +77,7 @@ class DownloaderMappingView(DownloadMapping):
 
 class DownloaderView(BaseModel):
     id: UUID
-    kind: Literal["qbittorrent", "sabnzbd", "nzbget"]
+    kind: Literal["qbittorrent", "transmission", "deluge", "sabnzbd", "nzbget"]
     name: str
     base_url: str
     enabled: bool
@@ -92,6 +92,8 @@ class DownloaderView(BaseModel):
     mappings: list[DownloaderMappingView]
     mappings_current: bool
     dispatch_available: bool = False
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
 
 
 class PathPreviewInput(BaseModel):
@@ -136,6 +138,8 @@ def view(row, sources):
             for mapping in row.config["mappings"]
         ],
         mappings_current=downloaders.mappings_current(row, sources),
+        capabilities=downloaders.client_features(row),
+        limitations=row.capabilities.get("limitations", []),
     )
 
 
@@ -210,7 +214,7 @@ async def save(body, admin, db, connection_id=None):
                 )
         previous = (row.config or {}).get("mappings", []) if row else []
         others_query = select(Integration).where(
-            Integration.kind == "qbittorrent", Integration.owner_id.is_(None)
+            Integration.kind.in_(downloaders.DOWNLOAD_KINDS), Integration.owner_id.is_(None)
         )
         if row:
             others_query = others_query.where(Integration.id != row.id)

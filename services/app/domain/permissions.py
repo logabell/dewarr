@@ -21,6 +21,7 @@ AUTO_APPROVE_EBOOK = 1 << 8
 AUTO_APPROVE_AUDIO = 1 << 9
 REQUEST_ADVANCED = 1 << 10
 AUTOMATE = 1 << 11
+BYPASS_QUOTAS = 1 << 12
 
 # Set while an approver starts a download for someone else's request.
 approval_dispatch = ContextVar("approval_dispatch", default=False)
@@ -28,6 +29,13 @@ approval_dispatch = ContextVar("approval_dispatch", default=False)
 download_authorization = ContextVar("download_authorization", default=None)
 
 CATALOG = (
+    (
+        "bypass_quotas",
+        BYPASS_QUOTAS,
+        "Bypass request quotas",
+        "Requests",
+        "Request without count, size, or pending approval limits.",
+    ),
     (
         "admin",
         ADMIN,

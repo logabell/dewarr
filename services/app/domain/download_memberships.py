@@ -40,6 +40,7 @@ async def lock(db, selections):
     # Freeze all list authority before principal and canonical-work locks.
     await automatic_dispatch.lock_group_principals(db, selections)
     await graph_lock(db)
+    await transaction_lock(db, "request-quotas:admission")
     roots = {
         (await canonical_work(db, UUID(item.frozen["origin_work_id"]))).id for item in selections
     }

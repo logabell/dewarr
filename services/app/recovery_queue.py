@@ -14,6 +14,7 @@ SUBJECT_ARGUMENTS = {
     "operation_id": "operation",
     "search_id": "operation",
     "attempt_id": "download-attempt",
+    "recovery_id": "download-recovery",
     "automatic_id": "automatic-import",
     "continuation_id": "import-continuation",
     "work_id": "work",
@@ -47,6 +48,7 @@ WITH checkpoint AS (
 ), subjects AS (
  SELECT 'operation' AS kind, id AS subject_id FROM operations WHERE kind NOT LIKE 'recovery.%'
  UNION ALL SELECT 'download-attempt',id FROM download_attempts
+ UNION ALL SELECT 'download-recovery',id FROM download_recoveries
  UNION ALL SELECT 'automatic-import',id FROM automatic_imports
  UNION ALL SELECT 'import-continuation',id FROM automatic_import_continuations
  UNION ALL SELECT 'work',id FROM works

@@ -136,6 +136,7 @@ class QbitState(DownloadState):
     total_bytes: int
     all_files_selected: bool
     reported_complete: bool = False
+    seeders: int | None = Field(default=None, ge=0)
 
     @property
     def identities(self) -> set[str]:
@@ -251,6 +252,7 @@ def parse_state(row: dict, properties: dict, files: list) -> QbitState:
             category=row["category"],
             auto_managed=row["auto_tmm"],
             progress=completed,
+            seeders=integer(row["num_seeds"]) if "num_seeds" in row else None,
             total_bytes=total,
             all_files_selected=all_selected,
         )
@@ -557,6 +559,13 @@ class QbitClient:
                 FailureKind.PARSER, "qBittorrent returned an unexpected rename result."
             )
         return True
+
+    async def cleanup_transfer(self, torrent_hash: str, *, remove: bool) -> bool:
+        """Remove only the client record; deleting content is deliberately impossible."""
+        return await self._mutate(
+            "torrents/delete" if remove else "torrents/stop",
+            {"hashes": hash_value(torrent_hash), **({"deleteFiles": "false"} if remove else {})},
+        )
 
     async def rename_file(self, torrent_hash: str, old_path: str, new_path: str) -> bool:
         """Rename one torrent file. False means qBittorrent refused the change."""

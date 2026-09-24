@@ -22,6 +22,7 @@ from app.db.models import (
     DownloadAttempt,
     DownloadHandoff,
     DownloadMembership,
+    DownloadRecovery,
     DownloadRepair,
     Integration,
     Library,
@@ -82,6 +83,7 @@ class TargetView(BaseModel):
     progress: float | None = None
     attempt_state: str | None = None
     attempt_id: UUID | None = None
+    can_view_download_history: bool = False
     can_cancel: bool = False
     can_recheck: bool = False
     needs_review: bool = False
@@ -452,7 +454,10 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
         select(AcquisitionSelection.id)
         .where(
             AcquisitionSelection.target_id == row.id,
-            AcquisitionSelection.state.in_(["prepared", "committed", "fulfilled"]),
+            or_(
+                AcquisitionSelection.state.in_(["prepared", "committed", "fulfilled"]),
+                exists().where(DownloadRecovery.selection_id == AcquisitionSelection.id),
+            ),
         )
         .order_by(AcquisitionSelection.created_at.desc())
         .limit(1)
@@ -519,15 +524,20 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
         )
     ]
     owns = attempt.owner_id == user.id
+    target.can_view_download_history = owns
+    recovering = await db.scalar(
+        select(DownloadRecovery.id).where(DownloadRecovery.attempt_id == attempt.id).limit(1)
+    )
     target.can_cancel = owns and not attempt.external_may_exist and attempt.state != "cancelled"
     target.can_recheck = (
         owns
+        and not recovering
         and attempt.state != "cancelled"
         and not repair
         and (not attempt.lease_until or attempt.lease_until <= now)
         and (not attempt.next_check_at or attempt.next_check_at <= now)
     )
-    target.can_repair = await _can_repair(db, user, attempt, repair, now)
+    target.can_repair = not recovering and await _can_repair(db, user, attempt, repair, now)
     if user.role != "admin" or attempt.state != "complete":
         return
     queued = await db.scalar(
@@ -784,7 +794,16 @@ async def view(db, user, intent):
             TargetView(slot=slot, state="paused", message="Request access needs attention")
             for slot in spec.slots()
         ]
+    saved_targets = {
+        row.slot: row
+        for row in await db.scalars(
+            select(AcquisitionTarget).where(AcquisitionTarget.intent_id == intent.id)
+        )
+    }
     for target in targets:
+        saved = saved_targets.get(target.slot)
+        if saved and saved.quota_waiting and target.state != "satisfied":
+            target.state, target.message, target.next_action = "paused", saved.message, "none"
         await _decorate_target(db, user, intent, target)
     work_id = intent.work_id
     cover_url = None

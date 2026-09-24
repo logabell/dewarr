@@ -1,12 +1,16 @@
 name: Application checks
 on:
   push:
-    # Release pushes run these same checks through Publish container.
-    branches-ignore: [main]
-    tags-ignore: ['v*']
+    # Feature branches run through PRs; main/tags use Publish container.
+    branches: [dev]
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      skip-image:
+        description: The release workflow builds and smoke-tests both images separately.
+        type: boolean
+        default: false
 permissions:
   contents: read
 
@@ -16,6 +20,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
+  secrets:
+    uses: ./.github/workflows/secrets.yml
   backend-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -190,7 +196,6 @@ jobs:
           echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
       - run: pg_dump --version && pg_restore --version
       - run: npm --prefix apps/web ci
-      - run: npm --prefix apps/web run build
       - run: cd apps/web && npx playwright install --with-deps chromium
       - run: npm --prefix apps/web run test:e2e
       - uses: actions/upload-artifact@v4
@@ -199,8 +204,5 @@ jobs:
           name: browser-evidence
           path: apps/web/test-results/
   image:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build --tag dewarr:ci .
+    if: ${{ !inputs.skip-image }}
+    uses: ./.github/workflows/image.yml

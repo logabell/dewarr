@@ -149,6 +149,8 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
         cycle = f"series:{policy.id}:{cycle}"
     if target.state == "satisfied":
         return "available", target.message, now + timedelta(hours=24)
+    if target.quota_waiting:
+        return "held", target.message, target.quota_retry_at or next_tick(now)
     if target.state != "wanted":
         return "held", target.message, None
     reservation = await db.get(AcquisitionReservation, target.reservation_id)
@@ -213,6 +215,9 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
                 "Download queued; awaiting library confirmation",
                 next_tick(now),
             )
+        if operation.payload.get("waiting_for_quota"):
+            progress.update(search_id=None, selection_id=None, next_at=now.isoformat())
+            return "wanted", "Quota available; a fresh search is scheduled", now
         if policy.revision > progress.get("policy_revision", policy.revision):
             progress.update(search_id=None, selection_id=None, next_at=now.isoformat())
             progress["policy_revision"] = policy.revision

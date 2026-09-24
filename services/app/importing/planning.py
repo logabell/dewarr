@@ -277,6 +277,20 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
     from app.domain.catalog_metadata import preferences
 
     plan = plan_import(groups, profile, combine_parts=(await preferences(db)).combine_library_parts)
+    # Replacements publish alongside the reported copy; no rename, overwrite or
+    # deletion of library content is part of failed-download recovery.
+    from app.db.models import AcquisitionSelection, DownloadAttempt, DownloadMembership
+    from app.domain.download_recovery import replacement_folders
+
+    replacements = list(
+        await db.scalars(
+            select(AcquisitionSelection)
+            .join(DownloadMembership, DownloadMembership.selection_id == AcquisitionSelection.id)
+            .join(DownloadAttempt, DownloadAttempt.id == DownloadMembership.attempt_id)
+            .where(DownloadAttempt.inspection_id == row.id)
+        )
+    )
+    replacement_folders(plan, replacements)
     selected_files = sorted({file.path for group in groups for file in group.files})
     document = {
         "schema_version": 2,

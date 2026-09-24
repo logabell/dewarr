@@ -69,14 +69,21 @@ async def schedule(db, attempt, join, selections):
 async def probe(attempt, selection, downloader):
     credentials = decrypt_secrets(downloader.encrypted_secrets)
     async with asyncio.timeout(45):
-        async with download_attempts.QbitClient(
+        factory = {
+            "transmission": download_attempts.TransmissionClient,
+            "deluge": download_attempts.DelugeClient,
+        }.get(downloader.kind, download_attempts.QbitClient)
+        async with factory(
             downloader.base_url, credentials["username"], credentials["password"]
         ) as client:
             await client.capabilities()
             states = await download_attempts.find(
                 client, selection, download_attempts.attempt_tag(attempt)
             )
-    observed = verify_association(
+    from app.adapters.torrent_rpc import verify_untagged
+
+    verify = verify_untagged if downloader.kind == "deluge" else verify_association
+    observed = verify(
         states,
         tag=download_attempts.attempt_tag(attempt),
         hashes=download_attempts.hashes(selection),

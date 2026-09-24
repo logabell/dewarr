@@ -893,6 +893,9 @@ class AcquisitionReservation(Identity, Base):
 
 
 class AcquisitionTarget(Identity, Base):
+    quota_requirement: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    quota_waiting: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    quota_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __tablename__ = "acquisition_targets"
     __table_args__ = (
         UniqueConstraint("intent_id", "slot"),
@@ -960,6 +963,7 @@ class DownloadAttempt(Identity, Base):
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     receipt: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     observation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    recovery_observation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     inspection_id: Mapped[UUID | None] = mapped_column(ForeignKey("download_inspections.id"))
 
 
@@ -972,6 +976,54 @@ class DownloadMembership(Base):
     )
     attempt_id: Mapped[UUID] = mapped_column(ForeignKey("download_attempts.id"), index=True)
     join_operation_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+
+
+class DownloadRecoverySettings(Base):
+    __tablename__ = "download_recovery_settings"
+    __table_args__ = (CheckConstraint("id = 1"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class ReleaseBlock(Identity, Base):
+    __tablename__ = "release_blocks"
+    __table_args__ = (UniqueConstraint("work_id", "medium", "release_key"),)
+    work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"), index=True)
+    medium: Mapped[str] = mapped_column(String(10))
+    release_key: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(String(1000))
+    identities: Mapped[list[str]] = mapped_column(JSONB)
+    reason: Mapped[str] = mapped_column(String(300))
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    automatic: Mapped[bool] = mapped_column(Boolean)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class DownloadRecovery(Identity, Base):
+    """One durable replacement command for each failed member of a transfer."""
+
+    __tablename__ = "download_recoveries"
+    selection_id: Mapped[UUID] = mapped_column(ForeignKey("acquisition_selections.id"), unique=True)
+    attempt_id: Mapped[UUID] = mapped_column(ForeignKey("download_attempts.id"), index=True)
+    root_selection_id: Mapped[UUID] = mapped_column(ForeignKey("acquisition_selections.id"))
+    state: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    reason: Mapped[str] = mapped_column(String(300))
+    message: Mapped[str] = mapped_column(String(300))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    search_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+    replacement_id: Mapped[UUID | None] = mapped_column(ForeignKey("operations.id"))
+    job_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class ReportedDownloadAsset(Identity, Base):
+    """Exclude a reported copy from this reader's requests; never touch its files."""
+
+    __tablename__ = "reported_download_assets"
+    __table_args__ = (UniqueConstraint("owner_id", "asset_id"),)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    asset_id: Mapped[UUID] = mapped_column(ForeignKey("library_assets.id"))
+    recovery_id: Mapped[UUID] = mapped_column(ForeignKey("download_recoveries.id"))
 
 
 class CapacitySettings(Base):
@@ -1271,3 +1323,22 @@ class DiscoveryFollow(Base):
     generation: Mapped[int] = mapped_column(Integer, default=0)
     next_check_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(600))
+
+
+class RequestQuotaPolicy(Base):
+    __tablename__ = "request_quota_policies"
+    scope: Mapped[str] = mapped_column(String(100), primary_key=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class RequestQuotaCharge(Base):
+    __tablename__ = "request_quota_charges"
+    target_id: Mapped[UUID] = mapped_column(
+        ForeignKey("acquisition_targets.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    medium: Mapped[str] = mapped_column(String(10))
+    admitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    size_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exempt: Mapped[bool] = mapped_column(Boolean, default=False)
