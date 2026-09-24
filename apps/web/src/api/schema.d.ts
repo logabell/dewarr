@@ -1853,6 +1853,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/following": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Following */
+    get: operations["following_api_following_get"];
+    put?: never;
+    /** Follow */
+    post: operations["follow_api_following_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/following/{list_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Unfollow */
+    delete: operations["unfollow_api_following__list_id__delete"];
+    options?: never;
+    head?: never;
+    /** Edit */
+    patch: operations["edit_api_following__list_id__patch"];
+    trace?: never;
+  };
   "/api/lists/{list_id}/subscription": {
     parameters: {
       query?: never;
@@ -5332,6 +5368,10 @@ export interface components {
       configuration: components["schemas"]["PolicyConfiguration"];
       /** Records */
       records: components["schemas"]["ActivationRecord"][];
+      /** Counts */
+      counts?: {
+        [key: string]: number;
+      };
       /** Total */
       total: number;
       /** Selected */
@@ -6126,6 +6166,42 @@ export interface components {
       occupied_slots: number;
       /** Reserved Bytes */
       reserved_bytes: number;
+    };
+    /** CatalogFollowInput */
+    CatalogFollowInput: {
+      /**
+       * Source Kind
+       * @enum {string}
+       */
+      source_kind: "author" | "series";
+      /** External Id */
+      external_id: number;
+      /** Name */
+      name: string;
+      filters?: components["schemas"]["FollowFilters"];
+    };
+    /** CatalogFollowView */
+    CatalogFollowView: {
+      /**
+       * List Id
+       * Format: uuid
+       */
+      list_id: string;
+      /** Name */
+      name: string;
+      /**
+       * Source Kind
+       * @enum {string}
+       */
+      source_kind: "author" | "series";
+      /** External Id */
+      external_id: string;
+      filters: components["schemas"]["FollowFilters"];
+      subscription: components["schemas"]["SubscriptionView"];
+      /** Mode */
+      mode: string;
+      /** Active */
+      active: boolean;
     };
     /** CatalogPreparationItem */
     CatalogPreparationItem: {
@@ -7570,6 +7646,44 @@ export interface components {
       audio_allowed: boolean;
       /** Error */
       error?: string | null;
+    };
+    /** FollowEdit */
+    FollowEdit: {
+      /** Expected Generation */
+      expected_generation: number;
+      /** Enabled */
+      enabled: boolean;
+      filters: components["schemas"]["FollowFilters"];
+    };
+    /** FollowFilters */
+    FollowFilters: {
+      /**
+       * Compilations
+       * @default false
+       */
+      compilations: boolean;
+      /**
+       * Box Sets
+       * @default false
+       */
+      box_sets: boolean;
+      /**
+       * Anthologies
+       * @default false
+       */
+      anthologies: boolean;
+      /**
+       * Non Main Series
+       * @default false
+       */
+      non_main_series: boolean;
+      /**
+       * Coauthored
+       * @default true
+       */
+      coauthored: boolean;
+      /** Language */
+      language?: string | null;
     };
     /** FollowReadingList */
     FollowReadingList: {
@@ -9363,6 +9477,8 @@ export interface components {
       identity_changed: boolean;
       /** Present */
       present: boolean;
+      /** Filter Reason */
+      filter_reason?: string | null;
       /**
        * First Seen At
        * Format: date-time
@@ -12732,6 +12848,8 @@ export interface components {
        * @default browse
        */
       acquisition_mode: string;
+      /** Source Kind */
+      source_kind?: ("author" | "series") | null;
     };
     /** TargetView */
     TargetView: {
@@ -17056,6 +17174,123 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["CurationReceipt"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  following_api_following_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CatalogFollowView"][];
+        };
+      };
+    };
+  };
+  follow_api_following_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CatalogFollowInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CatalogFollowView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  unfollow_api_following__list_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        list_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  edit_api_following__list_id__patch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        list_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FollowEdit"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CatalogFollowView"];
         };
       };
       /** @description Validation Error */

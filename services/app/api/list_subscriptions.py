@@ -60,6 +60,7 @@ class SubscriptionView(BaseModel):
     excluded_count: int
     completeness: str = "partial-feed"
     acquisition_mode: str = "browse"
+    source_kind: Literal["author", "series"] | None = None
 
 
 class ObservationView(BaseModel):
@@ -72,6 +73,7 @@ class ObservationView(BaseModel):
     excluded: bool
     identity_changed: bool
     present: bool
+    filter_reason: str | None = None
     first_seen_at: datetime
     last_seen_at: datetime
 
@@ -119,8 +121,11 @@ async def view(db, row):
         completeness = "partial-feed"
     return SubscriptionView(
         provider=row.provider,
+        source_kind=row.source_kind,
         feed_configured=row.provider == "goodreads",
-        hardcover_list_id=int(config["external_id"]) if row.provider == "hardcover" else None,
+        hardcover_list_id=int(config["external_id"])
+        if row.provider == "hardcover" and not config.get("source_kind")
+        else None,
         present_count=count_present or 0,
         completeness=completeness,
         id=row.id,
@@ -149,6 +154,8 @@ async def detail(list_id: UUID, user: Member, db: Database):
 @router.put("", response_model=SubscriptionView)
 async def configure(list_id: UUID, body: SubscriptionInput, user: Member, db: Database):
     row = await subscription(db, user, list_id)
+    if row and decrypt_secrets(row.encrypted_config).get("source_kind"):
+        raise HTTPException(422, "Manage author and series follows in Following")
     provider = body.provider or (row.provider if row else "goodreads")
     if row and provider != row.provider:
         raise HTTPException(422, "Detach the current subscription before changing its provider")
@@ -241,6 +248,8 @@ async def detach(list_id: UUID, user: Member, db: Database):
     row = await subscription(db, user, list_id)
     if not row:
         return
+    if decrypt_secrets(row.encrypted_config).get("source_kind"):
+        raise HTTPException(422, "Unfollow authors and series from Following")
     from app.domain.list_writeback import require_reconciled_before_detach
 
     await require_reconciled_before_detach(db, list_id)
@@ -291,6 +300,7 @@ async def observations(list_id: UUID, user: Member, db: Database, offset: int = 
                 excluded=record.excluded,
                 identity_changed=record.snapshot.get("identity_changed", False),
                 present=record.present,
+                filter_reason=record.snapshot.get("filter_reason"),
                 first_seen_at=record.created_at,
                 last_seen_at=record.last_seen_at,
             )
@@ -306,6 +316,7 @@ async def remove_unneeded(db, user, row, work_id):
             ListObservation.work_id.in_(family_ids(work_id)),
             ListObservation.excluded.is_(False),
             ListObservation.present.is_(True),
+            ListObservation.snapshot["filter_reason"].astext.is_(None),
         )
         .limit(1)
     )

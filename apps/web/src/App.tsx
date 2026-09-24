@@ -43,6 +43,7 @@ const SeriesGapPage = lazy(() =>
 );
 const CommunityLists = lazy(() => import("./pages/CommunityLists"));
 const BookDetail = lazy(() => import("./pages/BookDetail"));
+const Following = lazy(() => import("./pages/Following"));
 const AuthorDetail = lazy(() => import("./pages/AuthorDetail"));
 const Series = lazy(() => import("./pages/Series"));
 const Lists = lazy(() => import("./pages/Lists"));
@@ -393,6 +394,7 @@ function Shell({ auth }: { auth: Auth }) {
   const pendingApprovals = usePendingApprovals(canApprove);
   const waiting = pendingApprovals.data?.total ?? 0;
   const admin = auth.user.role === "admin";
+  const canEdit = auth.user.role !== "viewer";
   const reviewing = useLibraryReviewCount(admin).data?.total ?? 0;
   const logout = useMutation({
     mutationFn: async () => result(await api.POST("/api/auth/logout")),
@@ -443,6 +445,12 @@ function Shell({ auth }: { auth: Auth }) {
             <Compass size={19} />
             Discover
           </NavLink>
+          {canEdit && (
+            <NavLink to="/following">
+              <ListPlus size={19} />
+              Following
+            </NavLink>
+          )}
           <NavLink to="/library" end>
             <BookOpen size={19} />
             My Library
@@ -548,8 +556,12 @@ function Shell({ auth }: { auth: Auth }) {
                 }
               />
               <Route
+                path="/following"
+                element={canEdit ? <Following /> : <Navigate to="/" replace />}
+              />
+              <Route
                 path="/authors/hardcover/:externalId"
-                element={<AuthorDetail />}
+                element={<AuthorDetail canEdit={canEdit} />}
               />
               <Route
                 path="/discover"

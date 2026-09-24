@@ -17,6 +17,7 @@ from app.db.models import (
     ListAcquisitionBook,
     ListAcquisitionPolicy,
     ListEntry,
+    ListObservation,
     ListSubscription,
     Operation,
     User,
@@ -109,6 +110,9 @@ async def members(db, user, list_id):
 
 
 async def configuration(db, user, list_id, body):
+    from app.domain.follows import source
+
+    follow = await source(db, list_id)
     spec = body.specification
     profile = await profile_snapshot(
         db, user.id, body.profile_id, body.profile_generation, body.profile_effective_revision
@@ -118,6 +122,7 @@ async def configuration(db, user, list_id, body):
         list_overrides={
             **body.preference_overrides.model_dump(mode="json"),
             **request_scope.overrides(spec),
+            **({"series_scope": "just_book"} if follow else {}),
         },
     )
     browse_inventory = body.mode == "browse" and profile.preferences.desired_media is None
@@ -127,6 +132,10 @@ async def configuration(db, user, list_id, body):
         else spec
     )
     spec, origins = request_scope.specification(options, profile)
+    if follow and body.mode != "browse":
+        from app.domain.permissions import assert_can_request
+
+        assert_can_request(user, spec, set(), body.specification, None)
     if browse_inventory:
         origins["mode"] = "Browse inventory"
     profile = profile.model_copy(update={"scope_origins": origins})
@@ -146,6 +155,12 @@ async def configuration(db, user, list_id, body):
     subscription = await db.scalar(
         select(ListSubscription).where(ListSubscription.list_id == list_id)
     )
+    if follow and (
+        not follow[0].enabled or not follow[0].baseline_at or not follow[1].get("complete")
+    ):
+        raise HTTPException(
+            409, "Complete a successful follow refresh before previewing its policy"
+        )
     if body.mode == "automatic":
         permitted(user)
         if subscription and not subscription.baseline_at:
@@ -226,6 +241,28 @@ async def preview(db, user, list_id, body, key):
                 ),
             }
         )
+    excluded = 0
+    subscription = await db.scalar(
+        select(ListSubscription).where(ListSubscription.list_id == list_id)
+    )
+    if subscription:
+        excluded = sum(
+            o.excluded or bool(o.snapshot.get("filter_reason"))
+            for o in await db.scalars(
+                select(ListObservation).where(
+                    ListObservation.subscription_id == subscription.id,
+                    ListObservation.present.is_(True),
+                )
+            )
+        )
+    counts = {
+        "owned": sum(
+            bool(r["targets"]) and all(t["state"] == "satisfied" for t in r["targets"])
+            for r in projected
+        ),
+        "missing": sum(any(t["state"] == "wanted" for t in r["targets"]) for r in projected),
+        "excluded": excluded,
+    }
     operation = Operation(
         owner_id=user.id,
         kind=KIND,
@@ -237,6 +274,7 @@ async def preview(db, user, list_id, body, key):
             "configuration": config,
             "members": records,
             "records": projected,
+            "counts": counts,
             **({"series_plans": series_plans} if series_plans else {}),
             "expires_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
         },
