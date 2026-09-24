@@ -1,9 +1,24 @@
+import re
+from urllib.parse import parse_qs
+
 import httpx
 import pytest
 
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.sabnzbd import SabClient
 from tests.nzb_fixture import nzb_bytes
+
+
+def form_value(request, name):
+    content_type = request.headers["content-type"]
+    if content_type.startswith("application/x-www-form-urlencoded"):
+        return parse_qs(request.content.decode())[name][0]
+    match = re.search(
+        rb'name="' + re.escape(name.encode()) + rb'"\r\n\r\n([^\r\n]+)',
+        request.content,
+    )
+    assert match
+    return match.group(1).decode()
 
 
 def completed(name="book-search:attempt"):
@@ -26,11 +41,12 @@ def transport():
     def handler(request):
         calls.append(request)
         assert "private-sab-key" not in str(request.url)
-        assert request.headers["x-api-key"] == "private-sab-key"
-        mode = request.url.params["mode"]
+        assert "x-api-key" not in request.headers
+        assert form_value(request, "apikey") == "private-sab-key"
+        mode = form_value(request, "mode")
         if mode == "version":
             return httpx.Response(200, json={"version": "4.5.1"})
-        if mode == "get_config" and request.url.params["section"] == "misc":
+        if mode == "get_config" and form_value(request, "section") == "misc":
             return httpx.Response(
                 200, json={"config": {"misc": {"complete_dir": "/downloads/complete"}}}
             )
@@ -47,8 +63,8 @@ def transport():
                 },
             )
         if mode == "addfile":
-            assert request.url.params["nzbname"] == "book-search:attempt"
-            assert request.url.params["cat"] == "books"
+            assert form_value(request, "nzbname") == "book-search:attempt"
+            assert form_value(request, "cat") == "books"
             return httpx.Response(200, json={"status": True, "nzo_ids": ["SABnzbd_nzo_added"]})
         if mode == "queue":
             return httpx.Response(200, json={"queue": {"slots": []}})
@@ -67,13 +83,70 @@ async def test_connection_reads_category_folder_without_logging_the_key(transpor
         assert capabilities.protocols == {"nzb"}
         assert await client.download_location("books") == "/downloads/complete/books"
     assert calls
-    assert all(call.url.params["output"] == "json" for call in calls)
+    assert all(form_value(call, "output") == "json" for call in calls)
+    assert all(call.method == "POST" for call in calls)
 
 
-async def test_sabnzbd_5_is_supported():
+async def test_relative_complete_folder_uses_resolved_fullstatus_path():
     def handler(request):
-        assert request.url.params["mode"] == "version"
-        return httpx.Response(200, json={"version": "5.1.3"})
+        mode = form_value(request, "mode")
+        if mode == "version":
+            return httpx.Response(200, json={"version": "5.1.3"})
+        if mode == "get_config" and form_value(request, "section") == "misc":
+            return httpx.Response(200, json={"config": {"misc": {"complete_dir": "complete"}}})
+        if mode == "get_config":
+            return httpx.Response(
+                200, json={"config": {"categories": [{"name": "books", "dir": "books"}]}}
+            )
+        if mode == "fullstatus":
+            return httpx.Response(200, json={"status": {"completedir": "/downloads/complete"}})
+        raise AssertionError(mode)
+
+    async with SabClient(
+        "http://sab.test:8080",
+        "private-sab-key",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        assert await client.download_location("books") == "/downloads/complete/books"
+
+
+@pytest.mark.parametrize(
+    ("categories", "kind", "message"),
+    [
+        ([{"name": "other", "dir": "other"}], FailureKind.NOT_FOUND, "does not exist"),
+        ([{"name": "books", "dir": "books*"}], FailureKind.UNSUPPORTED, "job folders"),
+    ],
+)
+async def test_invalid_sabnzbd_category_settings_are_rejected(categories, kind, message):
+    def handler(request):
+        mode = form_value(request, "mode")
+        if mode == "version":
+            return httpx.Response(200, json={"version": "5.1.3"})
+        if mode == "get_config" and form_value(request, "section") == "misc":
+            return httpx.Response(
+                200, json={"config": {"misc": {"complete_dir": "/downloads/complete"}}}
+            )
+        if mode == "get_config":
+            return httpx.Response(200, json={"config": {"categories": categories}})
+        raise AssertionError(mode)
+
+    async with SabClient(
+        "http://sab.test:8080",
+        "private-sab-key",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(AdapterError) as caught:
+            await client.download_location("books")
+
+    assert caught.value.kind is kind
+    assert message in str(caught.value)
+
+
+@pytest.mark.parametrize("version", ["5.1.3", "5.2.0Beta1", "5.2.x", "6.0.0"])
+async def test_supported_sabnzbd_versions(version):
+    def handler(request):
+        assert form_value(request, "mode") == "version"
+        return httpx.Response(200, json={"version": version})
 
     async with SabClient(
         "http://sab.test:8080",
@@ -82,12 +155,12 @@ async def test_sabnzbd_5_is_supported():
     ) as client:
         capabilities = await client.capabilities()
 
-    assert capabilities.version == "5.1.3"
+    assert capabilities.version == version
 
 
 async def test_queue_filename_suffix_still_matches_the_attempt():
     def handler(request):
-        mode = request.url.params["mode"]
+        mode = form_value(request, "mode")
         if mode == "version":
             return httpx.Response(200, json={"version": "4.3.2"})
         if mode == "queue":
@@ -120,7 +193,7 @@ async def test_queue_filename_suffix_still_matches_the_attempt():
 
 async def test_oversized_job_page_stays_retryable():
     def handler(request):
-        mode = request.url.params["mode"]
+        mode = form_value(request, "mode")
         if mode == "version":
             return httpx.Response(200, json={"version": "4.5.1"})
         if mode == "queue":
@@ -169,7 +242,7 @@ async def test_submit_and_find_use_the_attempt_name(transport):
 
 async def test_unconfirmed_add_stays_uncertain():
     def handler(request):
-        if request.url.params["mode"] == "version":
+        if form_value(request, "mode") == "version":
             return httpx.Response(200, json={"version": "4.5.1"})
         return httpx.Response(200, json={"status": False, "error": "private nzb body"})
 
@@ -189,7 +262,7 @@ async def test_unconfirmed_add_stays_uncertain():
 
 async def test_bad_api_key_and_old_version_are_rejected():
     def handler(request):
-        if request.url.params.get("mode") == "version" and request.headers["x-api-key"] == "bad":
+        if form_value(request, "mode") == "version" and form_value(request, "apikey") == "bad":
             return httpx.Response(200, json={"error": "API Key Incorrect"})
         return httpx.Response(200, json={"version": "2.0.0"})
 

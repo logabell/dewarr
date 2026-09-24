@@ -1,4 +1,4 @@
-"""SABnzbd 3.x/4.x/5.x transport. Submission is not association or completion.
+"""SABnzbd 3+ transport. Submission is not association or completion.
 
 Callers journal dispatch before submit, then reconcile the attempt name, category
 and completed folder. This client never changes SABnzbd settings or server paths.
@@ -23,6 +23,7 @@ from app.adapters.qbittorrent import absolute_path, validate_attempt_tag
 
 MAX_RESPONSE = 2 * 1024 * 1024
 MAX_ARTIFACT = 8 * 1024 * 1024
+VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+|x)(?:[A-Za-z0-9._+-]*)$")
 
 
 class SabState(DownloadState):
@@ -155,7 +156,7 @@ class SabClient:
         self._capabilities = None
         self.client = httpx.AsyncClient(
             base_url=configured_url(base_url) + "/",
-            headers={"X-Api-Key": api_key, "Accept": "application/json"},
+            headers={"Accept": "application/json"},
             trust_env=False,
             follow_redirects=False,
             timeout=httpx.Timeout(40, connect=10),
@@ -169,15 +170,18 @@ class SabClient:
         await self.client.aclose()
 
     async def _request(self, mode, *, params=None, files=None, mutating=False):
-        query = {"mode": mode, "output": "json", **(params or {})}
+        # SABnzbd accepts API parameters as form fields. Keep the API key out of
+        # URLs so reverse proxies and request logs do not capture it.
+        form = {
+            "mode": mode,
+            "output": "json",
+            "apikey": self._api_key,
+            **(params or {}),
+        }
         uncertain = FailureKind.UNCERTAIN if mutating else FailureKind.PARSER
         try:
             async with asyncio.timeout(50):
-                response = await (
-                    self.client.post("api", params=query, files=files)
-                    if files
-                    else self.client.get("api", params=query)
-                )
+                response = await self.client.post("api", data=form, files=files)
         except (httpx.HTTPError, TimeoutError) as error:
             raise AdapterError(
                 FailureKind.UNCERTAIN if mutating else FailureKind.ROUTE,
@@ -186,7 +190,10 @@ class SabClient:
                 else "SABnzbd could not be reached.",
             ) from error
         if response.status_code in {401, 403}:
-            raise AdapterError(FailureKind.AUTHENTICATION, "SABnzbd rejected the API key.")
+            raise AdapterError(
+                FailureKind.AUTHENTICATION,
+                "SABnzbd rejected the API key or does not allow Full API access.",
+            )
         if 300 <= response.status_code < 400:
             raise AdapterError(
                 uncertain if mutating else FailureKind.ROUTE,
@@ -220,10 +227,9 @@ class SabClient:
             return self._capabilities
         payload = await self._request("version")
         version = payload.get("version")
-        if not isinstance(version, str) or not re.fullmatch(r"[345]\.\d+\.\d+", version):
-            raise AdapterError(
-                FailureKind.UNSUPPORTED, "This adapter requires SABnzbd 3.x, 4.x, or 5.x."
-            )
+        match = VERSION.fullmatch(version) if isinstance(version, str) else None
+        if not match or int(match.group(1)) < 3:
+            raise AdapterError(FailureKind.UNSUPPORTED, "This adapter requires SABnzbd 3 or newer.")
         self._capabilities = Capabilities(
             version=version,
             operations={"submit", "find", "status"},
@@ -238,22 +244,45 @@ class SabClient:
         misc = await self._request("get_config", params={"section": "misc"})
         categories = await self._request("get_config", params={"section": "categories"})
         try:
-            complete = absolute_path(misc["config"]["misc"]["complete_dir"])
+            configured_complete = misc["config"]["misc"]["complete_dir"]
+            if not isinstance(configured_complete, str):
+                raise ValueError("Invalid complete directory")
+            try:
+                complete = absolute_path(configured_complete)
+            except ValueError:
+                status = await self._request("fullstatus", params={"skip_dashboard": 1})
+                complete = absolute_path(status["status"]["completedir"])
             rows = categories["config"]["categories"]
             if not isinstance(rows, list):
                 raise ValueError("Invalid categories")
             chosen = complete
+            matched = not category
             for row in rows:
                 if not isinstance(row, dict) or row.get("name") != category:
                     continue
+                matched = True
                 folder = row.get("dir") or ""
                 if not isinstance(folder, str) or not folder:
                     break
+                if folder.endswith("*"):
+                    raise AdapterError(
+                        FailureKind.UNSUPPORTED,
+                        f'Enable job folders for the SABnzbd category "{category}".',
+                    )
                 chosen = absolute_path(
-                    folder if folder.startswith("/") else complete + "/" + folder.strip("/")
+                    folder
+                    if folder.startswith("/")
+                    else str(PurePosixPath(complete) / folder.strip("/"))
                 )
                 break
+            if not matched:
+                raise AdapterError(
+                    FailureKind.NOT_FOUND,
+                    f'The SABnzbd category "{category}" does not exist.',
+                )
             return chosen
+        except AdapterError:
+            raise
         except (KeyError, TypeError, ValueError) as error:
             raise AdapterError(
                 FailureKind.PARSER, "SABnzbd returned an invalid download location."

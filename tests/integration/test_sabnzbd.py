@@ -1,5 +1,6 @@
 # ruff: noqa: F811
 import base64
+from urllib.parse import parse_qs
 from uuid import UUID
 
 import httpx
@@ -45,12 +46,14 @@ async def test_sabnzbd_connection_keeps_the_api_key_private(client, admin, datab
 
     async def handler(request):
         calls.append(request)
-        assert request.headers["x-api-key"] == "private-sab-key"
         assert "private-sab-key" not in str(request.url)
-        mode = request.url.params["mode"]
+        assert "x-api-key" not in request.headers
+        params = parse_qs(request.content.decode())
+        assert params["apikey"] == ["private-sab-key"]
+        mode = params["mode"][0]
         if mode == "version":
-            return httpx.Response(200, json={"version": "4.5.1"})
-        if mode == "get_config" and request.url.params["section"] == "misc":
+            return httpx.Response(200, json={"version": "5.1.3"})
+        if mode == "get_config" and params["section"] == ["misc"]:
             return httpx.Response(
                 200, json={"config": {"misc": {"complete_dir": "/downloads/complete"}}}
             )
@@ -73,14 +76,14 @@ async def test_sabnzbd_connection_keeps_the_api_key_private(client, admin, datab
     tested = await client.post(f"/api/downloaders/{created.json()['id']}/test")
     assert tested.status_code == 200, tested.text
     assert tested.json()["status"] == "connected"
-    assert tested.json()["version"] == "4.5.1"
+    assert tested.json()["version"] == "5.1.3"
     assert tested.json()["save_path"] == "/downloads/books"
     assert "private-sab-key" not in tested.text
     async with database() as db:
         row = await db.get(Integration, UUID(created.json()["id"]))
         assert decrypt_secrets(row.encrypted_secrets)["api_key"] == "private-sab-key"
         assert "private-sab-key" not in row.encrypted_secrets
-    assert all(request.method == "GET" for request in calls)
+    assert all(request.method == "POST" for request in calls)
     qbit = await client.post(
         "/api/downloaders",
         json={"base_url": "http://sab.test:8080", "category": "books"},
