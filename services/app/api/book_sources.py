@@ -16,7 +16,7 @@ from app.api.operations import OperationView
 from app.api.prowlarr import resolve as resolve_prowlarr
 from app.api.source_artifacts import SourceArtifactView, artifact_view
 from app.db.models import AcquisitionIntent, Operation, SourceConnection, SourceResult
-from app.domain import series_preparation
+from app.domain import release_download_status, series_preparation
 from app.domain.book_sources import SearchInput, accessible_work, checked, refresh_search, start
 from app.domain.release_profiles import (
     ProfileSnapshot,
@@ -70,6 +70,7 @@ class RankedReleaseView(BaseModel):
     expires_at: datetime
     current_connection: bool
     query_keys: list[str] = Field(default_factory=list)
+    download: release_download_status.ReleaseDownloadStatus | None = None
 
 
 class CatalogPreparationItem(BaseModel):
@@ -124,6 +125,9 @@ async def view(db, user, operation_id):
             .order_by(SourceResult.created_at, SourceResult.id)
         )
     )
+    downloads = await release_download_status.for_releases(
+        db, user.id, UUID(payload["work"]["id"]), [row.release_snapshot for row in rows]
+    )
     ranked = []
     work = {**payload["work"], "identifiers": payload.get("identifiers", [])}
     for row in rows:
@@ -133,6 +137,7 @@ async def view(db, user, operation_id):
             RankedReleaseView(
                 id=row.id,
                 release=release,
+                download=downloads.get(release_download_status.identity(release)),
                 assessment=assess_release(release, work, preferences, payload["medium"]),
                 expires_at=row.expires_at,
                 query_keys=row.query_keys if not changed else [],

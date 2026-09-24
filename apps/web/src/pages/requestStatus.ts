@@ -16,6 +16,7 @@ type StatusTarget = {
   state: string;
   message?: string | null;
   attempt_state?: string | null;
+  selection_status?: string | null;
   next_action?: string | null;
 };
 
@@ -43,6 +44,10 @@ export function statusLabel(request: StatusRequest, target: StatusTarget) {
     target.attempt_state !== "cancelled"
   )
     return "Downloading";
+  if (["held", "failed"].includes(target.selection_status || ""))
+    return "Download not started";
+  if (["queued", "running"].includes(target.selection_status || ""))
+    return "Preparing download";
   if (target.state === "wanted") return "Wanted";
   if (target.state === "cancelled") return "Withdrawn";
   return target.state;

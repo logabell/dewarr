@@ -565,3 +565,13 @@
     transition: none;
   }
 }
+
+.request-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.request-status[data-state="failed"] {
+  color: #fda4af;
+  background: color-mix(in srgb, #fda4af 10%, transparent);
+}

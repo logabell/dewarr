@@ -6,6 +6,9 @@ import {
   Check,
   ChevronRight,
   ClipboardCheck,
+  CircleAlert,
+  CircleCheck,
+  LoaderCircle,
   Download,
   Ellipsis,
   ExternalLink,
@@ -58,6 +61,8 @@ function mediumLabel(slot: string) {
 }
 
 function chipState(label: string) {
+  if (label === "Download not started") return "failed";
+  if (label === "Preparing download") return "downloading";
   if (label === "In library") return "satisfied";
   if (label === "Downloading" || label === "Importing") return "downloading";
   if (label === "Pending" || label === "Paused" || label === "Check inventory")
@@ -571,6 +576,7 @@ function RequestCard({
   return (
     <article
       className="request-row"
+      id={`request-${request.id}`}
       aria-label={`${request.work_title} request`}
     >
       <RequestCover title={request.work_title} url={request.cover_url} />
@@ -644,6 +650,17 @@ function RequestCard({
                     className="request-status"
                     data-state={chipState(label)}
                   >
+                    {label === "Download not started" ? (
+                      <CircleAlert size={14} aria-hidden />
+                    ) : label === "In library" ? (
+                      <CircleCheck size={14} aria-hidden />
+                    ) : [
+                        "Downloading",
+                        "Importing",
+                        "Preparing download",
+                      ].includes(label) ? (
+                      <LoaderCircle size={14} aria-hidden />
+                    ) : null}
                     {label}
                   </span>
                   {progress !== null && (

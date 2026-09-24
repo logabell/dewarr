@@ -64,10 +64,14 @@ async def complete_search(database, operation_id, fixture):
         )
 
 
+@pytest.mark.parametrize("automatic_folders", [False, True])
 async def test_quick_add_inherits_preferences_and_downloads_once(
-    client, database, authorized, catalog
+    client, database, authorized, catalog, automatic_folders
 ):
-    await defaults(client, authorized, audio_formats=["m4b", "mp3"])
+    if automatic_folders:
+        await save(client, {"desired_media": "audio", "audio_formats": ["m4b", "mp3"]})
+    else:
+        await defaults(client, authorized, audio_formats=["m4b", "mp3"])
     response = await add(client, catalog["work"], key="quick-add-one-click")
     assert response.status_code == 202, response.text
     identifier = UUID(response.json()["id"])
@@ -253,14 +257,24 @@ async def test_cancelled_request_during_search_does_not_download(
 
 
 @pytest.mark.parametrize("blocked", [False, True])
+@pytest.mark.parametrize("automatic_folders", [False, True])
 async def test_clicked_release_download_is_pinned_and_idempotent(
-    client, database, authorized, blocked
+    client, database, authorized, blocked, automatic_folders
 ):
-    await defaults(client, authorized)
+    if not automatic_folders:
+        await defaults(client, authorized)
     profiles = (await client.get("/api/acquisition/profiles")).json()
     async with database() as db, db.begin():
         search = await db.get(Operation, authorized["search"])
-        search.payload = {**search.payload, "profile": profiles[0]}
+        search.payload = {
+            **search.payload,
+            "profile": profiles[0],
+            "workers": {},
+            "sources": {},
+            "query": "Harbor",
+            "medium": "all",
+            "offset": 0,
+        }
         original = await db.get(SourceResult, authorized["result"])
         other = SourceResult(
             owner_id=original.owner_id,
@@ -294,6 +308,55 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
             0 if blocked else 1
         )
     assert authorized["resolver"].calls == ([] if blocked else [authorized["result"]])
+    status_response = await client.get(f"/api/source-searches/{authorized['search']}")
+    assert status_response.status_code == 200, status_response.text
+    items = {item["id"]: item for item in status_response.json()["items"]}
+    saved = items[str(authorized["result"])]["download"]
+    assert saved["state"] == ("failed" if blocked else "queued")
+    assert saved["prevent_download"] is (not blocked)
+    assert items[str(other.id)]["download"] is None
+    request = await client.get(f"/api/requests/{saved['request_id']}")
+    assert request.status_code == 200, request.text
+    target = next(t for t in request.json()["targets"] if t["slot"] == "audio")
+    if blocked:
+        assert saved["reasons"]
+        assert "This release could not be downloaded" in saved["message"]
+        assert target["selection_status"] == "held"
+        assert target["message"] == saved["message"]
+    else:
+        assert target["attempt_state"] == "queued"
+        async with database() as db, db.begin():
+            attempt = await db.get(DownloadAttempt, UUID(saved["attempt_id"]))
+            attempt.state = "downloading"
+            attempt.observation = {"progress": 0.42}
+        fresh = (await client.get(f"/api/source-searches/{authorized['search']}")).json()
+        downloading = next(
+            i["download"] for i in fresh["items"] if i["id"] == str(authorized["result"])
+        )
+        assert downloading["state"] == "downloading"
+        assert downloading["progress"] == 0.42
+        async with database() as db, db.begin():
+            attempt = await db.get(DownloadAttempt, UUID(saved["attempt_id"]))
+            attempt.state = "complete"
+            original = await db.get(SourceResult, authorized["result"])
+            # A refreshed search result has a new ID but the same source identity.
+            clone = SourceResult(
+                owner_id=original.owner_id,
+                operation_id=original.operation_id,
+                source_key=original.source_key,
+                source_generation=original.source_generation,
+                expires_at=original.expires_at,
+                encrypted_reference=original.encrypted_reference,
+                release_snapshot=original.release_snapshot,
+            )
+            db.add(clone)
+            await db.flush()
+            clone_id = str(clone.id)
+        fresh = (await client.get(f"/api/source-searches/{authorized['search']}")).json()
+        completed = next(i["download"] for i in fresh["items"] if i["id"] == clone_id)
+        assert completed["state"] == "downloaded"
+        assert completed["prevent_download"]
+        assert "Waiting for library import" in completed["message"]
 
 
 async def test_clicked_release_rejects_result_from_another_search(client, database, authorized):
@@ -304,3 +367,31 @@ async def test_clicked_release_rejects_result_from_another_search(client, databa
     assert response.status_code == 404, response.text
     async with database() as db:
         assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 0
+
+
+async def test_clicked_release_missing_torrent_route_explains_the_required_setup(
+    client, database, authorized, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    await defaults(client, authorized)
+    profiles = (await client.get("/api/acquisition/profiles")).json()
+    async with database() as db, db.begin():
+        search = await db.get(Operation, authorized["search"])
+        search.payload = {**search.payload, "profile": profiles[0]}
+    monkeypatch.setattr(automatic_selection, "matching_route", AsyncMock(return_value=None))
+    response = await client.post(
+        f"/api/source-searches/{authorized['search']}/results/{authorized['result']}/download",
+        headers={"Idempotency-Key": "clicked-release-missing-torrent-route"},
+    )
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    await automatic_selection.run(identifier)
+    await automatic_selection.run(identifier)
+    receipt = (await client.get(f"/api/acquisition/automatic-selections/{identifier}")).json()
+    assert receipt["status"] == "held"
+    assert "No ready torrent download route" in receipt["message"]
+    assert "download folder" in receipt["message"]
+    assert "import destination" in receipt["message"]
+    assert "inspection budget" not in receipt["message"]
+    assert authorized["resolver"].calls == []

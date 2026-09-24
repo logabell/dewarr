@@ -115,10 +115,16 @@ def release_value(row):
 
 def protocol_rejection(protocol):
     if protocol == "nzb":
-        return "This release needs a SABnzbd or NZBGet connection"
+        return (
+            "No ready Usenet download route. Check SABnzbd or NZBGet, its download folder, "
+            "and the import destination in Settings."
+        )
     if protocol == "soulseek":
         return "Connect and test Soulseek before downloading this folder"
-    return "This release needs a qBittorrent connection"
+    return (
+        "No ready torrent download route. Check your torrent client, its download folder, "
+        "and the import destination in Settings."
+    )
 
 
 async def accept_route(db, operation, result_id, route, protocol):
@@ -751,12 +757,16 @@ async def run(identifier):
         ]
         operation.payload = payload
         if not possible:
-            finish(
-                operation,
-                "held",
-                "No eligible release found within this page and inspection budget; "
-                "review candidate reasons or refresh results",
+            from app.domain.release_download_status import selection_feedback
+
+            message = (
+                "This release could not be downloaded. Inspect its details or refresh sources."
+                if body.result_id
+                else "No eligible release found within this page and inspection budget; "
+                "review candidate reasons or refresh results"
             )
+            finish(operation, "held", message)
+            operation.message = selection_feedback(operation)[0]
             return
         row, preview = possible[0][1], possible[0][2]
         route = await matching_route(db, body, preview.protocol)

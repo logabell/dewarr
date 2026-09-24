@@ -72,3 +72,22 @@ test("a completed transfer already in the library is In library", () => {
     "In library",
   );
 });
+
+test("manual release failures and preparation remain visible in Requests", () => {
+  assert.equal(
+    statusLabel(active, { state: "wanted", selection_status: "held" }),
+    "Download not started",
+  );
+  assert.equal(
+    statusLabel(active, { state: "wanted", selection_status: "failed" }),
+    "Download not started",
+  );
+  assert.equal(
+    statusLabel(active, { state: "wanted", selection_status: "running" }),
+    "Preparing download",
+  );
+  assert.equal(
+    statusLabel(active, { state: "satisfied", selection_status: "held" }),
+    "In library",
+  );
+});

@@ -1,0 +1,4 @@
+# Optional: docker compose -f compose.yaml -f deploy/compose.dev.yaml up -d --no-deps --pull always --wait dewarr
+services:
+  dewarr:
+    image: ghcr.io/logabell/dewarr:dev

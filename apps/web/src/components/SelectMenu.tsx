@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
 
 type MenuOption = {
@@ -457,7 +458,9 @@ export default function SelectMenu() {
   }, []);
 
   let previousGroup: string | undefined;
-  return (
+  // A modal makes DOM outside it inert, even when a popover is visually above it.
+  // Keep options inside the owning dialog so pointer and focus events reach them.
+  return createPortal(
     <div
       ref={popoverRef}
       id={MENU_ID}
@@ -507,6 +510,7 @@ export default function SelectMenu() {
           </Fragment>
         );
       })}
-    </div>
+    </div>,
+    menu?.select.closest("dialog") || document.body,
   );
 }

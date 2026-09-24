@@ -334,6 +334,38 @@ async def test_network_diagnostics_disabled_and_member_access(client, admin, dat
     assert (await client.post("/api/sources/mam/network/test")).status_code == 403
 
 
+@pytest.mark.parametrize("proxy_available", [True, False])
+async def test_network_only_skips_saved_cookie_and_preserves_account_status(
+    client, admin, database, monkeypatch, proxy_available
+):
+    from app.api import sources
+    from app.domain.mam_diagnostics import EgressResult
+
+    async def probe(proxy=None, *args):
+        if proxy and not proxy_available:
+            return EgressResult(error="Proxy DNS failed")
+        return EgressResult(ip="203.0.113.1" if proxy else "198.51.100.2")
+
+    async def unexpected_account_request(*args, **kwargs):
+        pytest.fail("A proxy-only check must not test the saved MAM cookie")
+
+    monkeypatch.setattr(sources, "probe_egress", probe)
+    monkeypatch.setattr(sources, "source_call", unexpected_account_request)
+    await configure(client, proxy_url="http://gluetun:8888", proxy_fallback_direct=False)
+    async with database() as db, db.begin():
+        row = await db.get(SourceConnection, "mam")
+        row.status, row.last_error = "authentication", "MAM rejected the session."
+    response = await client.post("/api/sources/mam/network/test?include_cookie=false")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["cookie_status"] == "not-tested"
+    assert data["status"] == ("healthy" if proxy_available else "unhealthy")
+    assert data["proxy_status"] == ("healthy" if proxy_available else "unavailable")
+    assert data["direct"]["ip"] == "198.51.100.2"
+    assert data["connection"]["status"] == "authentication"
+    assert data["connection"]["last_error"] == "MAM rejected the session."
+
+
 async def test_proxy_setup_without_cookie_can_test_network_then_authenticate(
     client, admin, database, source_http, monkeypatch
 ):

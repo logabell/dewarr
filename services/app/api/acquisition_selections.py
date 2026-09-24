@@ -14,6 +14,7 @@ from app.db.models import AcquisitionSelection, ImportDestination, Integration, 
 from app.domain import acquisition_selection as selections
 from app.domain import automatic_dispatch, manual_pack
 from app.domain.acquisition_selection import SelectionInput
+from app.domain.destination_defaults import configured_destinations
 from app.domain.downloaders import (
     TORRENT_KINDS,
     USENET_KINDS,
@@ -21,7 +22,6 @@ from app.domain.downloaders import (
     mapped_path,
     mappings_current,
 )
-from app.domain.visibility import visible_library
 from app.importing.destinations import destination_configuration
 from app.importing.naming import fingerprint
 from app.importing.storage import import_sources
@@ -177,6 +177,7 @@ async def options(user: Member, db: Database):
         .where(
             Integration.kind.in_([*TORRENT_KINDS, "slskd", *USENET_KINDS]),
             Integration.owner_id.is_(None),
+            Integration.deleted_at.is_(None),
             Integration.enabled.is_(True),
         )
         .order_by(Integration.name, Integration.id)
@@ -196,16 +197,8 @@ async def options(user: Member, db: Database):
         )
     destinations = []
     rows = await db.execute(
-        select(ImportDestination, Library.name)
-        .join(Library)
-        .join(Integration)
-        .where(
-            ImportDestination.enabled.is_(True),
-            Library.accessible.is_(True),
-            Integration.enabled.is_(True),
-            Integration.kind.in_(["audiobookshelf", "grimmory"]),
-            visible_library(user),
-        )
+        configured_destinations(user)
+        .add_columns(Library.name)
         .order_by(Library.name, ImportDestination.id)
     )
     for row, name in rows:

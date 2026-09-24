@@ -5,18 +5,18 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
-from sqlalchemy import select
 
-from app.db.models import ImportDestination, Integration, Library
+from app.db.models import ImportDestination
 from app.domain.acquisition_selection import verified_probe
 from app.domain.automatic_dispatch import approve_route
+from app.domain.destination_defaults import configured_destinations, destination_default
+from app.domain.downloader_defaults import protocol_default
 from app.domain.downloaders import (
     client_protocol,
     connection_or_404,
     mapped_path,
     transfer_connection,
 )
-from app.domain.visibility import visible_library
 from app.importing.destinations import destination_configuration
 from app.importing.naming import fingerprint
 from app.importing.storage import import_sources
@@ -87,7 +87,16 @@ async def inherit(db, user, spec, profile, options):
             and downloader_id == preferences.downloader_id
         )
     if not downloader_id:
-        raise HTTPException(422, "Choose a tested downloader or save a downloader default")
+        for protocol in ("torrent", "nzb", "soulseek"):
+            downloader_id = await protocol_default(db, preferences, protocol)
+            if downloader_id:
+                break
+    if not downloader_id:
+        raise HTTPException(
+            422,
+            "Choose a default downloader for each type in Settings, "
+            "or connect a client if none is configured",
+        )
     downloader = await transfer_connection(db, downloader_id)
     generation = options.downloader_generation
     if options.downloader_id:
@@ -110,29 +119,18 @@ async def inherit(db, user, spec, profile, options):
         else:
             field = medium + "_destination_id"
             destination_id = getattr(profile.preferences, field)
-            if not destination_id:
-                raise HTTPException(
-                    422, "Choose an import destination or save a destination default"
-                )
-            destination = await db.scalar(
-                select(ImportDestination)
-                .join(Library)
-                .join(Integration)
-                .where(
-                    ImportDestination.id == destination_id,
-                    ImportDestination.enabled.is_(True),
-                    Library.accessible.is_(True),
-                    Integration.enabled.is_(True),
-                    visible_library(user),
-                )
+            destination = await destination_default(
+                db, user, medium, getattr(spec, medium + "_library_id", None), destination_id
             )
-            if not destination:
-                raise HTTPException(409, "Saved import destination is unavailable; choose a route")
             config = await destination_configuration(db, destination)
             route = PolicyRoute(
                 destination_id=destination.id, destination_revision=fingerprint(config)
             )
-            origins[field] = profile.origins.get(field, "Saved default")
+            origins[field] = (
+                profile.origins.get(field, "Saved default")
+                if destination_id == destination.id
+                else "Configured library folder"
+            )
         routes[medium] = route
     alternate_id, alternate_generation, alternate_routes = await fallback_routes(
         db, user, spec, profile, downloader, routes
@@ -148,25 +146,17 @@ async def inherit(db, user, spec, profile, options):
 
 
 async def other_client(db, preferences, primary):
-    wanted = "nzb" if client_protocol(primary.kind) == "torrent" else "torrent"
-    other_id = (
-        preferences.usenet_downloader_id if wanted == "nzb" else preferences.torrent_downloader_id
-    )
-    other = None
-    if not other_id and preferences.downloader_id and preferences.downloader_id != primary.id:
-        try:
-            legacy = await connection_or_404(db, preferences.downloader_id)
-        except HTTPException:
-            legacy = None
-        if legacy and client_protocol(legacy.kind) == wanted:
-            other_id, other = legacy.id, legacy
+    protocol = client_protocol(primary.kind)
+    if protocol == "soulseek":
+        return None
+    wanted = "nzb" if protocol == "torrent" else "torrent"
+    other_id = await protocol_default(db, preferences, wanted)
     if not other_id or other_id == primary.id:
         return None
-    if other is None:
-        try:
-            other = await connection_or_404(db, other_id)
-        except HTTPException:
-            return None
+    try:
+        other = await connection_or_404(db, other_id)
+    except HTTPException:
+        return None
     if not other.enabled or other.status != "connected" or client_protocol(other.kind) != wanted:
         return None
     try:
@@ -176,27 +166,14 @@ async def other_client(db, preferences, primary):
     return other
 
 
-async def verified_destination(db, user, medium, mapping, preferred_id, library_id):
-    rows = list(
-        await db.scalars(
-            select(ImportDestination)
-            .join(Library)
-            .join(Integration)
-            .where(
-                ImportDestination.enabled.is_(True),
-                ImportDestination.medium == medium,
-                Library.accessible.is_(True),
-                Integration.enabled.is_(True),
-                visible_library(user),
-            )
-            .order_by(ImportDestination.name, ImportDestination.id)
+async def verified_destination(db, user, medium, mapping, destination_id):
+    destination = await db.scalar(
+        configured_destinations(user).where(
+            ImportDestination.id == destination_id,
+            ImportDestination.medium == medium,
         )
     )
-    if preferred_id:
-        rows.sort(key=lambda row: row.id != preferred_id)
-    if library_id:
-        rows = [row for row in rows if row.library_id == library_id]
-    for destination in rows:
+    if destination:
         config = await destination_configuration(db, destination)
         if await verified_probe(db, destination, config, mapping):
             return PolicyRoute(
@@ -225,8 +202,7 @@ async def fallback_routes(db, user, spec, profile, primary, routes):
                 user,
                 medium,
                 other_mapping,
-                getattr(profile.preferences, medium + "_destination_id", None),
-                getattr(spec, medium + "_library_id", None),
+                route.destination_id,
             )
         if chosen and await automatic_import_approved(db, user, chosen):
             alternate[medium] = chosen

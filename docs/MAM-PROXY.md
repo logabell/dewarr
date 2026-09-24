@@ -1,26 +1,84 @@
 # MAM proxy setup and diagnostics
 
-In **Settings → Sources → MAM**, enter your proxy origin under **Proxy options**,
-for example `http://gluetun:8888`. If required, enter the proxy username and
-password in their separate fields. Dewarr's backend container must be able to
-resolve and connect to that address.
+In **Settings → Sources → MAM**, the **Proxy** and **MAM account** sections
+appear first, with separate test buttons and results. **Advanced settings**
+contains the MAM URL, proxy credentials, and direct-fallback preference;
+**Account automation** follows below.
 
-You can leave `mam_id` empty and select **Save & test network**. This saves the
-route and checks the proxy public IP and direct server public IP independently.
-No MAM account request is made until a cookie is provided. A working network
-without a cookie shows healthy proxy status, `not-configured` cookie status,
-and an overall `degraded` status because MAM access is not yet verified.
+Enter a proxy origin such as `http://gluetun:8888` and select **Test proxy**.
+Dewarr's backend container must be able to resolve and connect to that address.
+This checks the proxy public IP and direct server public IP without contacting
+MAM or testing its cookie, even when `mam_id` is already saved. With no proxy
+configured, the button reads **Test network** and checks the direct IP only.
 
-Then enter `mam_id` and select **Save & test connection** to verify the account
-through the configured route. IP probes never send the MAM cookie or substitute
-a direct request for a failed proxy request. Account requests follow the saved
-**Allow direct fallback when the proxy is unavailable** preference. Turn that
-option off when MAM must only use the proxy route.
+Enter `mam_id` and select **Test mam_id** to verify the account through the
+configured route. This does not rerun the IP checks. Proxy results remain
+visible when a cookie is entered or rejected. Each test saves pending settings
+first; **Save connection** saves without testing.
+
+IP probes never send the MAM cookie or substitute a direct request for a failed
+proxy request. Account requests follow **Allow direct fallback when the proxy
+is unavailable** in **Advanced settings**. Turn that option off when MAM must
+only use the proxy route.
+
+Errors appear once next to their test, with a short suggested fix. Expand
+**Error details** for the full diagnostic message.
 
 IP checks try three services through the selected route. Failures distinguish
 hostname resolution, connection refusal, HTTPS tunnel rejection, timeouts, TLS
 negotiation, and invalid IP responses. Raw exception messages, cookies, and
 proxy credentials are not returned to the browser.
+
+## Gluetun works in MouseSearch but Dewarr cannot resolve it
+
+If Dewarr reports **The proxy hostname could not be resolved**, check the
+services' network membership first. A service with `networks: [dewarr-net]`
+does not also join the Compose default network. Gluetun and MouseSearch join
+that default network when they have no explicit `networks` setting, so
+MouseSearch can reach `gluetun:8888` while Dewarr cannot.
+
+For services in the same Compose stack, add `default` to Dewarr's existing
+network list. Merge these entries into your stack, keeping its other settings:
+
+```yaml
+services:
+  dewarr:
+    networks:
+      - dewarr-net
+      - default
+
+networks:
+  dewarr-net:
+    driver: bridge
+  default: {}
+```
+
+Apply the change from the stack directory:
+
+```sh
+docker compose up -d --no-deps dewarr
+```
+
+This recreates Dewarr with access to both its database network and the network
+where Gluetun is already running. Gluetun, MouseSearch, and qBittorrent can keep
+their existing settings, including qBittorrent's `network_mode: service:gluetun`.
+Port 8888 does not need a host port mapping for communication on a shared
+Docker network. For separate Compose projects, attach Dewarr and Gluetun to
+the same external network instead; each project's `default` network is distinct.
+See [Docker's Compose networking documentation](https://docs.docker.com/compose/how-tos/networking/).
+
+Keep the proxy URL set to `http://gluetun:8888` and turn off **Allow direct
+fallback when the proxy is unavailable** for proxy-only MAM access. Select
+**Test proxy** again. A successful proxy IP lookup
+sets **Proxy health** to healthy even if the MAM cookie is missing or rejected.
+**Direct server IP** is a separate diagnostic; displaying it does not mean MAM
+requests used the direct route. The proxy and account badges
+report their own checks, so a rejected cookie does not mark the proxy unhealthy.
+
+A proxy DNS failure does not verify the cookie. A separate **Test mam_id**
+attempt also fails until MAM can be contacted through the required route. Fix network access before replacing the
+cookie. These Compose changes address hostname resolution; the next test
+determines whether the VPN egress and MAM authentication also succeed.
 
 ## MouseSearch comparison
 

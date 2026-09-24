@@ -194,7 +194,7 @@ class MAMNetworkView(BaseModel):
 
 
 @router.post("/network/test", response_model=MAMNetworkView)
-async def test_network(admin: Admin, db: Database):
+async def test_network(admin: Admin, db: Database, include_cookie: bool = True):
     row = await db.get(SourceConnection, "mam")
     if not row or not row.enabled:
         raise HTTPException(409, "Connect and enable MAM before testing the network")
@@ -204,7 +204,7 @@ async def test_network(admin: Admin, db: Database):
     await db.rollback()
 
     async def test_cookie():
-        if not secrets.get("mam_id"):
+        if not include_cookie or not secrets.get("mam_id"):
             return None, None
         try:
             _, route = await source_call(
@@ -230,10 +230,10 @@ async def test_network(admin: Admin, db: Database):
     if not row or row.generation != generation or not row.enabled:
         raise HTTPException(409, "MAM settings changed during the network test. Test again.")
     has_session = bool(secrets.get("mam_id"))
-    authenticated = has_session and failure is None
+    authenticated = include_cookie and has_session and failure is None
     route = used_route or ("proxy" if proxy_url else "direct")
     healthy = (
-        authenticated
+        (authenticated or not include_cookie)
         and route != "direct-fallback"
         and bool(direct.ip)
         and (proxy is None or bool(proxy.ip))
@@ -247,7 +247,9 @@ async def test_network(admin: Admin, db: Database):
         if authenticated or (not has_session and direct.ip and (proxy is None or proxy.ip))
         else "unhealthy",
         route=route,
-        cookie_status="not-configured"
+        cookie_status="not-tested"
+        if not include_cookie
+        else "not-configured"
         if not has_session
         else "authenticated"
         if authenticated
@@ -258,7 +260,9 @@ async def test_network(admin: Admin, db: Database):
         proxy=proxy,
         direct=direct,
         message=(
-            "Network checks completed without a MAM cookie. Enter mam_id to verify MAM access."
+            "Network checks completed."
+            if not include_cookie
+            else "Network checks completed without a MAM cookie. Enter mam_id to verify MAM access."
             if not has_session
             else "The configured MAM proxy could not be reached. MAM authenticated through "
             "the direct fallback route."

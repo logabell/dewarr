@@ -99,6 +99,40 @@ This is a confirmed code defect at the reported failure location, not proof of
 the reporter's exact mount behavior. NOR-61 still needs their mount details or a
 successful retest of the updated build before being called confirmed resolved.
 
+### Follow-up evidence after v0.3.1
+
+The [updated report](https://github.com/logabell/dewarr/issues/22#issuecomment-5820160619)
+fails earlier, opening `source_root` in `probe_download_folder`, with `ENOENT`
+for the `downloads` component. It does not reach library publication or the
+previous cleanup failure. The screenshot maps slskd's `/media/downloads` to
+Dewarr's `/soulseek/downloads`; the full configured path and container mounts
+still need confirmation on that installation. A successful connection test checks
+the client API; a saved mapping does not establish local filesystem access.
+
+The [later comment](https://github.com/logabell/dewarr/issues/22#issuecomment-5821329392)
+reports successful library verification with qBittorrent and SABnzbd, followed
+by download-selection and UI problems. These are separate from the cleanup bug:
+
+- Missing download roots and mapped save subfolders reproduced the new traceback.
+  Probe failures now identify the full mapped download path, retain `ENOENT`,
+  and direct the administrator to the download-client mapping. Failed probes
+  still cannot enable imports.
+- The custom select popover was outside the modal's DOM subtree. Chromium also
+  blocked pointer clicks there; this is not solely a Zen-browser issue. Menus
+  now render inside their owning dialog (or the document body outside dialogs).
+- Download feedback in a 1%-width action column could have only 9 pixels of text
+  width. Feedback now reserves readable width, and shows the selected candidate's
+  existing rejection reasons from the operation response.
+
+The displayed "No eligible release" message is an automatic-selection hold,
+not evidence of another missing filesystem path. Its specific rejection reasons
+were not provided by the reporter. Eligibility rules and mount mappings are not
+changed to guess around missing evidence; NOR-61 remains open pending retesting.
+
+Validation: 55 focused setup, Soulseek-connection and filesystem tests, plus nine
+browser journeys. Regression checks cover real pointer selection in a modal,
+missing source roots/save subfolders, and readable feedback at 1236px and 390px.
+
 ## Proposed storage model — not implemented yet
 
 1. Keep authoritative recovery journals in Dewarr's protected application data
