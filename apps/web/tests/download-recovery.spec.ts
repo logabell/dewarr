@@ -17,7 +17,7 @@ test("recovery settings preserve source overrides and manage the release blockli
   await expect(
     form.getByLabel("Maximum attempts", { exact: false }),
   ).toHaveValue("3");
-  const mam = form.getByRole("group", { name: "mam", exact: true });
+  const mam = form.getByRole("group", { name: "MyAnonamouse", exact: true });
   await expect(
     mam.getByLabel("No progress or zero seeders", { exact: false }),
   ).toHaveValue("");
@@ -64,6 +64,7 @@ test("recovery settings preserve source overrides and manage the release blockli
     } else await route.fulfill({ json: removed ? [] : [block] });
   });
   await page.reload();
+  await page.getByText("Release blocklist", { exact: true }).click();
   await expect(
     page.getByRole("list", { name: "Blocked releases" }),
   ).toContainText("No seeders for 24 hours");

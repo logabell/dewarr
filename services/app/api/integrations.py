@@ -74,7 +74,12 @@ def connection_view(value: Integration) -> ConnectionView:
 
 async def connection_or_404(db, identifier):
     value = await db.get(Integration, identifier)
-    if not value or value.kind not in {"audiobookshelf", "grimmory"}:
+    if (
+        not value
+        or value.deleted_at
+        or value.owner_id
+        or value.kind not in {"audiobookshelf", "grimmory"}
+    ):
         raise HTTPException(404, "Connection not found")
     return value
 
@@ -86,6 +91,7 @@ async def connections(admin: Admin, db: Database):
             select(Integration)
             .where(
                 Integration.owner_id.is_(None),
+                Integration.deleted_at.is_(None),
                 Integration.kind.in_(["audiobookshelf", "grimmory"]),
             )
             .order_by(Integration.name)
@@ -183,7 +189,7 @@ async def update_connection(
     secrets = connection_secrets(body, decrypt_secrets(record.encrypted_secrets))
     capabilities = await inspect_connection(body.kind, body.base_url, secrets)
     await db.refresh(record, with_for_update=True)
-    if record.credential_generation != generation:
+    if record.deleted_at or record.credential_generation != generation:
         raise HTTPException(409, "Connection changed while checking. Try again.")
     record.name, record.base_url, record.enabled = body.name.strip(), body.base_url, body.enabled
     record.config = {**record.config, "public_url": body.public_url or body.base_url}
@@ -224,7 +230,7 @@ async def test_connection(integration_id: UUID, admin: Admin, db: Database):
         capabilities, status, message = None, error.kind.value, str(error)
     record = await connection_or_404(db, integration_id)
     await db.refresh(record, with_for_update=True)
-    if record.credential_generation != generation:
+    if record.deleted_at or record.credential_generation != generation:
         raise HTTPException(409, "Connection settings changed while the test was running")
     record.status, record.last_error = status, message
     if capabilities:

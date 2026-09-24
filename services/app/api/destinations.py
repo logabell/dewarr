@@ -58,7 +58,11 @@ async def destinations(admin: Admin, db: Database):
     return [
         await view(db, row)
         for row in (
-            await db.scalars(select(ImportDestination).order_by(ImportDestination.root_key))
+            await db.scalars(
+                select(ImportDestination)
+                .where(ImportDestination.deleted_at.is_(None))
+                .order_by(ImportDestination.root_key)
+            )
         ).all()
     ]
 
@@ -76,6 +80,8 @@ async def save_destination(root_key: str, body: DestinationInput, admin: Admin, 
     row = await db.scalar(
         select(ImportDestination).where(ImportDestination.root_key == root_key).with_for_update()
     )
+    if row and row.deleted_at:
+        raise HTTPException(404, "Destination not found")
     if row and (await view(db, row)).revision != body.expected_revision:
         raise HTTPException(409, "Destination settings changed; reload before saving")
     if not row:
@@ -130,7 +136,7 @@ async def setup_probe(
     row = await db.scalar(
         select(ImportDestination).where(ImportDestination.id == destination_id).with_for_update()
     )
-    if not row or not (await view(db, row)).configured:
+    if not row or row.deleted_at or not (await view(db, row)).configured:
         raise HTTPException(422, "Configure destination and private staging roots first")
     configuration = await destination_configuration(db, row)
     if (await view(db, row)).revision != body.expected_revision:
@@ -183,7 +189,7 @@ async def probe_destination(
     row = await db.scalar(
         select(ImportDestination).where(ImportDestination.id == destination_id).with_for_update()
     )
-    if not row or not (await view(db, row)).configured:
+    if not row or row.deleted_at or not (await view(db, row)).configured:
         raise HTTPException(422, "Configure destination and private staging roots first")
     if (await view(db, row)).revision != body.expected_revision:
         raise HTTPException(409, "Destination settings changed; review them before probing")

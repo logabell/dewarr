@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import SettingsGroup from "../components/SettingsGroup";
 
 const Notifications = lazy(() => import("./Notifications"));
 const Logs = lazy(() => import("./Activity"));
@@ -49,13 +50,22 @@ export function settingsSections(role: string, permissions: string[] = []) {
             title: "Libraries",
             content: <Libraries embedded />,
           },
-          { id: "quotas", title: "Request quotas", content: <Quotas /> },
           { id: "sources", title: "Download sources", content: <Sources /> },
-          { id: "recovery", title: "Download recovery", content: <Recovery /> },
           {
             id: "downloaders",
             title: "Download clients",
-            content: <Downloaders embedded />,
+            content: (
+              <>
+                <Downloaders embedded />
+                <SettingsGroup
+                  id="recovery"
+                  title="Download recovery"
+                  description="Retry stalled downloads, review replacements, and manage blocked releases."
+                >
+                  <Recovery />
+                </SettingsGroup>
+              </>
+            ),
           },
         ]
       : []),
@@ -76,7 +86,20 @@ export function settingsSections(role: string, permissions: string[] = []) {
           {
             id: "accounts",
             title: "Users & access",
-            content: <Accounts embedded />,
+            content: (
+              <>
+                <Accounts embedded />
+                {admin && (
+                  <SettingsGroup
+                    id="quotas"
+                    title="Request quotas"
+                    description="Set request limits for everyone, a role, or an individual user."
+                  >
+                    <Quotas />
+                  </SettingsGroup>
+                )}
+              </>
+            ),
           },
         ]
       : []),

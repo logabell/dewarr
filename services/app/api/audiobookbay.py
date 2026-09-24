@@ -73,7 +73,7 @@ class ABBConnectionView(BaseModel):
 def view(row):
     secrets = decrypt_secrets(row.encrypted_secrets) if row else {}
     return ABBConnectionView(
-        configured=bool(row),
+        configured=bool(row and not row.deleted_at),
         base_url=row.base_url if row else "",
         proxy_url=row.proxy_url if row else None,
         has_proxy_credentials=bool(secrets.get("proxy_password")),
@@ -120,6 +120,7 @@ async def save_connection(body: ABBConnectionInput, admin: Admin, db: Database):
     )
     row.base_url, row.proxy_url, row.enabled = body.base_url, body.proxy_url, body.enabled
     row.encrypted_secrets = encrypt_secrets(secrets)
+    row.deleted_at = None
     row.generation += 1
     row.status, row.last_error, row.last_success_at = "untested", None, None
     db.add(AuditEvent(actor_id=admin.id, action="source.audiobookbay.updated"))

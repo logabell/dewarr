@@ -249,7 +249,7 @@ async def remember_download_root(db, row, observed_path):
 
 async def connection_or_404(db, connection_id):
     row = await db.get(Integration, connection_id, populate_existing=True)
-    if not row or row.kind not in DOWNLOAD_KINDS or row.owner_id is not None:
+    if not row or row.deleted_at or row.kind not in DOWNLOAD_KINDS or row.owner_id is not None:
         raise HTTPException(404, "Downloader connection not found")
     return row
 
@@ -257,7 +257,7 @@ async def connection_or_404(db, connection_id):
 async def transfer_connection(db, connection_id):
     """Saved download client, including Soulseek. Settings tests stay on connection_or_404."""
     row = await db.get(Integration, connection_id, populate_existing=True)
-    if not row or row.kind not in TRANSFER_KINDS or row.owner_id is not None:
+    if not row or row.deleted_at or row.kind not in TRANSFER_KINDS or row.owner_id is not None:
         raise HTTPException(404, "Downloader connection not found")
     return row
 

@@ -61,6 +61,7 @@ async def test_policy_defaults_privacy_stale_edit_and_no_backlog(
     )
     initial = (await client.get(endpoint)).json()
     assert not initial["enabled"] and initial["generation"] == 0
+    assert initial["requested_enabled"]
     assert (await policy(client, selection_route)).json()["ready"]
     assert (await policy(client, selection_route)).status_code == 409
     disabled = await policy(client, selection_route, enabled=False, generation=1)
@@ -71,6 +72,39 @@ async def test_policy_defaults_privacy_stale_edit_and_no_backlog(
         (await db.get(User, UUID(admin["id"]))).role = "member"
     assert (await client.get(endpoint)).status_code == 403
     assert (await policy(client, selection_route, generation=2)).status_code == 403
+
+
+async def test_pending_preference_is_saved_without_approving_imports(
+    client, admin, database, selected, selection_route
+):
+    endpoint = (
+        f"/api/organization/destinations/{selection_route['destination_id']}/automatic-import"
+    )
+    # Saving a preference must not approve a route, even if the route is already verified.
+    response = await client.put(
+        endpoint,
+        json={
+            "enabled": True,
+            "defer_until_verified": True,
+            "expected_generation": 0,
+            "destination_revision": selection_route["destination_revision"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    pending = response.json()
+    assert pending["requested_enabled"] and not pending["enabled"] and not pending["ready"]
+    async with database() as db:
+        stored = await db.scalar(select(AutomaticImportPolicy))
+        assert not stored.enabled
+        assert stored.configuration == {"requested_enabled": True}
+        assert not await db.scalar(select(AutomaticImport.id))
+    disabled = await policy(client, selection_route, enabled=False, generation=1)
+    assert disabled.status_code == 200, disabled.text
+    assert not disabled.json()["requested_enabled"]
+    assert not (await client.get(endpoint)).json()["requested_enabled"]
+    enabled = await policy(client, selection_route, generation=2)
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["ready"] and enabled.json()["requested_enabled"]
 
 
 @pytest.mark.parametrize("change", ["probe", "route", "recovery"])

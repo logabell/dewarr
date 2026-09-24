@@ -28,7 +28,11 @@ def blank_config():
 async def integration(db):
     return await db.scalar(
         select(Integration)
-        .where(Integration.kind == "slskd", Integration.owner_id.is_(None))
+        .where(
+            Integration.kind == "slskd",
+            Integration.owner_id.is_(None),
+            Integration.deleted_at.is_(None),
+        )
         .order_by(Integration.created_at)
         .limit(1)
     )
@@ -56,6 +60,7 @@ async def save(db, admin, body):
         client = Integration(kind="slskd", name="Soulseek", credential_generation=0)
         db.add(client)
     encoded = encrypt_secrets({"api_key": secrets["api_key"]})
+    source.deleted_at = None
     source.base_url = body.base_url
     source.enabled = body.enabled
     source.encrypted_secrets = encoded

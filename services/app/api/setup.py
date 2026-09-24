@@ -83,7 +83,7 @@ async def readiness(admin: Admin, db: Database):
     integrations = (
         await db.scalars(
             select(Integration)
-            .where(Integration.owner_id.is_(None))
+            .where(Integration.owner_id.is_(None), Integration.deleted_at.is_(None))
             .order_by(Integration.name, Integration.id)
         )
     ).all()
@@ -93,7 +93,11 @@ async def readiness(admin: Admin, db: Database):
         by_integration.setdefault(library.integration_id, []).append(library)
     account = await db.get(CatalogAccount, admin.id)
     destinations = []
-    for row in await db.scalars(select(ImportDestination).order_by(ImportDestination.root_key)):
+    for row in await db.scalars(
+        select(ImportDestination)
+        .where(ImportDestination.deleted_at.is_(None))
+        .order_by(ImportDestination.root_key)
+    ):
         current = await destination_view(db, row)
         destinations.append(
             SetupDestination(
@@ -112,7 +116,7 @@ async def readiness(admin: Admin, db: Database):
     }
     sources = await db.scalars(
         select(SourceConnection)
-        .where(SourceConnection.key.in_(source_names))
+        .where(SourceConnection.key.in_(source_names), SourceConnection.deleted_at.is_(None))
         .order_by(SourceConnection.key)
     )
     return SetupReadiness(

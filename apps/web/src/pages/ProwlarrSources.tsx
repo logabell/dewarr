@@ -1,3 +1,4 @@
+import { DeleteSourceConnection } from "../components/DeleteConfiguration";
 import SettingHelp from "../components/SettingHelp";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -389,6 +390,15 @@ export function ProwlarrConnectionForm({
       </details>
       <div className="connection-action-bar">
         <div className="button-row">
+          {connection.configured && (
+            <DeleteSourceConnection
+              source="prowlarr"
+              name="Prowlarr"
+              generation={connection.generation}
+              disabled={save.isPending || test.isPending}
+            />
+          )}
+
           <button disabled={save.isPending || test.isPending}>
             {save.isPending ? "Saving…" : "Save connection"}
           </button>

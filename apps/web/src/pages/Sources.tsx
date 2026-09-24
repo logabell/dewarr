@@ -1,3 +1,4 @@
+import { DeleteSourceConnection } from "../components/DeleteConfiguration";
 import SettingHelp from "../components/SettingHelp";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -826,12 +827,12 @@ export function MamConnectionForm({ value }: { value: Connection }) {
         diagnostics,
       );
       cache.setQueryData(["mam-connection"], diagnostics.connection);
+      setUsername("");
+      setPassword("");
+      setClearAuth(false);
       if (diagnostics.cookie_status === "authenticated") {
         setCookie("");
         setRetainedCookie(null);
-        setUsername("");
-        setPassword("");
-        setClearAuth(false);
       } else {
         setRetainedCookie(cookie || null);
       }
@@ -957,9 +958,10 @@ export function MamConnectionForm({ value }: { value: Connection }) {
           <div className="mam-network-title">
             <h3>Network checks</h3>
             <SettingHelp label="network checks">
-              Tests the MAM cookie and checks public IPs through the proxy and
-              direct server connection. IP checks never send your MAM cookie.
-              MAM requests never fall back to direct when a proxy is configured.
+              Checks public IPs through the proxy and direct server connection,
+              even before you enter mam_id. IP checks never send your MAM cookie
+              or fall back from the proxy to direct. When a cookie is saved, it
+              is also tested using your configured fallback preference.
             </SettingHelp>
           </div>
           <span className="mam-network-badge">
@@ -1043,6 +1045,15 @@ export function MamConnectionForm({ value }: { value: Connection }) {
       <AccountAutomation value={automation} onChange={setAutomation} />
       <div className="mam-connection-footer">
         <div className="actions">
+          {value.configured && (
+            <DeleteSourceConnection
+              source="mam"
+              name="MAM"
+              generation={value.generation}
+              disabled={save.isPending || test.isPending}
+            />
+          )}
+
           <button
             className="primary"
             disabled={save.isPending || test.isPending}
@@ -1051,12 +1062,7 @@ export function MamConnectionForm({ value }: { value: Connection }) {
           </button>
           <button
             type="button"
-            disabled={
-              (!value.has_session && !cookie) ||
-              !enabled ||
-              save.isPending ||
-              test.isPending
-            }
+            disabled={!enabled || save.isPending || test.isPending}
             onClick={(event) => {
               if (event.currentTarget.form?.reportValidity()) test.mutate();
             }}
@@ -1064,8 +1070,12 @@ export function MamConnectionForm({ value }: { value: Connection }) {
             {test.isPending
               ? "Testing…"
               : dirty
-                ? "Save & test connection"
-                : "Test connection"}
+                ? value.has_session || cookie
+                  ? "Save & test connection"
+                  : "Save & test network"
+                : value.has_session || cookie
+                  ? "Test connection"
+                  : "Test network"}
           </button>
         </div>
         <div

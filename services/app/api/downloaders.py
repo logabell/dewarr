@@ -149,7 +149,11 @@ def view(row, sources):
 async def connections(admin: Admin, db: Database):
     rows = await db.scalars(
         select(Integration)
-        .where(Integration.kind.in_(downloaders.TRANSFER_KINDS), Integration.owner_id.is_(None))
+        .where(
+            Integration.kind.in_(downloaders.TRANSFER_KINDS),
+            Integration.owner_id.is_(None),
+            Integration.deleted_at.is_(None),
+        )
         .order_by(Integration.name, Integration.id)
     )
     sources = await import_sources(db)
@@ -210,7 +214,9 @@ async def save(body, admin, db, connection_id=None):
         raise HTTPException(409, "Downloader type cannot be changed")
     duplicate = await db.scalar(
         select(Integration).where(
-            Integration.kind == body.kind, Integration.base_url == body.base_url
+            Integration.kind == body.kind,
+            Integration.base_url == body.base_url,
+            Integration.deleted_at.is_(None),
         )
     )
     if duplicate and (not row or duplicate.id != row.id):

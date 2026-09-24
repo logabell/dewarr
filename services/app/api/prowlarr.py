@@ -63,7 +63,7 @@ class ProwlarrConnectionView(BaseModel):
 def view(row):
     secrets = decrypt_secrets(row.encrypted_secrets) if row else {}
     return ProwlarrConnectionView(
-        configured=bool(row),
+        configured=bool(row and not row.deleted_at),
         base_url=row.base_url if row else "",
         has_api_key=bool(secrets.get("api_key")),
         enabled=bool(row and row.enabled),
@@ -97,6 +97,7 @@ async def save_connection(body: ProwlarrConnectionInput, admin: Admin, db: Datab
     secrets["excluded_indexers"] = body.excluded_indexers
     row.base_url, row.enabled = body.base_url, body.enabled
     row.encrypted_secrets = encrypt_secrets(secrets)
+    row.deleted_at = None
     row.generation += 1
     row.status, row.last_error, row.last_success_at = "untested", None, None
     db.add(AuditEvent(actor_id=admin.id, action="source.prowlarr.updated"))

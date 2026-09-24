@@ -86,9 +86,9 @@ class MAMConnectionView(BaseModel):
 def view(row):
     secrets = decrypt_secrets(row.encrypted_secrets) if row else {}
     return MAMConnectionView(
-        configured=bool(row),
+        configured=bool(row and not row.deleted_at),
         enabled=bool(row and row.enabled),
-        base_url=row.base_url if row else "https://www.myanonamouse.net",
+        base_url=row.base_url if row and not row.deleted_at else "https://www.myanonamouse.net",
         proxy_url=row.proxy_url if row else None,
         proxy_fallback_direct=row.proxy_fallback_direct if row else True,
         has_session=bool(secrets.get("mam_id")),
@@ -120,7 +120,7 @@ async def save_connection(body: MAMConnectionInput, admin: Admin, db: Database):
     if (row.generation if row else 0) != body.expected_generation:
         raise HTTPException(409, "MAM settings changed. Reload before saving.")
     secrets = decrypt_secrets(row.encrypted_secrets) if row else {}
-    if (not row or row.base_url != body.base_url) and not body.mam_id:
+    if row and row.base_url != body.base_url and secrets.get("mam_id") and not body.mam_id:
         raise HTTPException(422, "Enter mam_id when connecting a new MAM endpoint")
     if not row:
         row = SourceConnection(key="mam", generation=0)
@@ -141,6 +141,7 @@ async def save_connection(body: MAMConnectionInput, admin: Admin, db: Database):
     row.proxy_fallback_direct = body.proxy_fallback_direct
     row.automation = body.automation.model_dump()
     row.encrypted_secrets = encrypt_secrets(secrets)
+    row.deleted_at = None
     row.generation += 1
     row.status, row.last_error, row.last_success_at = "untested", None, None
     # Source-imposed cooldown survives configuration edits and process restarts.
@@ -203,6 +204,8 @@ async def test_network(admin: Admin, db: Database):
     await db.rollback()
 
     async def test_cookie():
+        if not secrets.get("mam_id"):
+            return None, None
         try:
             _, route = await source_call(
                 user_id,
@@ -226,7 +229,8 @@ async def test_network(admin: Admin, db: Database):
     row = await db.get(SourceConnection, "mam", populate_existing=True)
     if not row or row.generation != generation or not row.enabled:
         raise HTTPException(409, "MAM settings changed during the network test. Test again.")
-    authenticated = failure is None
+    has_session = bool(secrets.get("mam_id"))
+    authenticated = has_session and failure is None
     route = used_route or ("proxy" if proxy_url else "direct")
     healthy = (
         authenticated
@@ -237,9 +241,15 @@ async def test_network(admin: Admin, db: Database):
     return MAMNetworkView(
         connection=view(row),
         checked_at=datetime.now(UTC),
-        status="healthy" if healthy else "degraded" if authenticated else "unhealthy",
+        status="healthy"
+        if healthy
+        else "degraded"
+        if authenticated or (not has_session and direct.ip and (proxy is None or proxy.ip))
+        else "unhealthy",
         route=route,
-        cookie_status="authenticated"
+        cookie_status="not-configured"
+        if not has_session
+        else "authenticated"
         if authenticated
         else ("rejected" if failure.kind == FailureKind.AUTHENTICATION else "unverified"),
         proxy_status="not-configured"
@@ -248,7 +258,9 @@ async def test_network(admin: Admin, db: Database):
         proxy=proxy,
         direct=direct,
         message=(
-            "The configured MAM proxy could not be reached. MAM authenticated through "
+            "Network checks completed without a MAM cookie. Enter mam_id to verify MAM access."
+            if not has_session
+            else "The configured MAM proxy could not be reached. MAM authenticated through "
             "the direct fallback route."
             if route == "direct-fallback"
             else str(failure)

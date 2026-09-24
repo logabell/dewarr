@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     build_version: str = ""
     release_repository: str = ""
     recovery_mode: bool = False
-    download_dispatch_enabled: bool = False
+    download_dispatch_enabled: bool = True
     db_pool_size: int = 5
     hardcover_url: str = "https://api.hardcover.app"
     openlibrary_url: str = "https://openlibrary.org"

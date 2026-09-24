@@ -30,6 +30,19 @@
   margin: 0 0 20px;
   line-height: 1.6;
 }
+.library-verification-next {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.library-verification-next p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
 .library-setup-body > form {
   display: grid;
   gap: 20px;
@@ -47,62 +60,38 @@
   font-size: 13px;
   font-weight: 650;
 }
-.library-choice-list {
-  display: grid;
-  gap: 8px;
-  max-height: 210px;
-  overflow-y: auto;
-}
-.library-setup-body label.library-choice {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 14px;
-  max-width: none;
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.library-choice:has(:checked) {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-color: var(--accent);
-}
-.library-choice input {
-  flex-shrink: 0;
-}
-.library-choice-copy {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-}
-.library-choice-copy > span {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  align-items: center;
-}
-.library-choice-copy strong {
-  font-size: 13px;
-}
-.library-choice-copy small {
-  font-size: 11px;
-  color: var(--muted);
-  font-weight: 400;
-}
-.library-choice code,
-.library-local-value,
+.library-selection-summary code,
 .library-browse-context code {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.library-local-choice {
-  padding: 16px;
+.library-setup-body .library-selection {
   display: grid;
-  gap: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  gap: 8px;
+  max-width: none;
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+.library-selection select {
+  width: 100%;
+  min-width: 0;
+}
+.library-selection-summary {
+  display: grid;
+  gap: 6px;
+  padding: 4px 0;
+}
+.library-setup-body .library-selection-summary p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+.library-selection-summary span {
+  color: var(--muted);
+  font-size: 12px;
 }
 .library-local-heading {
   display: flex;
@@ -124,30 +113,11 @@
   line-height: 1.6;
   margin: 0;
 }
-.library-local-value {
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: var(--surface);
-}
 .library-setup-body .button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 0;
-}
-.library-manual-path {
-  font-size: 12px;
-}
-.library-manual-path summary {
-  color: var(--muted);
-  cursor: pointer;
-}
-.library-manual-path label {
-  display: grid;
-  gap: 7px;
-  margin-top: 12px;
-  width: 100%;
-  max-width: none;
 }
 .library-setup-body .library-mapping-help {
   font-size: 11px;
@@ -255,7 +225,6 @@
   font-size: 12px;
 }
 /* The body scrolls independently so the action row stays visible. */
-.library-manual-path summary,
 .library-advanced summary {
   padding: 2px 0;
 }
@@ -267,9 +236,6 @@
     align-items: stretch;
     padding: 12px 16px;
   }
-  .library-setup-footer > p {
-    display: none;
-  }
   .library-setup-footer .button-row {
     justify-content: flex-end;
     width: 100%;
@@ -277,5 +243,267 @@
   .library-browse-context {
     margin-bottom: 14px;
     padding-bottom: 14px;
+  }
+}
+
+/* Keep a library and the two ways to reach its folder in one visual group. */
+.library-setup-body .library-setup-options {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+.library-setup-body .library-setup-options > legend {
+  padding: 0 6px;
+  margin: 0 0 4px;
+}
+.library-path-options {
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 14px 0 0;
+  margin: 18px 0 0;
+  min-width: 0;
+}
+.library-path-options > legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.library-setup-body .library-path-help {
+  clear: both;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.library-setup-body label.library-path-option {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: none;
+  margin: 0;
+  padding: 10px 0;
+  cursor: pointer;
+}
+.library-path-option input {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.library-path-option > span {
+  display: grid;
+  gap: 4px;
+}
+.library-path-option strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.library-path-option small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.library-path-option:has(:disabled) {
+  opacity: 0.6;
+  cursor: default;
+}
+.library-custom-path {
+  margin: 2px 0 0 25px;
+  padding-left: 14px;
+  border-left: 2px solid var(--accent);
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.library-setup-body .library-custom-path label {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  font-size: 12px;
+}
+.library-custom-path input {
+  width: 100%;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.library-custom-path > button {
+  flex-shrink: 0;
+}
+.library-custom-path > p {
+  flex-basis: 100%;
+}
+.library-import-behavior {
+  gap: 14px;
+}
+
+/* A saved folder: identity and actions, labeled paths, then readiness. */
+.library-folder-settings .media-folder-row {
+  align-items: flex-start;
+  padding: 18px 20px 14px;
+}
+.library-folder-settings .media-folder-row > svg {
+  margin-top: 3px;
+}
+.library-folder-settings .media-folder-copy h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.library-folder-settings .media-folder-copy p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.library-folder-settings .library-folder-status {
+  display: inline-flex;
+  margin-top: 9px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 11px;
+}
+.library-folder-settings .media-folder-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-self: center;
+}
+.library-folder-settings .media-folder-actions > button {
+  margin: 0;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+.library-folder-settings .media-folder-actions > button[aria-label^="Delete"] {
+  color: var(--muted);
+  border-color: transparent;
+}
+.library-folder-settings .media-folder-automation {
+  padding: 0 20px 18px 57px;
+}
+.library-folder-paths {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-left: 2px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+}
+.library-folder-paths dt {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.library-folder-paths dt span {
+  margin-left: 5px;
+}
+.library-folder-paths dd {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.library-folder-settings .library-verification-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  background: transparent;
+}
+.library-verification-next strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.library-folder-settings .library-verification-next p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.library-verification-next > button,
+.library-setup-link {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.library-setup-link {
+  color: var(--accent);
+  font-weight: 550;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.library-folder-settings .automatic-import-setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0 18px;
+  padding-top: 12px;
+}
+.library-folder-settings .automatic-import-setting .setting-subheading {
+  margin: 0;
+}
+.library-folder-settings .automatic-import-setting h3 {
+  font-size: 13px;
+}
+.library-folder-settings .automatic-import-setting > p {
+  grid-column: 1;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.library-folder-settings .automatic-import-setting > .button-row {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  margin: 0;
+}
+.library-folder-settings .automatic-import-setting > .button-row button {
+  font-size: 12px;
+  padding: 7px 10px;
+}
+.library-folder-settings .automatic-import-setting > .notice {
+  grid-column: 1 / -1;
+}
+.library-folder-settings .automatic-import-setting .help-button {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 3px;
+  border-color: transparent;
+}
+@media (max-width: 600px) {
+  .library-folder-settings .media-folder-row {
+    padding: 16px 14px 12px;
+    gap: 10px;
+  }
+  .library-folder-settings .media-folder-copy {
+    flex-basis: calc(100% - 35px);
+  }
+  .library-folder-settings .media-folder-actions {
+    margin-left: 31px;
+  }
+  .library-folder-settings .media-folder-automation {
+    padding: 0 14px 16px;
+  }
+  .library-folder-settings .library-verification-next {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .library-folder-settings .automatic-import-setting {
+    grid-template-columns: 1fr;
+  }
+  .library-folder-settings .automatic-import-setting > .button-row {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 10px;
+  }
+  .library-setup-body .library-setup-options {
+    padding: 12px;
+  }
+  .library-custom-path {
+    margin-left: 0;
+    padding-left: 10px;
   }
 }

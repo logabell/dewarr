@@ -1,3 +1,4 @@
+import DeleteConfiguration from "../components/DeleteConfiguration";
 import Destinations from "./Destinations";
 import SettingHelp from "../components/SettingHelp";
 import ConnectionStatus from "../components/ConnectionStatus";
@@ -167,6 +168,22 @@ export default function Connections({
                 >
                   <RefreshCw size={16} /> Sync
                 </button>
+                <DeleteConfiguration
+                  name={connection.name}
+                  disabled={command.isPending}
+                  description="Remove this library connection, its saved credentials, and its library folder settings from Dewarr. Books and files in your library app are kept."
+                  onDelete={async () =>
+                    result(
+                      await api.DELETE("/api/integrations/{integration_id}", {
+                        params: { path: { integration_id: connection.id } },
+                      }),
+                    )
+                  }
+                  onDeleted={() => {
+                    setEditing(null);
+                    setMessage("");
+                  }}
+                />
               </div>
             </article>
           ))}

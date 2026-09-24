@@ -366,12 +366,16 @@ def sync_directory(fd):
 def private_staging(path):
     with directory(path) as fd:
         info = os.fstat(fd)
-        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
-            uid = os.geteuid()
+        # NFS exports can map the worker to a server-side identity (for example
+        # Unraid's 99:100). The filesystem enforces access; comparing that owner
+        # with the container's uid rejects working mounts. Keep journals private,
+        # and validate created/reopened lock files against this directory's owner.
+        if stat.S_IMODE(info.st_mode) & 0o077:
             raise PublicationError(
-                f"Staging root must be owned by the worker (uid {uid}) and private (0700). "
-                "On SMB/CIFS mounts ownership and permissions come from mount options, "
-                f"such as uid={uid},dir_mode=0700"
+                f"Staging folder {path} must be private (0700); "
+                f"current permissions are {stat.S_IMODE(info.st_mode):04o}. "
+                "Set permissions on this folder on the storage server. "
+                "For SMB/CIFS without Unix permissions, check dir_mode on the VM mount."
             )
         yield fd
 
@@ -384,9 +388,9 @@ def _lock_file(staging, name):
         return os.open(name, flags, dir_fd=staging)
 
 
-def _acquire(fd, message):
+def _acquire(fd, message, *, owner):
     info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_nlink != 1:
         raise PublicationError("Invalid publication lock file")
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -408,7 +412,7 @@ def publication_lock(staging, key):
     fd = _lock_file(staging, name)
     message = "Another worker is publishing to this library"
     try:
-        _acquire(fd, message)
+        _acquire(fd, message, owner=os.fstat(staging).st_uid)
 
         @contextmanager
         def pause():
@@ -435,7 +439,7 @@ def entry_lock(staging, entry_id):
     name = "lock-entry-" + hashlib.sha256(str(entry_id).encode()).hexdigest()
     fd = _lock_file(staging, name)
     try:
-        _acquire(fd, "Another worker is publishing this book")
+        _acquire(fd, "Another worker is publishing this book", owner=os.fstat(staging).st_uid)
         yield
     finally:
         os.close(fd)
@@ -1393,6 +1397,9 @@ def probe_destination(
         directory(destination_root) as destination,
         ExitStack() as handles,
     ):
+        retained_files = {
+            name: handles.enter_context(ExitStack()) for name in ("write", "marker", "lock")
+        }
         checked_source(source, file, time.monotonic() + 120)
         if same_object(staging, object_id(destination)):
             raise PublicationError("Staging and library refer to the same directory")
@@ -1400,6 +1407,7 @@ def probe_destination(
             destination_identity=object_id(destination), staging_identity=object_id(staging)
         )
         phase = "writing to the staging folder"
+        original_error = None
         try:
             output = os.open(
                 write_name,
@@ -1408,7 +1416,7 @@ def probe_destination(
                 dir_fd=staging,
             )
             created["write"] = object_id(output)
-            handles.callback(os.close, os.dup(output))
+            retained_files["write"].callback(os.close, os.dup(output))
             try:
                 write_all(output, b"book-search destination probe\n")
                 os.fsync(output)
@@ -1454,8 +1462,8 @@ def probe_destination(
             phase = "checking filesystem locks"
             lock = os.open(lock_name, exclusive, 0o600, dir_fd=staging)
             created["lock"] = object_id(lock)
-            handles.callback(os.close, lock)
-            _acquire(lock, "Another probe holds this lock")
+            retained_files["lock"].callback(os.close, lock)
+            _acquire(lock, "Another probe holds this lock", owner=os.fstat(staging).st_uid)
             fcntl.flock(lock, fcntl.LOCK_UN)
             phase = "checking safe library publication"
             os.mkdir(staged, mode=0o700, dir_fd=staging)
@@ -1467,7 +1475,7 @@ def probe_destination(
             target_handle = stage_handle
             output = os.open(marker, exclusive, 0o600, dir_fd=stage_handle)
             created["marker"] = object_id(output)
-            handles.callback(os.close, os.dup(output))
+            retained_files["marker"].callback(os.close, os.dup(output))
             try:
                 write_all(output, marker_content)
                 os.fsync(output)
@@ -1507,17 +1515,31 @@ def probe_destination(
             report["available_bytes"] = space.f_bavail * space.f_frsize
             report["warnings"] = mount_warnings(destination_root, staging_root)
             return report
-        except OSError as error:
+        except BaseException as error:
+            original_error = error
             # Keep the failed operation and original errno. A post-rename ENOENT
             # is not evidence that the operator entered an unmounted folder.
             error.probe_report = {
                 **report,
                 "failure_step": phase,
-                "error_code": errno.errorcode.get(error.errno, "IO_ERROR"),
+                "error_code": errno.errorcode.get(error.errno, "IO_ERROR")
+                if isinstance(error, OSError)
+                else "PROBE_FAILED",
             }
             raise
         finally:
-            changed = False
+            cleanup_failures = []
+
+            def cleanup_failed(path, error=None):
+                cleanup_failures.append(
+                    {
+                        "path": str(path),
+                        "error_code": errno.errorcode.get(error.errno, "IO_ERROR")
+                        if isinstance(error, OSError)
+                        else "OBJECT_CHANGED",
+                    }
+                )
+
             marker_removed = False
             # A refused move leaves our marker in staging, not in the existing
             # library object. Remove only our own marker before removing staging.
@@ -1532,13 +1554,16 @@ def probe_destination(
                         if owned:
                             # A failed write may leave our marker incomplete. Its
                             # retained handle proves ownership without matching bytes.
+                            retained_files["marker"].close()
                             os.unlink(marker, dir_fd=original_stage)
                             marker_removed = True
                         else:
-                            changed = True
+                            cleanup_failed(staging_root / staged / marker)
                             created["stage"] = None
                 except FileNotFoundError:
                     pass
+                except (OSError, InspectionError) as error:
+                    cleanup_failed(staging_root / staged / marker, error)
             for fd, name, folder, owned in (
                 (staging, linked, False, created["link"]),
                 (staging, staged, True, created["stage"]),
@@ -1552,35 +1577,70 @@ def probe_destination(
                 try:
                     observed = os.stat(name, dir_fd=fd, follow_symlinks=False)
                     if {"device": observed.st_dev, "inode": observed.st_ino} != owned:
-                        changed = True
+                        cleanup_failed(staging_root / name)
                         continue
+                    # Close our pinned file only after checking its identity.
+                    # NFS retains an unlinked open file under a .nfs name; SMB
+                    # can also defer deletion until the last handle is closed.
+                    if name == write_name:
+                        retained_files["write"].close()
+                    elif name == lock_name:
+                        retained_files["lock"].close()
                     (os.rmdir if folder else os.unlink)(name, dir_fd=fd)
                 except FileNotFoundError:
                     pass
+                except (OSError, InspectionError) as error:
+                    cleanup_failed(staging_root / name, error)
             if created["target"]:
                 try:
                     with beneath(destination, target, folder=True) as current_target:
                         if created["marker"] and has_marker(current_target):
+                            retained_files["marker"].close()
                             os.unlink(marker, dir_fd=current_target)
                             marker_removed = True
                             os.rmdir(target, dir_fd=destination)
                         elif object_id(current_target) == created["target"]:
                             os.rmdir(target, dir_fd=destination)
                         else:
-                            changed = True
+                            cleanup_failed(destination_root / target)
                 except FileNotFoundError:
                     pass
-                except OSError:
-                    changed = True
+                except (OSError, InspectionError) as error:
+                    cleanup_failed(destination_root / target, error)
             # If the probe directory was moved away and replaced, its open descriptor
             # still lets us remove only our random marker while preserving both folders.
             if target_handle is not None and created["marker"] and not marker_removed:
                 try:
                     if has_marker(target_handle):
+                        retained_files["marker"].close()
                         os.unlink(marker, dir_fd=target_handle)
                     else:
-                        changed = True
+                        cleanup_failed(destination_root / target / marker)
                 except FileNotFoundError:
                     pass
-            if changed:
-                raise PublicationError("Probe object changed; unrecognized replacement preserved")
+                except (OSError, InspectionError) as error:
+                    cleanup_failed(destination_root / target / marker, error)
+            if cleanup_failures:
+                if original_error is not None:
+                    # A cleanup problem must not hide the operation that failed first.
+                    original_error.probe_report = {
+                        **getattr(original_error, "probe_report", report),
+                        "cleanup_failures": cleanup_failures,
+                    }
+                else:
+                    failure = cleanup_failures[0]
+                    path, code = failure["path"], failure["error_code"]
+                    message = (
+                        f"Probe object changed at {path}; unrecognized replacement preserved"
+                        if code == "OBJECT_CHANGED"
+                        else f"Could not remove a temporary folder-check object ({code}): {path}. "
+                        "Check permissions or other apps using this folder. Files were preserved."
+                    )
+                    error = PublicationError(message)
+                    error.probe_report = {
+                        **report,
+                        "failure_step": "cleaning up temporary probe files",
+                        "error_code": code,
+                        "cleanup_failures": cleanup_failures,
+                    }
+                    raise error

@@ -340,3 +340,31 @@ async def test_probe_operation_error_does_not_blame_missing_mount(
     assert "folders were opened successfully" in checked["probe"]["message"]
     assert not list(empty_route["staging"].iterdir())
     assert not list(empty_route["target"].iterdir())
+
+
+async def test_probe_cleanup_failure_cannot_activate_and_keeps_diagnostics(
+    client, admin, empty_route, monkeypatch
+):
+    real_rmdir = publication.os.rmdir
+
+    def denied(path, *, dir_fd=None):
+        if str(path).startswith(".book-search-probe-"):
+            raise OSError(errno.EACCES, "Storage denied temporary folder cleanup")
+        return real_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publication.os, "rmdir", denied)
+    assert (await start(client, empty_route)).status_code == 202
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    assert not checked["publication_available"]
+    report = checked["probe"]
+    assert report["status"] == "failed"
+    assert report["failure_step"] == "cleaning up temporary probe files"
+    assert report["error_code"] == "EACCES"
+    assert "EACCES" in report["message"]
+    assert report["cleanup_failures"][0]["path"].startswith(str(empty_route["target"]))
+    activated = await client.post(
+        f"/api/organization/library-folders/{checked['id']}/activate",
+        json={"expected_revision": checked["revision"]},
+    )
+    assert activated.status_code == 409

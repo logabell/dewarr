@@ -2,17 +2,20 @@ import SettingHelp from "../components/SettingHelp";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, result } from "../api/client";
 import { Notice } from "../components";
+import { Link } from "react-router-dom";
 
 export default function AutomaticImportPolicy({
   destinationId,
   revision,
   verified,
   unsaved,
+  onVerify,
 }: {
   destinationId: string;
   revision: string;
   verified: boolean;
   unsaved: boolean;
+  onVerify: () => void;
 }) {
   const cache = useQueryClient();
   const query = useQuery({
@@ -36,6 +39,7 @@ export default function AutomaticImportPolicy({
             params: { path: { destination_id: destinationId } },
             body: {
               enabled,
+              defer_until_verified: enabled && !query.data!.can_enable,
               expected_generation: query.data!.generation,
               destination_revision: revision,
             },
@@ -47,6 +51,9 @@ export default function AutomaticImportPolicy({
         queryKey: ["automatic-import-policy", destinationId],
       }),
   });
+  const requested =
+    query.data?.requested_enabled ??
+    (query.data?.generation ? query.data.enabled : true);
   return (
     <section
       aria-label="Automatic import policy"
@@ -65,19 +72,35 @@ export default function AutomaticImportPolicy({
       <Notice error={query.error || save.error} />
       {query.data && (
         <>
-          <p role="status">{query.data.message}</p>
+          <p role="status">
+            {query.data.ready
+              ? "On · matched downloads import automatically when complete."
+              : requested && !verified
+                ? "On after verification · matched downloads will import automatically once setup is complete."
+                : requested
+                  ? query.data.message
+                  : "Off · completed downloads stay in file review."}
+          </p>
           <div className="button-row">
-            {(!query.data.enabled || !query.data.ready) && (
+            {!requested && (
               <button
-                disabled={unsaved || save.isPending || !query.data.can_enable}
+                disabled={unsaved || save.isPending}
                 onClick={() => save.mutate(true)}
               >
-                {query.data.enabled
-                  ? "Approve the verified route again"
-                  : "Enable automatic import"}
+                {query.data.can_enable
+                  ? "Enable automatic import"
+                  : "Turn on after verification"}
               </button>
             )}
-            {query.data.enabled && (
+            {requested && !query.data.ready && query.data.can_enable && (
+              <button
+                disabled={unsaved || save.isPending}
+                onClick={() => save.mutate(true)}
+              >
+                Enable automatic import
+              </button>
+            )}
+            {requested && (
               <button
                 disabled={unsaved || save.isPending}
                 onClick={() => save.mutate(false)}
@@ -86,9 +109,13 @@ export default function AutomaticImportPolicy({
               </button>
             )}
           </div>
-          {!query.data.can_enable && (
+          {!query.data.ready && verified && !query.data.can_enable && (
             <p className="muted">
-              Save and verify this destination with a conventional layout first.
+              <Link to="/settings#naming">Review naming settings</Link> or{" "}
+              <button type="button" onClick={onVerify}>
+                Verify folder again
+              </button>
+              .
             </p>
           )}
         </>

@@ -334,6 +334,73 @@ async def test_network_diagnostics_disabled_and_member_access(client, admin, dat
     assert (await client.post("/api/sources/mam/network/test")).status_code == 403
 
 
+async def test_proxy_setup_without_cookie_can_test_network_then_authenticate(
+    client, admin, database, source_http, monkeypatch
+):
+    from app.api import sources
+    from app.domain.mam_diagnostics import EgressResult
+
+    probes = []
+
+    async def probe(proxy=None, username=None, password=None):
+        probes.append((proxy, username, password))
+        return EgressResult(ip="203.0.113.1" if proxy else "198.51.100.2")
+
+    monkeypatch.setattr(sources, "probe_egress", probe)
+    configured = await configure(
+        client,
+        mam_id=None,
+        proxy_url="http://gluetun:8888",
+        proxy_username="private-user",
+        proxy_password="private-password",
+        proxy_fallback_direct=False,
+    )
+    assert configured.status_code == 200, configured.text
+    assert not configured.json()["has_session"]
+    result = await client.post("/api/sources/mam/network/test")
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert data["cookie_status"] == "not-configured"
+    assert data["proxy_status"] == "healthy"
+    assert data["status"] == "degraded"  # Network works; MAM access is still unverified.
+    assert data["proxy"]["ip"] == "203.0.113.1"
+    assert data["direct"]["ip"] == "198.51.100.2"
+    assert ("http://gluetun:8888", "private-user", "private-password") in probes
+    assert "private-" not in result.text
+    assert not source_http["calls"]
+    blocked = await search(client)
+    assert blocked.status_code == 409 and "Enter mam_id" in blocked.text
+    async with database() as db:
+        row = await db.get(SourceConnection, "mam")
+        assert row.lease_token is None and row.next_request_at is None
+    # Supplying the cookie after network setup must still use the normal session flow.
+    original = source_network.MAMClient
+    monkeypatch.setattr(
+        source_network, "MAMClient", lambda *a, **kw: original(*a, **{**kw, "proxy_url": None})
+    )
+    saved = await configure(client, expected_generation=1, proxy_url="http://gluetun:8888")
+    assert saved.status_code == 200 and saved.json()["has_session"]
+    authenticated = (await client.post("/api/sources/mam/network/test")).json()
+    assert authenticated["cookie_status"] == "authenticated"
+    assert authenticated["status"] == "healthy"
+
+
+async def test_missing_cookie_does_not_mask_failed_proxy(client, admin, monkeypatch):
+    from app.api import sources
+    from app.domain.mam_diagnostics import EgressResult
+
+    async def probe(proxy=None, *args):
+        return EgressResult(error="Proxy DNS failed") if proxy else EgressResult(ip="198.51.100.2")
+
+    monkeypatch.setattr(sources, "probe_egress", probe)
+    await configure(client, mam_id=None, proxy_url="http://gluetun:8888")
+    result = (await client.post("/api/sources/mam/network/test")).json()
+    assert result["cookie_status"] == "not-configured"
+    assert result["proxy_status"] == "unavailable"
+    assert result["proxy"]["error"] == "Proxy DNS failed"
+    assert result["status"] == "unhealthy"
+
+
 async def test_network_ip_lookup_failure_does_not_reject_authenticated_cookie(
     client, admin, database, source_http, monkeypatch
 ):

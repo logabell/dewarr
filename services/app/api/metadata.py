@@ -1035,10 +1035,23 @@ async def hardcover_lists(
     mode: Literal["owned", "followed", "public"] = "owned",
     cursor: int = Query(default=0, ge=0, le=2147483647),
 ):
+    user_id = user.id
+    account = await db.get(CatalogAccount, user_id)
+    if not account or not account.enabled:
+        raise HTTPException(409, "Connect your Hardcover account in Metadata settings first")
+    generation = account.generation
     try:
         value, _, _ = await provider_call(
-            db, user.id, "hardcover", "list_choices", mode, cursor, force=True
+            db, user_id, "hardcover", "list_choices", mode, cursor, force=True
         )
-        return value
     except AdapterError as error:
         raise adapter_http_error(error) from error
+    # Loading lists verifies the saved token even without an explicit connection test.
+    await transaction_lock(db, f"catalog-account:{user_id}")
+    account = await db.get(CatalogAccount, user_id, populate_existing=True)
+    if not account or not account.enabled or account.generation != generation:
+        raise HTTPException(409, "Your catalog connection changed during this request. Retry it.")
+    account.status, account.last_error = "connected", None
+    account.last_success_at = datetime.now(UTC)
+    await db.commit()
+    return value

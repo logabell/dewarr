@@ -261,7 +261,7 @@
 .settings-section-body details[open] > summary::before {
   transform: rotate(45deg);
 }
-.settings-section-body details[open] > :not(summary) {
+.settings-section-body details[open] > :not(summary, dialog) {
   margin-bottom: 12px;
 }
 .settings-section-body details[open] > label {

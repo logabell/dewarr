@@ -1,3 +1,4 @@
+import DeleteConfiguration from "../components/DeleteConfiguration";
 import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -42,7 +43,20 @@ export default function Destinations({
   embedded?: boolean;
 }) {
   const [editing, setEditing] = useState<Medium | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const query = useLibraryFolderSettings();
+  const downloaders = useQuery({
+    queryKey: ["downloaders"],
+    queryFn: async () => result(await api.GET("/api/downloaders")),
+  });
+  const readyClient = downloaders.data?.some(
+    (item) =>
+      item.enabled && item.status === "connected" && item.mappings_current,
+  );
+  const verifyFolder = (medium: Medium) => {
+    setVerifying(true);
+    setEditing(medium);
+  };
   const selected = (medium: Medium) =>
     selectLibraryDestination(
       query.data?.destinations || [],
@@ -53,9 +67,8 @@ export default function Destinations({
     <div className="library-folder-settings">
       {!embedded && <h1>Library folders</h1>}
       <p className="muted">
-        Choose a library folder for each format. Dewarr verifies file access,
-        uses hardlinks when supported, and copies files when they are not.
-        Downloads stay available for seeding.
+        Choose where completed ebooks and audiobooks belong. Downloads stay
+        available for seeding.
       </p>
       <Notice error={query.error} />
       {query.isPending ? (
@@ -88,22 +101,11 @@ export default function Destinations({
                           : "No folder selected"}
                       </p>
                       {destination && (
-                        <code className="library-root-path">
-                          {destination.backend_path}
-                        </code>
-                      )}
-                      {destination?.local_path &&
-                        destination.local_path !== destination.backend_path && (
-                          <p className="library-local-path">
-                            Dewarr sees <code>{destination.local_path}</code>
-                          </p>
-                        )}
-                      {destination && (
                         <small
                           className={
                             destination.publication_available
-                              ? "success"
-                              : "muted"
+                              ? "library-folder-status success"
+                              : "library-folder-status muted"
                           }
                         >
                           {destination.publication_available &&
@@ -121,26 +123,121 @@ export default function Destinations({
                             destination.mode === "copy" ? (
                             "Copy mode · files are copied into this folder"
                           ) : (
-                            "Needs verification"
+                            "Folder saved · verification required"
                           )}
                         </small>
                       )}
                     </div>
-                    <button
-                      onClick={() => setEditing(medium)}
-                      aria-label={`${destination ? "Change" : "Choose"} ${names[medium].toLowerCase()} folder`}
-                    >
-                      <Folder size={15} />
-                      {destination ? "Change" : "Choose folder"}
-                    </button>
+                    <div className="media-folder-actions">
+                      <button
+                        onClick={() => {
+                          setVerifying(false);
+                          setEditing(medium);
+                        }}
+                        aria-label={`${destination ? "Change" : "Choose"} ${names[medium].toLowerCase()} folder`}
+                      >
+                        <Folder size={15} />
+                        {destination ? "Change" : "Choose folder"}
+                      </button>
+                      {destination && (
+                        <DeleteConfiguration
+                          name={`${names[medium].toLowerCase()} folder`}
+                          description="Remove this library folder configuration and turn off automatic imports into it. Existing books and files are kept."
+                          onDelete={async () =>
+                            result(
+                              await api.DELETE(
+                                "/api/organization/destinations/{destination_id}",
+                                {
+                                  params: {
+                                    path: { destination_id: destination.id },
+                                    query: {
+                                      expected_revision: destination.revision,
+                                    },
+                                  },
+                                },
+                              ),
+                            )
+                          }
+                          onDeleted={() => setEditing(null)}
+                        />
+                      )}
+                    </div>
                   </div>
                   {destination && (
                     <div className="media-folder-automation">
+                      <dl className="library-folder-paths">
+                        <div>
+                          <dt>
+                            {libraryApp(destination.server_kind)} library folder
+                          </dt>
+                          <dd>
+                            <code>{destination.backend_path}</code>
+                          </dd>
+                        </div>
+                        {destination.local_path &&
+                          destination.local_path !==
+                            destination.backend_path && (
+                            <div>
+                              <dt>
+                                Custom access path <span>used by Dewarr</span>
+                              </dt>
+                              <dd>
+                                <code>{destination.local_path}</code>
+                              </dd>
+                            </div>
+                          )}
+                      </dl>
+                      {!destination.publication_available && (
+                        <section
+                          className="library-verification-next"
+                          aria-label="Folder verification"
+                        >
+                          <div>
+                            <strong>
+                              {readyClient
+                                ? "Ready to verify"
+                                : "Finish download setup"}
+                            </strong>
+                            <p>
+                              {downloaders.isPending
+                                ? "Checking download-client setup…"
+                                : downloaders.isError
+                                  ? "Could not check download-client setup. Try again to continue."
+                                  : readyClient
+                                    ? "Check file access before importing into this library."
+                                    : "Connect a download client and its download folder, then verify this library."}
+                            </p>
+                          </div>
+                          {downloaders.isError ? (
+                            <button onClick={() => downloaders.refetch()}>
+                              Retry setup check
+                            </button>
+                          ) : (
+                            !downloaders.isPending &&
+                            (readyClient ? (
+                              <button
+                                className="primary"
+                                onClick={() => verifyFolder(medium)}
+                              >
+                                <CheckCircle2 size={15} /> Verify folder
+                              </button>
+                            ) : (
+                              <Link
+                                className="library-setup-link"
+                                to="/settings#downloaders"
+                              >
+                                Set up download client
+                              </Link>
+                            ))
+                          )}
+                        </section>
+                      )}
                       <AutomaticImportPolicy
                         destinationId={destination.id}
                         revision={destination.revision}
                         verified={destination.publication_available}
                         unsaved={false}
+                        onVerify={() => verifyFolder(medium)}
                       />
                     </div>
                   )}
@@ -154,6 +251,7 @@ export default function Destinations({
         <FolderPicker
           medium={editing}
           saved={selected(editing)}
+          verifying={verifying}
           close={() => setEditing(null)}
         />
       )}
@@ -164,15 +262,18 @@ export default function Destinations({
 function FolderPicker({
   medium,
   saved,
+  verifying = false,
   close,
 }: {
   medium: Medium;
   saved?: Destination;
+  verifying?: boolean;
   close: () => void;
 }) {
   const cache = useQueryClient();
   const current = useRef(saved);
   const formId = useId();
+  const saveHelpId = useId();
   const browseButton = useRef<HTMLButtonElement>(null);
   const returnFromBrowser = () => {
     setBrowsing(false);
@@ -213,7 +314,10 @@ function FolderPicker({
         ),
       ),
   });
-  const automatic = automaticChoice ?? policy.data?.enabled ?? true;
+  const automatic =
+    automaticChoice ??
+    policy.data?.requested_enabled ??
+    (policy.data?.generation ? policy.data.enabled : true);
   const [progress, setProgress] = useState("");
   const options = useQuery({
     queryKey: ["library-folder-options"],
@@ -261,10 +365,22 @@ function FolderPicker({
   const mapping = otherPath || remotePath;
   const eligible = !!selectedFolder;
   const workerPath = mapping ? localPath.trim() : backendPath;
+  const saveBlocker = !eligible
+    ? "Choose an available library folder first."
+    : !workerPath.trim()
+      ? "Choose the mounted folder Dewarr can access."
+      : seedingRename && !clientPath.trim()
+        ? "Enter the library folder path in qBittorrent."
+        : seedingRename && downloader && downloader.kind !== "qbittorrent"
+          ? "Choose qBittorrent to rename the seeding copy."
+          : saved && !policy.data
+            ? "Load the automatic import settings before saving this folder."
+            : "";
   const save = useMutation({
     mutationFn: async () => {
-      if (!library || !downloader || !eligible)
-        throw new Error("Choose a folder and connect a download client first.");
+      if (saveBlocker) throw new Error(saveBlocker);
+      if (!library)
+        throw new Error("Choose an available library folder first.");
       if (mapping && !posixPath(workerPath))
         throw new Error(
           "Enter the absolute folder Dewarr has mounted, such as /data/audiobooks.",
@@ -281,10 +397,14 @@ function FolderPicker({
             expected_revision: current.current?.revision,
             seeding_rename: seedingRename,
             client_path: seedingRename ? clientPath.trim() : null,
+            automatic,
           },
         }),
       );
       current.current = destination;
+      // Persist the folder even when download-client setup is still incomplete.
+      // Activation and automatic imports still require a successful route probe.
+      if (!downloader) return destination;
       setProgress(
         seedingRename
           ? `Checking the qBittorrent library path and ${libraryApp(library.server_kind)} access…`
@@ -360,7 +480,7 @@ function FolderPicker({
   });
   return (
     <BookDialog
-      title={`Choose ${names[medium].toLowerCase()} folder`}
+      title={`${verifying ? "Verify" : "Choose"} ${names[medium].toLowerCase()} folder`}
       close={() => {
         if (!save.isPending) close();
       }}
@@ -370,7 +490,7 @@ function FolderPicker({
         {browsing ? (
           <>
             <div className="library-browse-context">
-              <span>Find the same folder in Dewarr</span>
+              <span>Choose the mounted path for this library</span>
               <strong>
                 {selectedFolder?.library_name} ·{" "}
                 {libraryApp(selectedFolder?.server_kind)}
@@ -392,8 +512,9 @@ function FolderPicker({
         ) : (
           <>
             <p className="library-setup-intro">
-              Choose your library, then confirm where Dewarr can access its
-              files.
+              {verifying
+                ? "Confirm these paths, then run verification to check file access and finish setting up imports."
+                : "Choose the library for completed downloads. Use its default folder path or a custom path for your mount."}
             </p>
             <Notice error={options.error} />
             {options.isError && (
@@ -414,34 +535,62 @@ function FolderPicker({
                   className="library-setup-options"
                   disabled={save.isPending}
                 >
-                  <legend>Library folder</legend>
-                  <div className="library-choice-list">
-                    {folders.map((folder) => (
-                      <label className="library-choice" key={folder.key}>
-                        <input
-                          type="radio"
-                          name="library-folder"
-                          aria-label={`${folder.library_name}: ${folder.path}`}
-                          checked={selectedChoice === folder.key}
-                          onChange={() => {
-                            setChoice(folder.key);
-                            setOtherPath(false);
-                            setLocalPath(
-                              posixPath(folder.path) ? folder.path : "",
-                            );
-                            setClientPath("");
-                          }}
-                        />
-                        <span className="library-choice-copy">
-                          <span>
-                            <strong>{folder.library_name}</strong>
-                            <small>{libraryApp(folder.server_kind)}</small>
-                          </span>
-                          <code>{folder.path}</code>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+                  <legend>Library for {names[medium].toLowerCase()}</legend>
+                  {folders.length > 1 && (
+                    <label className="library-selection">
+                      Library
+                      <select
+                        value={selectedChoice}
+                        onChange={(event) => {
+                          const folder = folders.find(
+                            (item) => item.key === event.target.value,
+                          );
+                          if (!folder) return;
+                          setChoice(folder.key);
+                          setOtherPath(false);
+                          setLocalPath(
+                            posixPath(folder.path) ? folder.path : "",
+                          );
+                          setClientPath("");
+                        }}
+                      >
+                        {!eligible && (
+                          <option value={selectedChoice}>
+                            Choose a library
+                          </option>
+                        )}
+                        {[
+                          ...new Set(
+                            folders.map((folder) =>
+                              libraryApp(folder.server_kind),
+                            ),
+                          ),
+                        ].map((app) => (
+                          <optgroup label={app} key={app}>
+                            {folders
+                              .filter(
+                                (folder) =>
+                                  libraryApp(folder.server_kind) === app,
+                              )
+                              .map((folder) => (
+                                <option key={folder.key} value={folder.key}>
+                                  {folder.library_name} — {folder.path}
+                                </option>
+                              ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {selectedFolder && (
+                    <div className="library-selection-summary">
+                      <p>
+                        <strong>{selectedFolder.library_name}</strong>
+                        <span>{libraryApp(selectedFolder.server_kind)}</span>
+                      </p>
+                      <code>{backendPath}</code>
+                    </div>
+                  )}
                   {!folders.length && (
                     <p className="notice">
                       {options.data.libraries.length
@@ -462,72 +611,90 @@ function FolderPicker({
                       another library folder.
                     </p>
                   )}
-                </fieldset>
-                {eligible && (
-                  <section
-                    className="library-local-choice"
-                    aria-label="Dewarr folder mapping"
-                  >
-                    <div className="library-local-heading">
-                      <Folder size={19} aria-hidden="true" />
-                      <div>
-                        <h3>Folder in Dewarr</h3>
-                        <p>
-                          {remotePath
-                            ? "Your library reports a Windows path. Choose the corresponding mounted folder."
-                            : mapping
-                              ? "Custom path to the same library folder."
-                              : `Using the same path as ${libraryApp(selectedFolder?.server_kind)}.`}
-                        </p>
-                      </div>
-                    </div>
-                    <code className="library-local-value">
-                      {workerPath || "Choose a mounted folder"}
-                    </code>
-                    <div className="button-row">
-                      <button
-                        type="button"
-                        ref={browseButton}
-                        disabled={save.isPending}
-                        onClick={() => setBrowsing(true)}
-                      >
-                        <FolderOpen size={15} aria-hidden="true" /> Other folder
-                      </button>
-                      {mapping && !remotePath && (
-                        <button
-                          type="button"
-                          disabled={save.isPending}
-                          onClick={() => {
-                            setOtherPath(false);
-                            setLocalPath(backendPath);
-                          }}
-                        >
-                          Use library path
-                        </button>
-                      )}
-                    </div>
-                    <details className="library-manual-path">
-                      <summary>Enter path manually</summary>
-                      <label>
-                        Dewarr folder path
+                  {eligible && (
+                    <fieldset
+                      className="library-path-options"
+                      disabled={save.isPending}
+                    >
+                      <legend>Folder path</legend>
+                      <p className="library-path-help">
+                        Where can Dewarr access this library?
+                      </p>
+                      <label className="library-path-option">
                         <input
-                          value={workerPath}
-                          disabled={save.isPending}
-                          onChange={(event) => {
+                          type="radio"
+                          name="library-path-mode"
+                          checked={!mapping}
+                          disabled={remotePath}
+                          onChange={() => {
+                            setOtherPath(false);
+                          }}
+                        />
+                        <span>
+                          <strong>
+                            Use {libraryApp(selectedFolder?.server_kind)} path
+                          </strong>
+                          <small>
+                            {remotePath
+                              ? "This path needs a local mount. Use a custom path below."
+                              : "Default · both apps access the same folder path."}
+                          </small>
+                        </span>
+                      </label>
+                      <label className="library-path-option">
+                        <input
+                          type="radio"
+                          name="library-path-mode"
+                          checked={mapping}
+                          onChange={() => {
                             setChoice(selectedChoice);
                             setOtherPath(true);
-                            setLocalPath(event.target.value);
+                            if (!localPath && !remotePath)
+                              setLocalPath(backendPath);
                           }}
-                          placeholder="/data/library/ebooks"
                         />
+                        <span>
+                          <strong>Use a custom path</strong>
+                          <small>
+                            The same library folder, mounted at a different path
+                            for Dewarr.
+                          </small>
+                        </span>
                       </label>
-                    </details>
-                    <p className="library-mapping-help">
-                      This maps an existing library folder; it does not move
-                      files.
-                    </p>
-                  </section>
-                )}
+                      {mapping && (
+                        <div className="library-custom-path">
+                          <label>
+                            Custom library path
+                            <input
+                              value={workerPath}
+                              onChange={(event) => {
+                                setChoice(selectedChoice);
+                                setOtherPath(true);
+                                setLocalPath(event.target.value);
+                              }}
+                              placeholder="/data/library/ebooks"
+                              spellCheck={false}
+                              autoCapitalize="none"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            ref={browseButton}
+                            onClick={() => setBrowsing(true)}
+                          >
+                            <FolderOpen size={15} aria-hidden="true" /> Browse
+                            folders
+                          </button>
+                          <p className="library-mapping-help">
+                            Select the existing folder visible to Dewarr. This
+                            does not move your library or change its path in{" "}
+                            {libraryApp(selectedFolder?.server_kind)}.
+                          </p>
+                        </div>
+                      )}
+                    </fieldset>
+                  )}
+                </fieldset>
                 <section className="library-import-behavior">
                   <div className="library-local-heading">
                     <Copy size={19} aria-hidden="true" />
@@ -535,12 +702,12 @@ function FolderPicker({
                       <h3>
                         {seedingRename
                           ? "Seeding files will be renamed"
-                          : "Hardlinks when supported, copies otherwise"}
+                          : "Keep downloads available for seeding"}
                       </h3>
                       <p>
                         {seedingRename
                           ? "Dewarr will verify that qBittorrent can access the library folder."
-                          : "The folder test chooses hardlinks or copy mode automatically. Original downloads stay available for seeding."}
+                          : "Dewarr uses hardlinks when supported and copies files otherwise."}
                       </p>
                     </div>
                   </div>
@@ -552,10 +719,10 @@ function FolderPicker({
                       onChange={(event) => setAutomatic(event.target.checked)}
                     />
                     <span>
-                      <strong>Auto-organize downloads</strong>
+                      <strong>Import on completion</strong>
                       <small>
-                        Import matched downloads using your naming settings.
-                        Uncertain matches stay in review.
+                        Automatically add matched downloads to this library
+                        after verification. Uncertain matches stay in review.
                       </small>
                     </span>
                   </label>
@@ -582,12 +749,12 @@ function FolderPicker({
                 )}
                 {!options.data.downloaders.length && (
                   <p className="notice">
-                    Connect and test a{" "}
+                    You can save this folder now. To verify it and enable
+                    imports, connect and test a{" "}
                     <Link to="/settings#downloaders" onClick={close}>
                       download client
                     </Link>
-                    , including its download folder, before verifying this
-                    library.
+                    , including its download folder.
                   </p>
                 )}
                 <details
@@ -657,7 +824,14 @@ function FolderPicker({
       </div>
       {!browsing && options.data && (
         <footer className="library-setup-footer">
-          <p>Save → verify file access → activate</p>
+          <p id={saveHelpId} role="status">
+            {saveBlocker ||
+              (!downloader
+                ? options.data.downloaders.length
+                  ? "Select a download client to verify, or save the folder for later."
+                  : "Save now; verify after setting up a download client."
+                : "Save → verify file access → activate")}
+          </p>
           <div className="button-row">
             <button type="button" disabled={save.isPending} onClick={close}>
               Cancel
@@ -666,17 +840,20 @@ function FolderPicker({
               className="primary"
               type="submit"
               form={formId}
-              disabled={
-                save.isPending ||
-                (!!saved && !policy.data) ||
-                !eligible ||
-                !downloader ||
-                !workerPath.trim() ||
-                (seedingRename &&
-                  (!clientPath.trim() || downloader.kind !== "qbittorrent"))
-              }
+              aria-describedby={saveHelpId}
+              disabled={save.isPending || !!saveBlocker}
             >
-              {save.isPending ? "Checking…" : "Save & verify folder"}
+              {save.isPending
+                ? downloader
+                  ? "Checking…"
+                  : "Saving…"
+                : downloader
+                  ? verifying
+                    ? automatic
+                      ? "Verify & enable imports"
+                      : "Verify folder"
+                    : "Save & verify folder"
+                  : "Save folder"}
             </button>
           </div>
         </footer>

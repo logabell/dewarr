@@ -130,14 +130,17 @@ async def prepare(client, route, key="select-release-fixture"):
     )
 
 
+@pytest.mark.parametrize("dispatch_enabled", [False, True])
 async def test_selection_is_immutable_idempotent_private_and_performs_no_dispatch(
-    client, admin, database, selection_route
+    client, admin, database, selection_route, monkeypatch, dispatch_enabled
 ):
+    monkeypatch.setattr(get_settings(), "download_dispatch_enabled", dispatch_enabled)
     responses = await asyncio.gather(*(prepare(client, selection_route) for _ in range(3)))
     assert all(r.status_code == 201 for r in responses), [r.text for r in responses]
     selected = responses[0].json()
     assert len({r.json()["id"] for r in responses}) == 1
-    assert selected["configuration_current"] and not selected["dispatch_available"]
+    assert selected["configuration_current"]
+    assert selected["dispatch_available"] is dispatch_enabled
     assert (await prepare(client, selection_route, "another-identical-command")).json()[
         "id"
     ] == selected["id"]
