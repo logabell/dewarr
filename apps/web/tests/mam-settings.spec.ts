@@ -16,6 +16,7 @@ test("MAM masks saved secrets and saves edited proxy before testing", async ({
     generation: 1,
     status: "route",
     last_error: "Proxy refused the connection.",
+    automation: {} as Record<string, unknown>,
   };
   const actions: string[] = [];
   const writes: Record<string, unknown>[] = [];
@@ -47,8 +48,11 @@ test("MAM masks saved secrets and saves edited proxy before testing", async ({
           });
         connection = {
           ...connection,
+          base_url: body.base_url,
           proxy_url: body.proxy_url,
           proxy_fallback_direct: body.proxy_fallback_direct,
+          enabled: body.enabled,
+          automation: body.automation,
           generation: connection.generation + 1,
         };
       }
