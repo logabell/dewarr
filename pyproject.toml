@@ -22,6 +22,7 @@ dependencies = [
   "beautifulsoup4>=4.15,<5",
   "authlib>=1.6,<2",
   "joserfc>=1.7,<2",
+  "apprise>=1.9,<2",
 ]
 
 [dependency-groups]

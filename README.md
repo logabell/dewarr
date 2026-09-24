@@ -17,6 +17,7 @@
 - **Download priorities** — rank sources and formats, apply size and seed preferences, and control download capacity.
 - **Book discovery** — browse collections, awards, authors, and series.
 - **Download sources** — connect MyAnonamouse, Prowlarr, and AudiobookBay; send transfers to qBittorrent.
+- **Notifications** — personal and installation alerts through Discord, ntfy, Apprise, and JSON webhooks, with discovery digests. [Setup and payload documentation](docs/NOTIFICATIONS.md).
 - **Shared library** — individual accounts, reading lists, permissions, and download activity.
 - **Self-hosted** — Docker, PostgreSQL, and an MIT license.
 
