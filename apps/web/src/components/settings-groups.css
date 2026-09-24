@@ -1,0 +1,205 @@
+/* Policy groups use the same disclosure and control language as connections. */
+.settings-section-body .settings-group {
+  margin-top: 24px;
+}
+.settings-section-body .settings-group > summary {
+  padding-block: 18px;
+  gap: 12px;
+}
+.settings-group-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.settings-group-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+.settings-group-description,
+.policy-settings .field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.settings-section-body .settings-group-content {
+  margin: 0;
+  padding: 0 0 8px 21px;
+  min-width: 0;
+}
+.policy-settings,
+.policy-stack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.settings-section-body .policy-settings form {
+  gap: 20px;
+  min-width: 0;
+}
+.settings-section-body .policy-section,
+.settings-section-body .policy-window {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.policy-section > legend,
+.policy-window > legend {
+  padding-inline: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.policy-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+  align-items: start;
+}
+.policy-fields > *,
+.policy-window-fields > * {
+  min-width: 0;
+}
+.policy-fields-three {
+  grid-template-columns: 1fr 1fr 1.5fr;
+}
+.settings-section-body .policy-fields label,
+.settings-section-body .policy-window-fields label {
+  max-width: none;
+}
+.policy-window-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+.policy-section > button {
+  justify-self: start;
+}
+.policy-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.settings-section-body .policy-add-row > label {
+  width: auto;
+  flex: 1 1 180px;
+  max-width: 24rem;
+}
+.policy-override {
+  display: grid;
+  gap: 10px;
+}
+.policy-override > button {
+  justify-self: start;
+}
+.policy-empty {
+  padding: 12px 0;
+  color: var(--muted);
+}
+.policy-records {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+.policy-records:empty {
+  display: none;
+}
+.policy-records > li {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.policy-table-scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+.policy-usage-table {
+  width: 100%;
+  font-size: 13px;
+}
+.policy-usage-table th,
+.policy-usage-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.policy-usage-table th:first-child,
+.policy-usage-table td:first-child {
+  padding-left: 0;
+}
+.policy-usage-table th:last-child,
+.policy-usage-table td:last-child {
+  padding-right: 0;
+}
+.policy-usage-windows {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.policy-usage-windows li {
+  display: grid;
+  gap: 3px;
+}
+.policy-usage-windows span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.policy-usage-table td:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+}
+.settings-group summary:focus-visible,
+.policy-settings summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+/* Keep explicit grid styles from exposing the contents of closed details. */
+.settings-section-body .settings-group:not([open]) > :not(summary),
+.settings-section-body .policy-disclosure:not([open]) > :not(summary) {
+  display: none;
+}
+@container (max-width: 760px) {
+  .policy-fields-three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .policy-window-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .policy-window-fields > button {
+    justify-self: start;
+  }
+}
+@container (max-width: 480px) {
+  .settings-section-body .settings-group-content {
+    padding-left: 0;
+  }
+  .policy-fields,
+  .policy-window-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-section-body .policy-section,
+  .settings-section-body .policy-window {
+    padding: 12px;
+  }
+  .policy-settings .button-row > button,
+  .policy-add-row > button {
+    white-space: normal;
+    max-width: 100%;
+  }
+}

@@ -64,9 +64,9 @@ def view(
     root = (client.config.get("save_path") if client else "") or ""
     mapped = bool(client and mappings_current(client, sources))
     return SlskdConnectionView(
-        configured=bool(source),
+        configured=bool(source and not source.deleted_at),
         enabled=bool(source and source.enabled),
-        base_url=source.base_url if source else "http://127.0.0.1:5030",
+        base_url=source.base_url if source and not source.deleted_at else "http://127.0.0.1:5030",
         has_api_key=bool(secrets.get("api_key")),
         generation=source.generation if source else 0,
         status=source.status if source else "not-configured",

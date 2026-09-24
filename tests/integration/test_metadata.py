@@ -124,6 +124,44 @@ def provider(monkeypatch):
     return state
 
 
+@pytest.mark.parametrize("empty", [False, True])
+async def test_loading_lists_verifies_saved_connection(client, admin, database, monkeypatch, empty):
+    from app.adapters.catalog_providers import Hardcover
+    from app.adapters.contracts import AdapterError, FailureKind
+    from app.adapters.hardcover_lists import ChoicePage, ListChoice
+
+    broken = False
+
+    async def choices(self, mode, cursor):
+        if broken:
+            raise AdapterError(FailureKind.AUTHENTICATION, "Invalid token")
+        return ChoicePage(
+            items=[]
+            if empty
+            else [
+                ListChoice(external_id="42", name="My books", count=12, public=False, owner_id="7")
+            ]
+        )
+
+    monkeypatch.setattr(Hardcover, "list_choices", choices)
+    await connect(client)
+    assert (await client.get("/api/metadata/account")).json()["status"] == "untested"
+    response = await client.get("/api/metadata/hardcover-lists")
+    assert response.status_code == 200, response.text
+    account = (await client.get("/api/metadata/account")).json()
+    assert account["status"] == "connected"
+    assert account["last_success_at"]
+    assert account["last_error"] is None
+
+    await client.put("/api/metadata/account", json={"token": "replacement-token"})
+    broken = True
+    response = await client.get("/api/metadata/hardcover-lists")
+    assert response.status_code == 409, response.text
+    account = (await client.get("/api/metadata/account")).json()
+    assert account["status"] == "untested"
+    assert account["last_success_at"] is None
+
+
 async def connect(client):
     response = await client.put("/api/metadata/account", json={"token": "hc-private-test-token"})
     assert response.status_code == 200, response.text

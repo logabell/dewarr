@@ -17,10 +17,11 @@ Edit these values directly in Compose or pass them with `docker run -e`.
 | `DB_NAME` | `dewarr` | Database name. |
 | `DB_USER` | `dewarr` | Database user. |
 | `DB_PASSWORD` | Required | The same password configured for PostgreSQL. |
+| `BOOK_DOWNLOAD_DISPATCH_ENABLED` | `true` | Allow downloads after configuring clients, library routes, and policies. Set to `false` to disable downloads server-wide. |
 
 To use another external port, change `8000:8000` to, for example, `8085:8000`, then set `PUBLIC_URL=http://your-server:8085`.
 
-Most configuration belongs in the app: connect libraries, reading accounts, sources, and download clients through **Settings**. To permit download dispatch after configuring routes and policies, add `BOOK_DOWNLOAD_DISPATCH_ENABLED: "true"` to Dewarr's environment and recreate the container.
+Most configuration belongs in the app: connect libraries, reading accounts, sources, and download clients through **Settings**. Downloads are enabled by default once the required setup is complete; no environment change is needed. If you previously set `BOOK_DOWNLOAD_DISPATCH_ENABLED: "false"`, remove that override or change it to `"true"` and recreate the container.
 
 ## Folders
 
@@ -32,7 +33,7 @@ Most configuration belongs in the app: connect libraries, reading accounts, sour
 
 Dewarr initializes `/config` and runs the app as `PUID:PGID`. It does not change ownership of existing media. Give that user/group access to your shared folders. Groups added with Compose `group_add` are kept, so folders shared through another group also work.
 
-Mount a parent folder, not the library folder itself. Dewarr keeps a private `.book-search-staging` folder beside the library folder and moves finished imports from it into the library, so both must be on the same filesystem. Mount `/media:/mnt` and choose `/mnt/audiobooks`, rather than mounting `/media/audiobooks:/mnt/audiobooks`. Dewarr uses one staging folder for every library, so ebook and audiobook library folders must also share that filesystem. Dewarr checks these when you choose a folder. The staging folder keeps records of past imports, so once it has any, Dewarr will not move it to another filesystem on its own. To move your libraries to a new filesystem, set `BOOK_IMPORT_STAGING_ROOT` to an empty folder there that is owned by `PUID` with mode `0700`.
+Mount a parent folder, not the library folder itself. Dewarr keeps a private `.book-search-staging` folder beside the library folder and moves finished imports from it into the library, so both must be on the same filesystem. Mount `/media:/mnt` and choose `/mnt/audiobooks`, rather than mounting `/media/audiobooks:/mnt/audiobooks`. Dewarr uses one staging folder for every library, so ebook and audiobook library folders must also share that filesystem. Dewarr checks these when you choose a folder. The staging folder keeps records of past imports, so once it has any, Dewarr will not move it to another filesystem on its own. To move your libraries to a new filesystem, set `BOOK_IMPORT_STAGING_ROOT` to an empty folder there that Dewarr can read and write, with mode `0700`. A network server may map Dewarr's user to a different numeric owner.
 
 Use the same paths in Dewarr, qBittorrent, and your library server (Audiobookshelf or Grimmory) when possible. Grimmory's image is `grimmory/grimmory` and listens on port 6060. For example:
 
@@ -56,15 +57,25 @@ On WSL2 Windows-backed mounts (DrvFs), hardlinks can be unavailable even when bo
 
 Soulseek uses one slskd connection for both searching and downloading. Configure it under **Download clients** or **Download sources**; saving tests the connection automatically. Dewarr reads slskd's completed-download folder and recognizes the same mounted path, including folders already saved through setup. There is no separate “worker import root” to configure for a shared path.
 
-If slskd reports `/media/downloads` but Dewarr sees those files at `/data/downloads`, open Soulseek's **Advanced · path mappings** under Download clients and browse to the corresponding Dewarr folder. Then choose and verify your library folder. Connection health, folder access, and the server's download enablement are separate checks: `BOOK_DOWNLOAD_DISPATCH_ENABLED=true` is still required to start downloads, and recovery mode still pauses dispatch.
+If slskd reports `/media/downloads` but Dewarr sees those files at `/data/downloads`, open Soulseek's **Advanced · path mappings** under Download clients and browse to the corresponding Dewarr folder. Then choose and verify your library folder. Downloads are enabled by default, but connection health and folder access must pass their checks. Recovery mode still pauses dispatch.
 
 ### Network shares (NFS and SMB)
 
 NFS and SMB/CIFS libraries work when the staging folder is on the same mounted share as the library. These filesystems do not support the atomic no-replace rename flag, so Dewarr uses a fallback that still never overwrites an existing book or journal. The route test checks that fallback on your actual mount.
 
+For a Linux VM mounting Unraid over NFS, pass the VM's mounted media tree into
+Dewarr as a Docker bind mount. NFS can map the container's uid to a server-side
+owner: a worker running as uid `1000` can legitimately see its staging folder and
+new files owned by `99:100`. Dewarr accepts this mapping and verifies actual file
+operations. You do not need to change `PUID` just to match the reported NFS owner.
+The lock files must belong to the same server-side owner as the staging folder.
+If access is denied, check the NFS export's permissions and identity mapping;
+the `uid` and `dir_mode` options below apply to SMB/CIFS, not NFS.
+
 SMB/CIFS mounts need a few options, because the share, not Linux, decides ownership and permissions:
 
-- `uid=<PUID>,gid=<PGID>,dir_mode=0700`: the staging folder must be owned by Dewarr's user and private. The route test names the exact uid it expects. These options apply to the whole mount, so containers sharing it (qBittorrent, Audiobookshelf) need the same `PUID`.
+- Dewarr needs read/write access to the share. Where Unix ownership is not provided by the server, `uid=<PUID>,gid=<PGID>` can make the mount accessible to the container user. Dewarr validates operations rather than requiring that the reported uid equal `PUID`.
+- The staging folder still needs private permissions (`0700`) because it holds recovery journals. Use per-folder permissions where the server supports them. On mounts with synthetic permissions, `dir_mode=0700` applies to the whole mount and can affect other containers; it is not a requirement for the library and download folders themselves. This limitation and the planned separation of journals from media storage are covered in [storage compatibility](STORAGE-COMPATIBILITY.md).
 - `serverino` (the default): Dewarr tracks files by inode number. With `noserverino` those numbers can change between checks. The route test warns when it sees this.
 - `nobrl` on older kernels, if the route test reports that the staging filesystem does not support file locks.
 

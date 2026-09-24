@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from app.adapters.audiobookshelf import Audiobookshelf, backend_path
 from app.adapters.contracts import AdapterError
 from app.adapters.grimmory import Grimmory
+from app.api.automatic_imports import save_setup_preference
 from app.api.automatic_imports import view as policy_view
 from app.api.dependencies import Admin, Database
 from app.config import get_settings
@@ -147,6 +148,7 @@ class FolderInput(StrictModel):
     expected_revision: str | None = None
     seeding_rename: bool = False
     client_path: str | None = Field(default=None, max_length=1024)
+    automatic: bool | None = None
 
     @model_validator(mode="after")
     def seeding_target(self):
@@ -213,9 +215,10 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
             select(ImportDestination).where(ImportDestination.root_key == root_key)
         )
     )
-    if body.destination_id and not destination:
+    if body.destination_id and (not destination or destination.deleted_at):
         raise HTTPException(404, "Destination no longer exists")
     if destination:
+        await transaction_lock(db, f"automatic-policy:{destination.id}")
         await db.refresh(destination, with_for_update=True)
         if (
             destination.medium != medium
@@ -295,6 +298,8 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
     destination.seeding_rename, destination.client_path = body.seeding_rename, body.client_path
     destination.probe = destination.probe_token = destination.probe_operation_id = None
     await db.flush()
+    if body.automatic is not None:
+        await save_setup_preference(db, destination, admin, body.automatic)
     db.add(
         AuditEvent(
             actor_id=admin.id,
@@ -318,7 +323,7 @@ async def activate(destination_id: UUID, body: ActivateInput, admin: Admin, db: 
     await transaction_lock(db, f"automatic-policy:{destination_id}")
     await assert_admin(db, admin.id)
     destination = await db.get(ImportDestination, destination_id, with_for_update=True)
-    if not destination:
+    if not destination or destination.deleted_at:
         raise HTTPException(404, "Destination not found")
     current = await view(db, destination)
     if current.revision != body.expected_revision or not current.publication_available:

@@ -2622,7 +2622,8 @@ export interface paths {
     /** Update Connection */
     put: operations["update_connection_api_integrations__integration_id__put"];
     post?: never;
-    delete?: never;
+    /** Delete Integration */
+    delete: operations["delete_integration_api_integrations__integration_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -3994,6 +3995,58 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/downloaders/{connection_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Update Connection */
+    put: operations["update_connection_api_downloaders__connection_id__put"];
+    post?: never;
+    /** Delete Downloader */
+    delete: operations["delete_downloader_api_downloaders__connection_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/organization/destinations/{destination_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete Destination */
+    delete: operations["delete_destination_api_organization_destinations__destination_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sources/{source}/connection": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete Source */
+    delete: operations["delete_source_api_sources__source__connection_delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/organization/library-folders": {
     parameters: {
       query?: never;
@@ -4817,23 +4870,6 @@ export interface paths {
     /** Folders */
     get: operations["folders_api_downloaders_folders_get"];
     put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/downloaders/{connection_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Update Connection */
-    put: operations["update_connection_api_downloaders__connection_id__put"];
     post?: never;
     delete?: never;
     options?: never;
@@ -7801,6 +7837,8 @@ export interface components {
       seeding_rename: boolean;
       /** Client Path */
       client_path?: string | null;
+      /** Automatic */
+      automatic?: boolean | null;
     };
     /** FolderOption */
     FolderOption: {
@@ -10380,6 +10418,11 @@ export interface components {
     PolicyInput: {
       /** Enabled */
       enabled: boolean;
+      /**
+       * Defer Until Verified
+       * @default false
+       */
+      defer_until_verified: boolean;
       /** Expected Generation */
       expected_generation: number;
       /** Destination Revision */
@@ -13681,6 +13724,8 @@ export interface components {
     app__api__automatic_imports__PolicyView: {
       /** Enabled */
       enabled: boolean;
+      /** Requested Enabled */
+      requested_enabled: boolean;
       /** Generation */
       generation: number;
       /** Ready */
@@ -19241,6 +19286,35 @@ export interface operations {
       };
     };
   };
+  delete_integration_api_integrations__integration_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        integration_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   test_connection_api_integrations__integration_id__test_post: {
     parameters: {
       query?: never;
@@ -22105,6 +22179,134 @@ export interface operations {
       };
     };
   };
+  update_connection_api_downloaders__connection_id__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DownloaderInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloaderView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_downloader_api_downloaders__connection_id__delete: {
+    parameters: {
+      query: {
+        expected_generation: number;
+      };
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_destination_api_organization_destinations__destination_id__delete: {
+    parameters: {
+      query: {
+        expected_revision: string;
+      };
+      header?: never;
+      path: {
+        destination_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_source_api_sources__source__connection_delete: {
+    parameters: {
+      query: {
+        expected_generation: number;
+      };
+      header?: never;
+      path: {
+        source: "mam" | "prowlarr" | "audiobookbay" | "slskd";
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   folders_api_organization_library_folders_get: {
     parameters: {
       query?: never;
@@ -23801,41 +24003,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DownloadFolderView"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  update_connection_api_downloaders__connection_id__put: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        connection_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["DownloaderInput"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["DownloaderView"];
         };
       };
       /** @description Validation Error */

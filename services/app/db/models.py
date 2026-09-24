@@ -304,6 +304,8 @@ class ProviderObject(Identity, Base):
 
 
 class Integration(Identity, Base):
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "integrations"
     kind: Mapped[str] = mapped_column(String(40), index=True)
     name: Mapped[str] = mapped_column(String(120))
@@ -323,6 +325,8 @@ class Integration(Identity, Base):
 
 
 class SourceConnection(Base):
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "source_connections"
     key: Mapped[str] = mapped_column(String(40), primary_key=True)
     base_url: Mapped[str] = mapped_column(Text)
@@ -1170,6 +1174,8 @@ class ImportStorageSettings(Base):
 
 
 class ImportDestination(Identity, Base):
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     __tablename__ = "import_destinations"
     __table_args__ = (
         CheckConstraint("medium IN ('ebook', 'audio')"),

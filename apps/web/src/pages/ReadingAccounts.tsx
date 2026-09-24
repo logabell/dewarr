@@ -585,16 +585,20 @@ function HardcoverShelves({
   subscriptions: Subscription[];
   ready: boolean;
 }) {
+  const cache = useQueryClient();
   const [mode, setMode] = useState<"owned" | "followed">("owned");
   const lists = usePagedQuery({
     queryKey: ["reading-hardcover-lists", mode],
-    queryFn: async (cursor, signal) =>
-      result(
+    queryFn: async (cursor, signal) => {
+      const value = result(
         await api.GET("/api/metadata/hardcover-lists", {
           params: { query: { mode, cursor } },
           signal,
         }),
-      ),
+      );
+      void cache.invalidateQueries({ queryKey: ["metadata-account"] });
+      return value;
+    },
     retry: false,
     staleTime: 60000,
     initial: 0,

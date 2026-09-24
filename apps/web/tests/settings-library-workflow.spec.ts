@@ -1,5 +1,194 @@
 import { expect, test } from "./fixtures";
 
+for (const clientSetup of ["missing", "unmapped", "multiple"]) {
+  test(`a library folder can be saved with ${clientSetup} download clients`, async ({
+    page,
+  }) => {
+    let destination: any = null;
+    let clientReady = false;
+    let requested = true;
+    let active = false;
+    let generation = 0;
+    let activatedPreference: boolean | undefined;
+    const writes: string[] = [];
+    const downloader = {
+      id: "qbit",
+      kind: "qbittorrent",
+      name: "qBittorrent",
+      enabled: true,
+      status: "connected",
+      mappings_current: true,
+      generation: 1,
+    };
+    await page.route("**/api/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (["PUT", "POST"].includes(route.request().method())) writes.push(path);
+      let data: unknown = [];
+      if (path === "/api/auth/me")
+        data = {
+          user: {
+            id: "user",
+            role: "admin",
+            display_name: "Reader",
+            onboarding_status: "complete",
+          },
+          csrf_token: "test",
+        };
+      else if (path === "/api/setup/onboarding") data = { status: "completed" };
+      else if (path === "/api/library/libraries")
+        data = [{ id: "lib", name: "Books", accessible: true }];
+      else if (path === "/api/organization/library-folders")
+        data = [
+          {
+            library_id: "lib",
+            library_name: "Books",
+            server_kind: "audiobookshelf",
+            ebooks_allowed: true,
+            audio_allowed: true,
+            folders: ["/data/ebooks"],
+          },
+        ];
+      else if (path === "/api/downloaders")
+        data = clientReady
+          ? [downloader]
+          : clientSetup === "missing"
+            ? []
+            : clientSetup === "unmapped"
+              ? [{ ...downloader, mappings_current: false }]
+              : [
+                  downloader,
+                  { ...downloader, id: "second", name: "Second client" },
+                ];
+      else if (path.startsWith("/api/acquisition/preferences/"))
+        data = { effective: {}, inherited: {}, overrides: {}, revision: "one" };
+      else if (path === "/api/organization/destinations")
+        data = destination ? [destination] : [];
+      else if (path.endsWith("/automatic-import")) {
+        if (route.request().method() === "PUT") {
+          requested = route.request().postDataJSON().enabled;
+          generation++;
+        }
+        data = {
+          enabled: active && requested,
+          requested_enabled: requested,
+          ready: active && requested,
+          can_enable: active,
+          generation,
+        };
+      } else if (path.endsWith("/setup-probe")) {
+        data = { id: "probe", status: "queued" };
+      } else if (path === "/api/activity") {
+        destination.publication_available = true;
+        data = [{ id: "probe", status: "completed" }];
+      } else if (path.endsWith("/activate")) {
+        activatedPreference = route.request().postDataJSON().automatic;
+        active = true;
+        data = destination;
+      } else if (path === "/api/organization/library-folders/ebook") {
+        requested = route.request().postDataJSON().automatic;
+        generation++;
+        destination = {
+          ...route.request().postDataJSON(),
+          id: "dest",
+          root_key: "library-ebook",
+          medium: "ebook",
+          mode: "hardlink",
+          revision: "saved",
+          publication_available: false,
+        };
+        data = destination;
+      }
+      return route.fulfill({ json: data });
+    });
+    await page.goto("/settings#libraries");
+    await page.getByRole("button", { name: "Choose ebooks folder" }).click();
+    const dialog = page.getByRole("dialog", { name: "Choose ebooks folder" });
+    await expect(dialog.locator(".library-selection-summary")).toContainText(
+      "/data/ebooks",
+    );
+    await expect(dialog.getByRole("radio")).toHaveCount(2);
+    await expect(
+      dialog.getByRole("checkbox", { name: "Import on completion" }),
+    ).toBeChecked();
+    await expect(
+      dialog.getByRole("button", { name: "Save folder", exact: true }),
+    ).toBeEnabled();
+    await dialog
+      .getByRole("button", { name: "Save folder", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const card = page.getByRole("region", {
+      name: "Ebooks destination",
+      exact: true,
+    });
+    await expect(card.getByText("/data/ebooks", { exact: true })).toBeVisible();
+    await expect(
+      card.getByText("Folder saved · verification required", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      card.getByText("No folder selected", { exact: true }),
+    ).toHaveCount(0);
+    expect(writes).toEqual(["/api/organization/library-folders/ebook"]);
+    expect(destination.local_path).toBe("/data/ebooks");
+    await expect(card.getByText(/On after verification/)).toBeVisible();
+    await expect(
+      card.getByRole("button", {
+        name: "Enable automatic import",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    if (clientSetup === "multiple") {
+      await expect(
+        card.getByRole("button", { name: "Verify folder", exact: true }),
+      ).toBeEnabled();
+    } else {
+      await expect(
+        card.getByRole("link", { name: "Set up download client" }),
+      ).toHaveAttribute("href", "/settings#downloaders");
+    }
+    if (clientSetup === "missing") {
+      await card
+        .getByRole("button", { name: "Disable automatic import" })
+        .click();
+      await expect(
+        card.getByText("Off · completed downloads stay in file review."),
+      ).toBeVisible();
+    }
+
+    clientReady = true;
+    await page.reload();
+    await card
+      .getByRole("button", { name: "Verify folder", exact: true })
+      .click();
+    const verification = page.getByRole("dialog", {
+      name: "Verify ebooks folder",
+    });
+    await expect(
+      verification.locator(".library-selection-summary"),
+    ).toContainText("/data/ebooks");
+    const automatic = clientSetup !== "missing";
+    await expect(
+      verification.getByRole("checkbox", { name: "Import on completion" }),
+    ).toBeChecked({ checked: automatic });
+    await verification
+      .getByRole("button", {
+        name: automatic ? "Verify & enable imports" : "Verify folder",
+        exact: true,
+      })
+      .click();
+    await expect(verification).toHaveCount(0);
+    expect(activatedPreference).toBe(automatic);
+    await expect(card.getByText("Hardlinks verified")).toBeVisible();
+    await expect(
+      card.getByText(
+        automatic
+          ? "On · matched downloads import automatically when complete."
+          : "Off · completed downloads stay in file review.",
+      ),
+    ).toBeVisible();
+  });
+}
+
 for (const mode of ["hardlink", "copy"]) {
   test(`two media rows choose ABS folders and verify ${mode} before activation`, async ({
     page,
@@ -103,7 +292,8 @@ for (const mode of ["hardlink", "copy"]) {
           automaticEnabled = route.request().postDataJSON().enabled;
         data = {
           enabled: automaticEnabled,
-          ready: verified,
+          requested_enabled: automaticEnabled,
+          ready: verified && automaticEnabled,
           can_enable: verified,
           generation: 1,
           message: automaticEnabled
@@ -191,17 +381,24 @@ for (const mode of ["hardlink", "copy"]) {
     await expect(dialog.getByText("/recordings", { exact: true })).toHaveCount(
       0,
     );
-    const defaultFolder = dialog.getByRole("radio", {
-      name: "Books: /data/ebooks",
+    const defaultFolder = dialog.getByRole("combobox", {
+      name: "Library",
       exact: true,
     });
-    await expect(defaultFolder).toBeChecked();
-    await expect(dialog.getByLabel("Dewarr folder path")).not.toBeVisible();
+    await expect(defaultFolder).toHaveValue("lib|/data/ebooks");
+    await expect(dialog.getByRole("radio")).toHaveCount(2);
+    await defaultFolder.selectOption("lib|/data/audio");
+    await expect(dialog.locator(".library-selection-summary")).toContainText(
+      "/data/audio",
+    );
+    await defaultFolder.selectOption("lib|/data/ebooks");
+    await expect(dialog.getByLabel("Custom library path")).not.toBeVisible();
     await expect(dialog.getByText("Audio only", { exact: true })).toHaveCount(
       0,
     );
+    await dialog.getByRole("radio", { name: /^Use a custom path/ }).check();
     await dialog
-      .getByRole("button", { name: "Other folder", exact: true })
+      .getByRole("button", { name: "Browse folders", exact: true })
       .click();
     await expect(
       dialog.getByRole("region", { name: "Folders visible to Dewarr" }),
@@ -224,14 +421,21 @@ for (const mode of ["hardlink", "copy"]) {
     await dialog
       .getByRole("button", { name: "Select folder", exact: true })
       .click();
-    await expect(dialog.locator(".library-local-value")).toHaveText(
+    await expect(dialog.getByLabel("Custom library path")).toHaveValue(
       "/data/library/ebooks",
     );
-    await expect(defaultFolder).toBeChecked();
+    await expect(defaultFolder).toHaveValue("lib|/data/ebooks");
     await dialog
-      .getByRole("button", { name: "Use library path", exact: true })
+      .getByRole("radio", { name: /Use Audiobookshelf path/ })
       .click();
-    await expect(dialog.getByLabel("Dewarr folder path")).not.toBeVisible();
+    await expect(dialog.getByLabel("Custom library path")).not.toBeVisible();
+    await dialog.getByRole("radio", { name: /^Use a custom path/ }).check();
+    await expect(dialog.getByLabel("Custom library path")).toHaveValue(
+      "/data/library/ebooks",
+    );
+    await dialog
+      .getByRole("radio", { name: /Use Audiobookshelf path/ })
+      .check();
     await expect(
       dialog.getByRole("button", { name: "Save & verify folder" }),
     ).toBeEnabled();
@@ -287,7 +491,9 @@ for (const mode of ["hardlink", "copy"]) {
       .getByRole("button", { name: "Disable automatic import", exact: true })
       .click();
     await expect(
-      page.getByText("Automatic import is off", { exact: true }),
+      page.getByText("Off · completed downloads stay in file review.", {
+        exact: true,
+      }),
     ).toBeVisible();
     expect(
       writes.find((w) => w.path.endsWith("/automatic-import"))?.body.enabled,
@@ -300,10 +506,11 @@ for (const mode of ["hardlink", "copy"]) {
     await page.getByRole("button", { name: "Change ebooks folder" }).click();
     await expect(dialog).toBeVisible();
     await expect(
-      dialog.getByRole("checkbox", { name: "Auto-organize downloads" }),
+      dialog.getByRole("checkbox", { name: "Import on completion" }),
     ).not.toBeChecked();
+    await dialog.getByRole("radio", { name: /^Use a custom path/ }).check();
     await dialog
-      .getByRole("button", { name: "Other folder", exact: true })
+      .getByRole("button", { name: "Browse folders", exact: true })
       .click();
     await expect(
       dialog.getByRole("region", { name: "Folders visible to Dewarr" }),
@@ -313,9 +520,9 @@ for (const mode of ["hardlink", "copy"]) {
     });
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(
-      dialog.getByRole("button", { name: "Other folder", exact: true }),
+      dialog.getByRole("button", { name: "Browse folders", exact: true }),
     ).toBeFocused();
-    await expect(dialog.locator(".library-local-value")).toHaveText(
+    await expect(dialog.getByLabel("Custom library path")).toHaveValue(
       "/data/ebooks",
     );
     await dialog.screenshot({
@@ -466,14 +673,20 @@ test("a Windows Audiobookshelf path asks for the Dewarr mount", async ({
     dialog.getByText("D:/Books/Audiobooks", { exact: true }),
   ).toBeVisible();
   await expect(dialog.getByText("No compatible folders found")).toHaveCount(0);
-  await expect(
-    dialog.getByRole("radio", { name: "Books: D:/Books/Audiobooks" }),
-  ).toBeChecked();
+  await expect(dialog.locator(".library-selection-summary")).toContainText(
+    "D:/Books/Audiobooks",
+  );
+  await expect(dialog.getByRole("radio")).toHaveCount(2);
   await expect(
     dialog.getByRole("radio", { name: "Other path", exact: true }),
   ).toHaveCount(0);
-  await dialog.getByText("Enter path manually", { exact: true }).click();
-  const mount = dialog.getByLabel("Dewarr folder path");
+  await expect(
+    dialog.getByRole("radio", { name: /^Use a custom path/ }),
+  ).toBeChecked();
+  await expect(
+    dialog.getByRole("radio", { name: /Use Audiobookshelf path/ }),
+  ).toBeDisabled();
+  const mount = dialog.getByLabel("Custom library path");
   await expect(mount).toBeVisible();
   await expect(mount).toHaveValue("");
   await expect(
@@ -622,11 +835,17 @@ test("a UNC Audiobookshelf path is not used as the Dewarr mount", async ({
   );
   await page.getByRole("button", { name: "Choose ebooks folder" }).click();
   const dialog = page.getByRole("dialog", { name: "Choose ebooks folder" });
+  await expect(dialog.locator(".library-selection-summary")).toContainText(
+    "//media/share/Books",
+  );
+  await expect(dialog.getByRole("radio")).toHaveCount(2);
   await expect(
-    dialog.getByRole("radio", { name: "Books: //media/share/Books" }),
+    dialog.getByRole("radio", { name: /^Use a custom path/ }),
   ).toBeChecked();
-  await dialog.getByText("Enter path manually", { exact: true }).click();
-  const mount = dialog.getByLabel("Dewarr folder path");
+  await expect(
+    dialog.getByRole("radio", { name: /Use Audiobookshelf path/ }),
+  ).toBeDisabled();
+  const mount = dialog.getByLabel("Custom library path");
   await expect(mount).toHaveValue("");
   await expect(
     dialog.getByRole("button", { name: "Save & verify folder" }),

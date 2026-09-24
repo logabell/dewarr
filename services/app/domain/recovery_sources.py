@@ -207,9 +207,11 @@ async def observe(inputs, writer):
     downloaders = [
         {"id": str(row["id"]), "name": row["name"], "enabled": row["enabled"]}
         for row in inputs["integrations"]
-        if row["kind"] == "qbittorrent"
+        if row["kind"] == "qbittorrent" and not row.get("deleted_at")
     ]
     for row in inputs["source_connections"]:
+        if row.get("deleted_at"):
+            continue
         if row["key"] not in NAMES:
             continue
         proof = tests.get(row["key"])
@@ -264,7 +266,7 @@ async def prepare(db, checkpoint, owner_id, scan_id, choice, key):
     ):
         raise HTTPException(409, "Choose a source from the current observation")
     row = await db.get(SourceConnection, choice.source_key)
-    if not row:
+    if not row or row.deleted_at:
         raise HTTPException(409, "Source settings changed; observe again")
     now = datetime.now(UTC)
     if row.lease_token and row.lease_until and row.lease_until > now:
@@ -381,7 +383,7 @@ async def apply(db, review, item, observed):
     row = await db.get(
         SourceConnection, item["source_key"], populate_existing=True, with_for_update=True
     )
-    if not row or signature(values(row)) != item["source_signature"]:
+    if not row or row.deleted_at or signature(values(row)) != item["source_signature"]:
         raise HTTPException(409, "Source settings changed during review")
     if row.lease_token and row.lease_until and row.lease_until > datetime.now(UTC):
         raise HTTPException(409, "Another source request is still running")
@@ -467,7 +469,12 @@ async def test_guard(db, operation, *, token=None, after=False):
         raise ScanHeld("Source verification lease changed")
     row = await db.get(SourceConnection, payload["source_key"], populate_existing=True)
     expected = payload["rotation_binding"] if after else payload["source_signature"]
-    if not row or not row.enabled or signature(values(row), allow_rotation=after) != expected:
+    if (
+        not row
+        or row.deleted_at
+        or not row.enabled
+        or signature(values(row), allow_rotation=after) != expected
+    ):
         raise ScanHeld("Source settings changed; observe and review again")
     if await other_context(db, row.key) != payload["context_digest"]:
         raise ScanHeld("Recovery context changed; observe and review again")

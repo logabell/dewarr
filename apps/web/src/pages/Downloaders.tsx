@@ -1,3 +1,4 @@
+import DeleteConfiguration from "../components/DeleteConfiguration";
 import {
   ArrowRight,
   CheckCircle2,
@@ -378,6 +379,28 @@ export default function Downloaders({
                     <RefreshCw size={14} aria-hidden="true" />
                     {testing ? "Testing…" : "Test connection"}
                   </button>
+                  <DeleteConfiguration
+                    name={connection.name}
+                    disabled={test.isPending}
+                    description={
+                      connection.kind === "slskd"
+                        ? "Remove the Soulseek search and download connection and its saved credentials. Existing files and download history are kept."
+                        : "Remove this download client and its saved credentials and folder mappings. Files and transfers in the download client are kept."
+                    }
+                    onDelete={async () =>
+                      result(
+                        await api.DELETE("/api/downloaders/{connection_id}", {
+                          params: {
+                            path: { connection_id: connection.id },
+                            query: {
+                              expected_generation: connection.generation,
+                            },
+                          },
+                        }),
+                      )
+                    }
+                    onDeleted={() => setEditing(null)}
+                  />
                 </div>
               </article>
             );

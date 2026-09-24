@@ -155,7 +155,7 @@ Before creating a Hardcover token, enable `read:catalog`, `read:me:content`, `re
 
 Dewarr creates its encryption key in `/config` on first start. Keep that folder and the PostgreSQL volume when updating.
 
-[Settings, folders, backups, and upgrades](docs/DOCKER.md) · [Download clients](docs/DOWNLOAD-CLIENTS.md) · [Request quotas](docs/REQUEST-QUOTAS.md) · [Contributing](docs/DEVELOPMENT.md)
+[Settings, folders, backups, and upgrades](docs/DOCKER.md) · [Download clients](docs/DOWNLOAD-CLIENTS.md) · [MAM proxy setup](docs/MAM-PROXY.md) · [Request quotas](docs/REQUEST-QUOTAS.md) · [Contributing](docs/DEVELOPMENT.md)
 
 ## Screenshots
 

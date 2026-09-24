@@ -1,5 +1,108 @@
 import { expect, test } from "./fixtures";
 
+test("MAM proxy network can be saved and checked before entering mam_id", async ({
+  page,
+}) => {
+  let connection = {
+    configured: false,
+    base_url: "https://www.myanonamouse.net",
+    proxy_url: "",
+    proxy_fallback_direct: true,
+    has_session: false,
+    has_proxy_credentials: false,
+    enabled: false,
+    generation: 0,
+    status: "not-configured",
+    automation: {},
+  };
+  const actions: string[] = [];
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let data: unknown = [];
+    if (path === "/api/auth/me")
+      data = {
+        user: {
+          id: "reader",
+          role: "admin",
+          display_name: "Reader",
+          onboarding_status: "complete",
+        },
+        csrf_token: "test",
+      };
+    else if (path === "/api/setup/onboarding") data = { status: "completed" };
+    else if (path === "/api/sources/mam/connection") {
+      if (route.request().method() === "PUT") {
+        actions.push("save");
+        const body = route.request().postDataJSON();
+        expect(body.mam_id).toBeNull();
+        expect(body.proxy_url).toBe("http://gluetun:8888");
+        connection = {
+          ...connection,
+          configured: true,
+          enabled: true,
+          proxy_url: body.proxy_url,
+          has_proxy_credentials: true,
+          generation: 1,
+          status: "untested",
+          automation: body.automation,
+        };
+      }
+      data = connection;
+    } else if (path === "/api/sources/mam/network/test") {
+      actions.push("network");
+      data = {
+        connection,
+        status: "degraded",
+        route: "proxy",
+        cookie_status: "not-configured",
+        proxy_status: "healthy",
+        proxy: { ip: "203.0.113.10" },
+        direct: { ip: "198.51.100.20" },
+        checked_at: "2026-09-24T12:00:00Z",
+        message:
+          "Network checks completed without a MAM cookie. Enter mam_id to verify MAM access.",
+      };
+    } else if (path.includes("/connection"))
+      data = {
+        configured: false,
+        generation: 0,
+        base_url: "",
+        excluded_indexers: [],
+      };
+    else if (path.includes("/acquisition/preferences/"))
+      data = { effective: { desired_media: "both" } };
+    await route.fulfill({ json: data });
+  });
+  await page.goto("/settings#sources");
+  await page
+    .getByRole("region", { name: "MAM settings" })
+    .locator("summary")
+    .first()
+    .click();
+  const form = page.getByRole("form", { name: "MAM connection settings" });
+  await form.getByText("Proxy options", { exact: true }).click();
+  await form.locator('input[type="url"]').nth(1).fill("http://gluetun:8888");
+  await form.getByLabel("Proxy username", { exact: true }).fill("proxy-user");
+  await form
+    .getByLabel("Proxy password", { exact: true })
+    .fill("proxy-password");
+  await form
+    .getByRole("button", { name: "Save & test network", exact: true })
+    .click();
+  const network = form.getByRole("region", { name: "MAM network status" });
+  await expect(network).toContainText("203.0.113.10");
+  await expect(network).toContainText("198.51.100.20");
+  await expect(network).toContainText("not-configured");
+  await expect(
+    form.getByRole("button", { name: "Test network", exact: true }),
+  ).toBeEnabled();
+  await expect(form.getByLabel("mam_id", { exact: true })).toHaveValue("");
+  await expect(form.getByLabel("Proxy password", { exact: true })).toHaveValue(
+    "",
+  );
+  expect(actions).toEqual(["save", "network"]);
+});
+
 test("MAM masks saved secrets and saves edited proxy before testing", async ({
   page,
 }, testInfo) => {
@@ -195,7 +298,9 @@ test("MAM masks saved secrets and saves edited proxy before testing", async ({
   const retainedCookie = "keep-this-cookie-after-a-failed-test";
   await cookie.fill(retainedCookie);
   rejectTest = true;
-  const failedTestButton = form.locator('.actions button[type="button"]');
+  const failedTestButton = form.getByRole("button", {
+    name: /^(Save & test|Test) connection$/,
+  });
   await expect(failedTestButton).toHaveText("Save & test connection");
   await failedTestButton.click();
   await expect(

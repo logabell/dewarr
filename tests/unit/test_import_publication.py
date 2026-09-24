@@ -422,6 +422,163 @@ def test_private_staging_and_root_separation_required(specification):
         )
 
 
+@pytest.fixture
+def mapped_storage_owner(monkeypatch):
+    """Model an NFS export that reports the worker's files as nobody:users.
+
+    Keep every real filesystem operation and timestamp intact: only the server's
+    reported uid/gid differ from the container identity.
+    """
+    real_fstat = os.fstat
+
+    class MappedStat:
+        st_uid = 99
+        st_gid = 100
+
+        def __init__(self, info):
+            self.info = info
+
+        def __getattr__(self, name):
+            return getattr(self.info, name)
+
+    monkeypatch.setattr(os, "fstat", lambda fd: MappedStat(real_fstat(fd)))
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+
+
+@pytest.mark.usefixtures("mapped_storage_owner")
+@pytest.mark.parametrize("mode", ["hardlink", "copy"])
+def test_mapped_owner_supports_probe_publication_recovery_and_retry(
+    specification, no_rename_flag, mode
+):
+    spec = specification.model_copy(update={"mode": mode})
+    report = probe_destination(
+        spec.source_root,
+        spec.source_relative,
+        spec.files[0],
+        spec.destination_root,
+        spec.staging_root,
+    )
+    assert report["copy"] and report["hardlink"] and report["no_replace"]
+    assert report["no_replace_mode"] == report["receipt_mode"] == "fallback"
+    assert not list(spec.staging_root.iterdir())
+    original = (spec.source_root / "pack/book.epub").read_bytes()
+    receipt = publish_item(spec)
+    assert receipt["state"] == "published"
+    before = spec.staging_root.stat().st_mtime_ns
+    census = journal_census(spec.staging_root)
+    assert len(census) == 1 and census[0]["state"] == "published"
+    assert spec.staging_root.stat().st_mtime_ns == before  # Recovery remains read-only.
+    assert publish_item(spec) == receipt  # Reopen existing locks and receipt.
+    assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == original
+    assert (spec.source_root / "pack/book.epub").read_bytes() == original
+
+
+@pytest.mark.usefixtures("mapped_storage_owner")
+def test_mapped_owner_share_without_hardlinks_can_still_copy(
+    specification, no_rename_flag, no_hardlinks
+):
+    spec = specification.model_copy(update={"mode": "copy"})
+    report = probe_destination(
+        spec.source_root,
+        spec.source_relative,
+        spec.files[0],
+        spec.destination_root,
+        spec.staging_root,
+    )
+    assert report["copy"] and report["no_replace"] and not report["hardlink"]
+    assert publish_item(spec)["state"] == "published"
+    assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == (
+        spec.source_root / "pack/book.epub"
+    ).read_bytes()
+
+
+@pytest.mark.usefixtures("mapped_storage_owner")
+def test_mapped_owner_does_not_bypass_a_server_write_denial(specification, monkeypatch):
+    real_open = os.open
+
+    def deny_writes(path, flags, *args, **kwargs):
+        if flags & os.O_CREAT:
+            raise PermissionError(errno.EACCES, "NFS server denied write")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", deny_writes)
+    with pytest.raises(PermissionError, match="NFS server denied write"):
+        publish_item(specification)
+    assert not list(specification.staging_root.iterdir())
+    assert not list(specification.destination_root.iterdir())
+    assert (specification.source_root / "pack/book.epub").is_file()
+
+
+@pytest.mark.usefixtures("mapped_storage_owner")
+def test_mapped_owner_supports_cancelling_an_interrupted_import(specification):
+    def interrupt(phase):
+        if phase == "prepared":
+            raise RuntimeError("Interrupted import")
+
+    with pytest.raises(RuntimeError, match="Interrupted import"):
+        publish_item(specification, checkpoint=interrupt)
+    assert cancel_files(specification)["state"] == "cancelled"
+    assert cancel_files(specification)["state"] == "cancelled"
+    assert not list(specification.staging_root.glob("item-*"))
+    assert not (specification.destination_root / specification.folder).exists()
+    assert (specification.source_root / "pack/book.epub").is_file()
+
+
+@pytest.mark.usefixtures("mapped_storage_owner")
+@pytest.mark.parametrize("kind", ["library", "entry"])
+def test_mapped_owner_locks_still_exclude_another_worker(specification, kind):
+    lock = publication.publication_lock if kind == "library" else publication.entry_lock
+    with publication.private_staging(specification.staging_root) as staging:
+        with lock(staging, "same-key"):
+            with pytest.raises(PublicationBusy):
+                with lock(staging, "same-key"):
+                    pytest.fail("A second worker acquired the same lock")
+        with lock(staging, "same-key"):
+            pass
+
+
+@pytest.mark.parametrize("invalid", ["owner", "hardlink", "symlink", "directory"])
+def test_lock_files_still_reject_untrusted_objects(specification, monkeypatch, invalid):
+    path = specification.staging_root / "injected-lock"
+    if invalid == "directory":
+        path.mkdir()
+    elif invalid == "symlink":
+        path.symlink_to(specification.source_root / "pack/book.epub")
+    else:
+        path.touch(mode=0o600)
+        if invalid == "hardlink":
+            os.link(path, specification.staging_root / "second-link")
+    real_lock_file = publication._lock_file
+    monkeypatch.setattr(
+        publication, "_lock_file", lambda staging, name: real_lock_file(staging, path.name)
+    )
+    if invalid == "owner":
+        real_fstat = os.fstat
+
+        def different_owner(fd):
+            info = real_fstat(fd)
+            if info.st_ino == path.stat().st_ino:
+                values = list(info)
+                values[4] = info.st_uid + 1
+                return os.stat_result(values)
+            return info
+
+        monkeypatch.setattr(os, "fstat", different_owner)
+    with publication.private_staging(specification.staging_root) as staging:
+        with pytest.raises((PublicationError, OSError)):
+            with publication.publication_lock(staging, "key"):
+                pytest.fail("An invalid lock was accepted")
+    assert path.exists()  # Validation never removes another object's lock.
+
+
+@pytest.mark.usefixtures("mapped_storage_owner")
+def test_mapped_owner_still_requires_private_staging(specification):
+    specification.staging_root.chmod(0o775)
+    with pytest.raises(PublicationError, match="current permissions are 0775"):
+        publish_item(specification)
+    assert not list(specification.staging_root.iterdir())
+
+
 def test_probe_preserves_replaced_destination_during_cleanup(specification, monkeypatch):
     spec = specification
     original = publication.no_replace

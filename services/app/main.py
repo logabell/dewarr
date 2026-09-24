@@ -22,6 +22,7 @@ from app.api import (
     catalog,
     catalog_grouping,
     community_lists,
+    configuration_deletion,
     destinations,
     discovery,
     discovery_collections,
@@ -188,6 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(inspection_matches.router, prefix="/api")
     app.include_router(import_runs.router, prefix="/api")
     app.include_router(destinations.router, prefix="/api")
+    app.include_router(configuration_deletion.router, prefix="/api")
     app.include_router(library_folders.router, prefix="/api")
     app.include_router(automatic_imports.router, prefix="/api")
     app.include_router(automatic_selection.router, prefix="/api")

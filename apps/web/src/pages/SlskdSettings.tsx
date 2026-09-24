@@ -1,3 +1,4 @@
+import { DeleteSourceConnection } from "../components/DeleteConfiguration";
 import SettingHelp from "../components/SettingHelp";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -109,6 +110,15 @@ export function SlskdConnectionForm({
       </label>
       <div className="connection-action-bar">
         <div className="button-row">
+          {value.configured && (
+            <DeleteSourceConnection
+              source="slskd"
+              name="Soulseek"
+              generation={value.generation}
+              disabled={save.isPending || test.isPending}
+            />
+          )}
+
           <button type="submit" disabled={save.isPending || test.isPending}>
             {save.isPending ? "Saving…" : "Save & test connection"}
           </button>
@@ -165,6 +175,7 @@ export default function SlskdSettings({
       ) : (
         query.data && (
           <SlskdConnectionForm
+            key={query.data.generation}
             value={query.data}
             onConfigureFolder={onConfigureFolder}
           />

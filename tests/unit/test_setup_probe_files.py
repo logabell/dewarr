@@ -289,6 +289,7 @@ def test_probe_error_preserves_failed_operation_and_cleans_up(roots, monkeypatch
     assert all(not list(root.iterdir()) for root in roots)
 
 
+@pytest.mark.usefixtures("deferred_unlink")
 def test_incomplete_probe_marker_keeps_original_error_and_cleans_owned_files(roots, monkeypatch):
     real_write = publication.write_all
 
@@ -305,3 +306,116 @@ def test_incomplete_probe_marker_keeps_original_error_and_cleans_owned_files(roo
     assert caught.value.errno == errno.ENOSPC
     assert caught.value.probe_report["error_code"] == "ENOSPC"
     assert all(not list(root.iterdir()) for root in roots)
+
+
+@pytest.fixture
+def deferred_unlink(monkeypatch):
+    """Model NFS silly-rename: an unlinked open file remains until its last close."""
+    real_open, real_close, real_dup = os.open, os.close, os.dup
+    real_unlink, real_rename = os.unlink, os.rename
+    opened, pending = {}, {}
+
+    def track(fd):
+        info = os.fstat(fd)
+        opened[fd] = (info.st_dev, info.st_ino)
+        return fd
+
+    def opening(*args, **kwargs):
+        return track(real_open(*args, **kwargs))
+
+    def duplicate(fd):
+        return track(real_dup(fd))
+
+    def closing(fd):
+        key = opened.pop(fd, None)
+        real_close(fd)
+        if key in pending and key not in opened.values():
+            parent, name = pending.pop(key)
+            real_unlink(name, dir_fd=parent)
+            real_close(parent)
+
+    def unlinking(path, *, dir_fd=None):
+        info = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        key = (info.st_dev, info.st_ino)
+        if key in opened.values() and info.st_nlink == 1:
+            name = f".nfs-test-{info.st_ino}"
+            real_rename(path, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            pending[key] = (real_dup(dir_fd), name)
+        else:
+            real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publication.os, "open", opening)
+    monkeypatch.setattr(publication.os, "dup", duplicate)
+    monkeypatch.setattr(publication.os, "close", closing)
+    monkeypatch.setattr(publication.os, "unlink", unlinking)
+    yield
+    assert not pending
+    assert not opened
+
+
+@pytest.mark.usefixtures("deferred_unlink")
+@pytest.mark.parametrize("fallback", [False, True])
+def test_probe_closes_test_files_before_removing_network_folders(roots, monkeypatch, fallback):
+    if fallback:
+
+        def unsupported(*args):
+            raise OSError(errno.EOPNOTSUPP, "No native no-replace rename")
+
+        monkeypatch.setattr(publication, "native_no_replace", unsupported)
+    source, target, stage = roots
+    report = publication.probe_download_folder(source, "", target, stage)
+    assert report["copy"] and report["no_replace"]
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.ENOTEMPTY])
+def test_probe_cleanup_failure_names_the_operation_and_preserves_files(roots, monkeypatch, code):
+    source, target, stage = roots
+    real_rmdir = os.rmdir
+    preserved = []
+
+    def cannot_remove(path, *, dir_fd=None):
+        if str(path).startswith(".book-search-probe-"):
+            folder = target / path
+            if code == errno.ENOTEMPTY:
+                extra = folder / "another-app.txt"
+                extra.write_text("preserve this")
+                preserved.append(extra)
+            raise OSError(code, os.strerror(code))
+        return real_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publication.os, "rmdir", cannot_remove)
+    with pytest.raises(InspectionError) as caught:
+        publication.probe_download_folder(source, "", target, stage)
+    report = caught.value.probe_report
+    assert report["failure_step"] == "cleaning up temporary probe files"
+    assert report["error_code"] == errno.errorcode[code]
+    assert str(target) in str(caught.value)
+    assert "object changed" not in str(caught.value)
+    assert all(path.read_text() == "preserve this" for path in preserved)
+    assert not list(source.iterdir()) and not list(stage.iterdir())
+    assert len(list(target.iterdir())) == 1
+
+
+def test_probe_cleanup_does_not_mask_an_earlier_failure(roots, monkeypatch):
+    source, target, stage = roots
+    real_unlink = os.unlink
+
+    def failed_move(*args):
+        raise OSError(errno.ENOSPC, "Disk full during publication")
+
+    def failed_cleanup(path, *, dir_fd=None):
+        if str(path).startswith("write-"):
+            raise OSError(errno.EACCES, "Cleanup permission denied")
+        return real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publication, "no_replace", failed_move)
+    monkeypatch.setattr(publication.os, "unlink", failed_cleanup)
+    with pytest.raises(OSError) as caught:
+        publication.probe_download_folder(source, "", target, stage)
+    assert caught.value.errno == errno.ENOSPC
+    assert caught.value.probe_report["failure_step"] == "checking safe journal creation"
+    assert caught.value.probe_report["error_code"] == "ENOSPC"
+    assert caught.value.probe_report["cleanup_failures"][0]["error_code"] == "EACCES"
+    assert len(list(stage.iterdir())) == 1
+    assert not list(source.iterdir()) and not list(target.iterdir())

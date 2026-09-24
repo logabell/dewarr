@@ -39,7 +39,12 @@ export default function SourceSettings() {
           </summary>
           <Notice error={mam.error} />
           {mam.isPending && <Loading />}
-          {mam.data && <MamConnectionForm value={mam.data} />}
+          {mam.data && (
+            <MamConnectionForm
+              key={mam.data.configured ? "connected" : "disconnected"}
+              value={mam.data}
+            />
+          )}
         </details>
       </section>
       <section aria-label="Prowlarr settings">
@@ -74,7 +79,12 @@ export default function SourceSettings() {
           </summary>
           <Notice error={slskd.error} />
           {slskd.isPending && <Loading />}
-          {slskd.data && <SlskdConnectionForm value={slskd.data} />}
+          {slskd.data && (
+            <SlskdConnectionForm
+              key={slskd.data.configured ? "connected" : "disconnected"}
+              value={slskd.data}
+            />
+          )}
         </details>
       </section>
       <section aria-label="AudiobookBay settings">

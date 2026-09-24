@@ -194,7 +194,7 @@ async def observe(inputs, writer):
         for result in operation.payload.get("results", []):
             confirmations.setdefault(result["integration_id"], result["connection_digest"])
     for row in inputs["integrations"]:
-        if row["kind"] not in SUPPORTED or row["owner_id"] is not None:
+        if row.get("deleted_at") or row["kind"] not in SUPPORTED or row["owner_id"] is not None:
             continue
         confirmed = confirmations.get(str(row["id"])) == signature(row)
         await writer.add(
@@ -217,6 +217,7 @@ async def unique_endpoint(db, identifier, kind, endpoint):
     if kind == "qbittorrent" and await db.scalar(
         select(Integration.id).where(
             Integration.kind == kind,
+            Integration.deleted_at.is_(None),
             Integration.base_url == endpoint,
             Integration.id != identifier,
         )
@@ -300,7 +301,7 @@ async def prepare(db, checkpoint, owner_id, scan_id, choices, key):
         ):
             raise HTTPException(409, "Choose each connection from the current observation once")
         row = await db.get(Integration, finding.entity_id)
-        if not row or row.kind != choice.kind or row.owner_id is not None:
+        if not row or row.deleted_at or row.kind != choice.kind or row.owner_id is not None:
             raise HTTPException(409, "The selected connection changed; observe again")
         await unique_endpoint(db, row.id, row.kind, choice.base_url)
         if row.kind == "qbittorrent" and choice.base_url in endpoints:
@@ -373,7 +374,7 @@ async def apply(db, review, item, capabilities):
     row = await db.get(
         Integration, UUID(item["integration_id"]), populate_existing=True, with_for_update=True
     )
-    if not row or signature(values(row)) != item["connection_signature"]:
+    if not row or row.deleted_at or signature(values(row)) != item["connection_signature"]:
         raise HTTPException(409, "Connection settings changed while the review was running")
     draft = item["draft"]
     await unique_endpoint(db, row.id, row.kind, draft["base_url"])

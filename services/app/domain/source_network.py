@@ -49,6 +49,11 @@ async def source_call(
             raise HTTPException(409, "An administrator must connect and enable MAM first")
         if expected_generation is not None and row.generation != expected_generation:
             raise HTTPException(409, "MAM settings changed. Search again.")
+        secrets = decrypt_secrets(row.encrypted_secrets)
+        if not secrets.get("mam_id"):
+            raise AdapterError(
+                FailureKind.AUTHENTICATION, "Enter mam_id before making MAM requests."
+            )
         now = datetime.now(UTC)
         if row.lease_token:
             if row.lease_until and row.lease_until > now:
@@ -76,7 +81,6 @@ async def source_call(
         generation, endpoint, proxy = row.generation, row.base_url, row.proxy_url
         proxy_fallback_direct = row.proxy_fallback_direct
         automation = stored_automation(row.automation)
-        secrets = decrypt_secrets(row.encrypted_secrets)
     client = None
     failure = None
     value = None

@@ -6,7 +6,6 @@ and docs/notices; exact upstream revisions are in docs/REUSE-LEDGER.md.
 """
 
 import asyncio
-import errno
 import ipaddress
 import json
 import logging
@@ -23,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.adapters.contracts import AdapterError, FailureKind, Release
 from app.adapters.http import configured_url
+from app.adapters.mam_transport import route_error
 from app.domain.catalog_network import retry_delay
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -782,27 +782,16 @@ class MAMClient:
                     raise AdapterError(FailureKind.PARSER, "MAM returned an unexpected response.")
                 return value
         except (httpx.TimeoutException, TimeoutError) as error:
-            failure = AdapterError(FailureKind.TIMEOUT, "MAM did not respond in time.")
+            failure = AdapterError(
+                FailureKind.TIMEOUT,
+                route_error(error, proxy=True)
+                if self.uses_proxy
+                else "MAM did not respond in time.",
+            )
             failure.proxy_retryable = self.uses_proxy
             raise failure from error
         except httpx.HTTPError as error:
-            message = "The configured MAM route could not be reached."
-            cause = error
-            while cause is not None:
-                if isinstance(cause, OSError) and cause.errno == errno.ECONNREFUSED:
-                    message = (
-                        "The configured MAM proxy refused the connection. Check that the proxy "
-                        "is running and its port is reachable from the app server."
-                        if self.uses_proxy
-                        else "The MAM server refused the connection. Check the MAM URL and port."
-                    )
-                    break
-                cause = cause.__cause__ or cause.__context__
-            if isinstance(error, httpx.ProxyError):
-                message = (
-                    "The MAM proxy rejected the HTTPS tunnel. Check proxy authentication "
-                    "and whether the proxy allows connections to MAM."
-                )
+            message = route_error(error, proxy=self.uses_proxy)
             if self.uses_proxy:
                 message += " No direct fallback was attempted."
             failure = AdapterError(

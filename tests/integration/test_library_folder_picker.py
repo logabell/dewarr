@@ -24,6 +24,45 @@ from tests.integration.test_setup_probe import empty_route, start  # noqa: F401
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("automatic", [True, False])
+async def test_saved_folder_remembers_import_preference_until_activation(
+    client, admin, database, empty_route, monkeypatch, automatic
+):
+    monkeypatch.setattr(library_folders, "Audiobookshelf", empty_route["backend"].client)
+    existing = (await client.get("/api/organization/destinations")).json()[0]
+    response = await client.put(
+        "/api/organization/library-folders/ebook",
+        json={
+            "library_id": existing["library_id"],
+            "backend_path": "/books",
+            "local_path": str(empty_route["target"]),
+            "destination_id": existing["id"],
+            "expected_revision": existing["revision"],
+            "automatic": automatic,
+        },
+    )
+    assert response.status_code == 200, response.text
+    chosen = response.json()
+    endpoint = f"/api/organization/destinations/{chosen['id']}/automatic-import"
+    preference = (await client.get(endpoint)).json()
+    assert preference["requested_enabled"] is automatic
+    assert not preference["enabled"] and not preference["ready"]
+    assert not chosen["publication_available"]
+    # The switch works before verification, but cannot authorize filesystem work.
+    toggled = await client.put(
+        endpoint,
+        json={
+            "enabled": not automatic,
+            "defer_until_verified": True,
+            "expected_generation": preference["generation"],
+            "destination_revision": chosen["revision"],
+        },
+    )
+    assert toggled.status_code == 200, toggled.text
+    assert toggled.json()["requested_enabled"] is not automatic
+    assert not toggled.json()["enabled"] and not toggled.json()["ready"]
+
+
 async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
     client, admin, database, empty_route, monkeypatch
 ):

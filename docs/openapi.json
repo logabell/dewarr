@@ -8418,6 +8418,40 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "configuration"
+        ],
+        "summary": "Delete Integration",
+        "operationId": "delete_integration_api_integrations__integration_id__delete",
+        "parameters": [
+          {
+            "name": "integration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Integration Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/integrations/{integration_id}/test": {
@@ -13143,6 +13177,199 @@
         }
       }
     },
+    "/api/downloaders/{connection_id}": {
+      "delete": {
+        "tags": [
+          "configuration"
+        ],
+        "summary": "Delete Downloader",
+        "operationId": "delete_downloader_api_downloaders__connection_id__delete",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "expected_generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Generation"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "downloaders"
+        ],
+        "summary": "Update Connection",
+        "operationId": "update_connection_api_downloaders__connection_id__put",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloaderInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloaderView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organization/destinations/{destination_id}": {
+      "delete": {
+        "tags": [
+          "configuration"
+        ],
+        "summary": "Delete Destination",
+        "operationId": "delete_destination_api_organization_destinations__destination_id__delete",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Destination Id"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources/{source}/connection": {
+      "delete": {
+        "tags": [
+          "configuration"
+        ],
+        "summary": "Delete Source",
+        "operationId": "delete_source_api_sources__source__connection_delete",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "mam",
+                "prowlarr",
+                "audiobookbay",
+                "slskd"
+              ],
+              "type": "string",
+              "title": "Source"
+            }
+          },
+          {
+            "name": "expected_generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Generation"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/organization/library-folders": {
       "get": {
         "tags": [
@@ -15467,59 +15694,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DownloadFolderView"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/downloaders/{connection_id}": {
-      "put": {
-        "tags": [
-          "downloaders"
-        ],
-        "summary": "Update Connection",
-        "operationId": "update_connection_api_downloaders__connection_id__put",
-        "parameters": [
-          {
-            "name": "connection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Connection Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DownloaderInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DownloaderView"
                 }
               }
             }
@@ -23541,6 +23715,17 @@
               }
             ],
             "title": "Client Path"
+          },
+          "automatic": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Automatic"
           }
         },
         "additionalProperties": false,
@@ -30134,6 +30319,11 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "defer_until_verified": {
+            "type": "boolean",
+            "title": "Defer Until Verified",
+            "default": false
           },
           "expected_generation": {
             "type": "integer",
@@ -39095,6 +39285,10 @@
             "type": "boolean",
             "title": "Enabled"
           },
+          "requested_enabled": {
+            "type": "boolean",
+            "title": "Requested Enabled"
+          },
           "generation": {
             "type": "integer",
             "title": "Generation"
@@ -39116,6 +39310,7 @@
         "type": "object",
         "required": [
           "enabled",
+          "requested_enabled",
           "generation",
           "ready",
           "can_enable",

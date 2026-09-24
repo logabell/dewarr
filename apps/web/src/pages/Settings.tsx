@@ -19,10 +19,27 @@ export default function Settings({
     const current = document.querySelector(".page-tabs a[aria-current='page']");
     const bar = current?.parentElement;
     if (!(current instanceof HTMLElement) || !bar) return;
-    const left =
-      current.offsetLeft - (bar.clientWidth - current.offsetWidth) / 2;
-    bar.scrollTo({ left: Math.max(0, left) });
+    const centerTab = () => {
+      const left =
+        current.offsetLeft - (bar.clientWidth - current.offsetWidth) / 2;
+      bar.scrollTo({ left: Math.max(0, left) });
+    };
+    centerTab();
+    const observer = new ResizeObserver(centerTab);
+    observer.observe(bar);
+    return () => observer.disconnect();
   }, [selected.id]);
+  if (location.hash === "#recovery" || location.hash === "#quotas") {
+    const group = location.hash.slice(1);
+    const search = new URLSearchParams(location.search);
+    search.set("group", group);
+    return (
+      <Navigate
+        replace
+        to={`/settings?${search}#${group === "recovery" ? "downloaders" : "accounts"}`}
+      />
+    );
+  }
   if (location.hash === "#lists")
     return <Navigate replace to={`/settings${location.search}#reading`} />;
   if (location.hash === "#profiles")

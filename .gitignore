@@ -37,6 +37,8 @@ backups/
 !/docs/DOWNLOAD-RECOVERY.md
 !/docs/REQUEST-QUOTAS.md
 !/docs/DOWNLOAD-CLIENTS.md
+!/docs/MAM-PROXY.md
+!/docs/STORAGE-COMPATIBILITY.md
 
 # Publish only reusable build, catalog, and test tools.
 /scripts/*.py
