@@ -76,9 +76,21 @@ export default function BookSources({
         }),
       ),
     refetchInterval: (query) =>
-      query.state.data && query.state.data.status !== "completed"
+      query.state.data?.status !== "completed"
         ? 1500
-        : false,
+        : query.state.data.items.some(
+              (item) =>
+                item.download &&
+                [
+                  "preparing",
+                  "queued",
+                  "downloading",
+                  "downloaded",
+                  "needs-review",
+                ].includes(item.download.state),
+            )
+          ? 3000
+          : false,
   });
   const chosen =
     profiles.data?.find(
@@ -509,9 +521,7 @@ function Results({
                 <th scope="col">Format</th>
                 <th scope="col">Seeds</th>
                 <th scope="col">Tags</th>
-                <th scope="col">
-                  <span className="sr-only">Details</span>
-                </th>
+                <th scope="col">Status / actions</th>
               </tr>
             </thead>
             <tbody>
@@ -583,6 +593,7 @@ function Results({
                           searchId={data.id}
                           resultId={item.id}
                           title={item.release.title}
+                          download={item.download}
                           offerWedge={
                             item.release.source === "mam" &&
                             !item.release.freeleech &&

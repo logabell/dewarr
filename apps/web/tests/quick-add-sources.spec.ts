@@ -122,6 +122,8 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   let receipt: unknown = null;
   const releaseDownloads: string[] = [];
   const wedgeChoices: Array<string | null> = [];
+  let held = false;
+  let savedDownload: Record<string, unknown> | null = null;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let data: unknown = {};
@@ -160,7 +162,14 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     else if (path === "/api/acquisition/profiles") data = [profile];
     else if (path === "/api/library/libraries") data = [];
     else if (path === "/api/sources/prowlarr/indexers") data = [];
-    else if (path.endsWith("/source-searches/latest")) data = search;
+    else if (path.endsWith("/source-searches/latest"))
+      data = {
+        ...search,
+        items: search.items.map((item) => ({
+          ...item,
+          download: item.id === "result-1" ? savedDownload : null,
+        })),
+      };
     else if (path === "/api/sources/mam/releases/720129")
       data = {
         ...release,
@@ -181,8 +190,19 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     } else if (path === "/api/acquisition/automatic-selections/selected-1") {
       data = {
         id: "selected-1",
-        status: "completed",
-        message: "Selected release download started",
+        status: held ? "held" : "completed",
+        message: held
+          ? "No eligible release found within this page and inspection budget; review candidate reasons or refresh results"
+          : "Selected release download started",
+        download_id: held ? null : "download-1",
+        decisions: held
+          ? [
+              {
+                result_id: "result-1",
+                reasons: ["The release language does not match this request"],
+              },
+            ]
+          : [],
       };
     } else if (path.endsWith("/artifact")) data = { id: "artifact-1" };
     else if (path.endsWith("/torrent"))
@@ -277,7 +297,11 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     "/api/source-searches/search-1/results/result-1/download",
   ]);
   expect(wedgeChoices).toEqual(["true"]);
-  await page.getByLabel("Sort this view").selectOption("smallest");
+  await page.getByLabel("Sort this view").click();
+  await page
+    .getByRole("listbox", { name: "Sort this view" })
+    .getByRole("option", { name: "Smallest download", exact: true })
+    .click();
   await expect(table.locator("tbody tr").first()).toContainText("EPUB");
   await page.getByLabel("Sort this view").selectOption("profile");
   await page.screenshot({
@@ -351,6 +375,73 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     ),
   ).toBe(true);
   await page.keyboard.press("Escape");
+  held = true;
+  search.items[0].release.freeleech = true;
+  await page.reload();
+  await sourceDownload.first().click();
+  const feedback = table.locator(".source-download-message").first();
+  await expect(feedback).toContainText("Download not started");
+  await expect(feedback).toHaveAttribute("role", "alert");
+  await expect(feedback).toHaveAttribute("data-tone", "error");
+  for (const width of [1236, 390]) {
+    await page.setViewportSize({ width, height: 930 });
+    const textWidth = await feedback.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return (
+        element.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight)
+      );
+    });
+    expect(textWidth).toBeGreaterThanOrEqual(180);
+    await table.screenshot({
+      path: testInfo.outputPath(`held-download-${width}.png`),
+    });
+  }
+  await expect(feedback).toContainText(
+    "The release language does not match this request",
+  );
+  const downloadCount = releaseDownloads.length;
+  for (const [state, label] of [
+    ["queued", "Download queued"],
+    ["downloading", "Downloading"],
+    ["downloaded", "Downloaded · awaiting import"],
+    ["imported", "Downloaded and imported"],
+  ]) {
+    savedDownload = {
+      state,
+      message: "Saved release status",
+      request_id: "request-1",
+      operation_id: "selected-1",
+      attempt_id: "download-1",
+      progress: 0.42,
+      reasons: [],
+      prevent_download: true,
+    };
+    await page.reload();
+    await expect(feedback).toContainText(label);
+    await expect(sourceDownload.first()).toBeDisabled();
+    await expect(sourceDownload.nth(1)).toBeDisabled(); // Still blocked, not marked downloaded.
+    await expect(table.locator(".source-download-message")).toHaveCount(1);
+    if (state === "downloading")
+      await expect(feedback.getByRole("progressbar")).toHaveAttribute(
+        "value",
+        "0.42",
+      );
+    if (state === "imported") {
+      await expect(feedback).toHaveAttribute("data-tone", "success");
+      await expect(
+        feedback.getByRole("link", { name: "View request" }),
+      ).toHaveAttribute("href", "/requests#request-request-1");
+      await page.setViewportSize({ width: 1236, height: 930 });
+      await table.screenshot({
+        path: testInfo.outputPath("imported-release.png"),
+      });
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(releaseDownloads).toHaveLength(downloadCount);
+  savedDownload = null;
   search.items = Array.from({ length: 55 }, (_, index) => ({
     ...search.items[0],
     id: `result-${index}`,

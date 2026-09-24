@@ -2789,7 +2789,7 @@ button.help-button:hover {
   padding: 12px 14px;
   background: var(--surface);
   min-width: 0;
-  width: 400px;
+  width: 100%;
   max-width: 100%;
   justify-self: start;
   align-self: start;
@@ -2889,6 +2889,68 @@ button.help-button:hover {
 }
 .mam-network-checked time {
   margin-left: 4px;
+}
+.settings-section-body .mam-setup .mam-setup-fields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.mam-setup-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.mam-setup-checks .mam-network {
+  display: grid;
+  gap: 12px;
+}
+.mam-setup-checks .mam-network > button {
+  justify-self: start;
+}
+.mam-setup .mam-check-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mam-check-error {
+  color: #e9bd75;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.mam-check-error p {
+  margin: 0;
+}
+.mam-check-error details {
+  margin-top: 6px;
+  color: var(--muted);
+}
+.mam-check-error details p {
+  margin-top: 6px;
+}
+.mam-advanced {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.mam-advanced-fields {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+}
+@container (max-width: 640px) {
+  .mam-setup-checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .mam-setup-checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .account-automation {
   border: 1px solid var(--line);

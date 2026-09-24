@@ -1290,8 +1290,20 @@ def probe_download_folder(
         relative_parts(relative)
     name = f".book-search-route-{uuid4().hex}.tmp"
     content = b"book-search temporary route test\n"
-    with directory(source_root) as root, ExitStack() as handles:
-        parent = handles.enter_context(beneath(root, relative, folder=True)) if relative else root
+    with ExitStack() as handles:
+        try:
+            root = handles.enter_context(directory(source_root))
+            parent = (
+                handles.enter_context(beneath(root, relative, folder=True)) if relative else root
+            )
+        except OSError as error:
+            error.probe_report = {
+                "failure_step": "opening the download folder",
+                "error_code": errno.errorcode.get(error.errno, "IO_ERROR"),
+                "folder_kind": "download",
+                "path": str(source_root / relative),
+            }
+            raise
         fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
         try:
             owned = object_id(fd)

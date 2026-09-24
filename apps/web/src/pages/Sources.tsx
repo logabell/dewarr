@@ -754,6 +754,42 @@ function AccountAutomation({
   );
 }
 
+function MamCheckError({ message }: { message?: string | null }) {
+  if (!message) return null;
+  const summary = message.startsWith("Direct IP check failed.")
+    ? "Direct IP unavailable. Check the server's internet connection."
+    : /destination hostname/i.test(message)
+      ? "MAM address not found. Check the MAM URL and server DNS."
+      : /proxy.*authentication|HTTPS tunnel/i.test(message)
+        ? "Proxy rejected the connection. Check its credentials and settings."
+        : /hostname.*resolved|DNS/i.test(message)
+          ? "Proxy not found. Connect Dewarr and Gluetun to the same Docker network."
+          : /refused/i.test(message)
+            ? "Proxy connection refused. Check its address and port."
+            : /timed? out|timeout/i.test(message)
+              ? "Connection timed out. Check the proxy and try again."
+              : /TLS|certificate/i.test(message)
+                ? "Secure connection failed. Check the proxy URL and certificates."
+                : /rejected.*session|cookie|mam_id|authentication/i.test(
+                      message,
+                    )
+                  ? "MAM sign-in failed. Check your mam_id and its allowed IP."
+                  : message.length <= 120
+                    ? message
+                    : "Connection failed. Check your settings and try again.";
+  return (
+    <div className="mam-check-error">
+      <p>{summary}</p>
+      {summary !== message && (
+        <details>
+          <summary>Error details</summary>
+          <p>{message}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function MamConnectionForm({ value }: { value: Connection }) {
   const cache = useQueryClient();
   const [base, setBase] = useState(value.base_url);
@@ -771,20 +807,25 @@ export function MamConnectionForm({ value }: { value: Connection }) {
   );
   const savedAutomation = automationSettings(value);
   const [automation, setAutomation] = useState(savedAutomation);
-  const dirty =
-    base !== value.base_url ||
+  const networkDirty =
     proxy !== (value.proxy_url || "") ||
+    Boolean(username || password || clearAuth);
+  const accountDirty =
+    networkDirty ||
+    base !== value.base_url ||
     proxyFallback !== value.proxy_fallback_direct ||
-    Boolean(
-      (cookie && cookie !== retainedCookie) ||
-      username ||
-      password ||
-      clearAuth,
-    ) ||
+    Boolean(cookie && cookie !== retainedCookie);
+  const dirty =
+    accountDirty ||
     enabled !== value.enabled ||
     JSON.stringify(automation) !== JSON.stringify(savedAutomation);
-  const persist = async () =>
-    result(
+  const network = useQuery<components["schemas"]["MAMNetworkView"] | null>({
+    queryKey: ["mam-network", value.generation],
+    queryFn: async () => null,
+    enabled: false,
+  });
+  const persist = async () => {
+    const connection = result(
       await api.PUT("/api/sources/mam/connection", {
         body: {
           base_url: base,
@@ -800,316 +841,335 @@ export function MamConnectionForm({ value }: { value: Connection }) {
         },
       }),
     );
+    // Account-only edits do not invalidate a successful proxy/IP check.
+    if (!networkDirty && network.data) {
+      cache.setQueryData(["mam-network", connection.generation], network.data);
+    }
+    setRetainedCookie(cookie || null);
+    setUsername("");
+    setPassword("");
+    setClearAuth(false);
+    return connection;
+  };
   const save = useMutation({
     mutationFn: persist,
     onSuccess: (connection) => {
       setCookie("");
       setRetainedCookie(null);
-      setUsername("");
-      setPassword("");
       cache.setQueryData(["mam-connection"], connection);
     },
   });
-  const network = useQuery<components["schemas"]["MAMNetworkView"] | null>({
-    queryKey: ["mam-network", value.generation],
-    queryFn: async () => null,
-    enabled: false,
-  });
-  const test = useMutation({
+  const proxyTest = useMutation({
     mutationFn: async () => {
       if (dirty) await persist();
-      return result(await api.POST("/api/sources/mam/network/test"));
+      return result(
+        await api.POST("/api/sources/mam/network/test", {
+          params: { query: { include_cookie: false } },
+        }),
+      );
     },
-    onMutate: () => cache.setQueryData(["mam-network", value.generation], null),
     onSuccess: (diagnostics) => {
       cache.setQueryData(
         ["mam-network", diagnostics.connection.generation],
         diagnostics,
       );
       cache.setQueryData(["mam-connection"], diagnostics.connection);
-      setUsername("");
-      setPassword("");
-      setClearAuth(false);
-      if (diagnostics.cookie_status === "authenticated") {
-        setCookie("");
-        setRetainedCookie(null);
-      } else {
-        setRetainedCookie(cookie || null);
-      }
     },
     onError: () => cache.invalidateQueries({ queryKey: ["mam-connection"] }),
   });
-  const health = !dirty && enabled ? network.data : null;
+  const cookieTest = useMutation({
+    mutationFn: async () => {
+      if (dirty) await persist();
+      return result(await api.POST("/api/sources/mam/connection/test"));
+    },
+    onSuccess: (connection) => {
+      setCookie("");
+      setRetainedCookie(null);
+      cache.setQueryData(["mam-connection"], connection);
+    },
+    onError: () => cache.invalidateQueries({ queryKey: ["mam-connection"] }),
+  });
+  const busy = save.isPending || proxyTest.isPending || cookieTest.isPending;
+  const health = !networkDirty && enabled ? network.data : null;
+  const proxyError = proxyTest.error?.message || health?.proxy?.error;
+  const accountError =
+    cookieTest.error?.message || (!accountDirty ? value.last_error : null);
+  const accountStatus = !enabled
+    ? "Disabled"
+    : accountDirty
+      ? "Not tested"
+      : value.status === "connected"
+        ? "Authenticated"
+        : value.status === "authentication"
+          ? "Rejected"
+          : "Unverified";
   return (
     <form
-      className="panel editor"
+      className="panel editor mam-setup"
       aria-label="MAM connection settings"
+      onChange={() => {
+        save.reset();
+        proxyTest.reset();
+        cookieTest.reset();
+      }}
       onSubmit={(event) => {
         event.preventDefault();
-        save.mutate();
+        if (!busy) save.mutate();
       }}
     >
-      <label>
-        MAM URL
-        <input
-          type="url"
-          value={base}
-          onChange={(event) => setBase(event.target.value)}
-          required
-          maxLength={2000}
-        />
-      </label>
-      <label>
-        mam_id
-        <input
-          type="password"
-          value={cookie}
-          onChange={(event) => setCookie(event.target.value)}
-          autoComplete="new-password"
-          placeholder={value.has_session ? "••••••••" : "Session cookie value"}
-          maxLength={8192}
-        />
-      </label>
-      <details>
-        <summary>Proxy options</summary>{" "}
-        <label>
-          <span className="setting-subheading">
-            HTTP proxy URL
-            <SettingHelp label="connection options">
-              {proxy
-                ? proxyFallback
-                  ? "Proxy preferred: MAM requests fall back to the direct route when the proxy is unavailable."
-                  : "Proxy required: a failed proxy will not fall back to a direct request."
-                : "MAM requests use a direct connection."}{" "}
-              This setting routes source HTTP requests; torrent traffic is
-              configured separately.
-            </SettingHelp>
-          </span>
-          <input
-            type="url"
-            value={proxy}
-            onChange={(event) => setProxy(event.target.value)}
-            placeholder="http://gluetun:8888"
-            maxLength={2000}
-          />
-        </label>
-        <p className="muted">
-          Supports HTTP and HTTPS proxies. Enter authentication in the separate
-          username and password fields below.
-        </p>
+      <fieldset className="mam-setup-fields" disabled={busy}>
         <label className="check-label">
           <input
             type="checkbox"
-            checked={proxyFallback}
-            onChange={(event) => setProxyFallback(event.target.checked)}
+            checked={enabled}
+            onChange={(event) => setEnabled(event.target.checked)}
           />
-          Allow direct fallback when the proxy is unavailable
+          Enable MAM
         </label>
-        {proxyFallback && proxy && (
-          <p className="muted">
-            Fallback keeps MAM available, but MAM will see this server&apos;s
-            direct public IP until the proxy recovers.
-          </p>
-        )}
-        <div className="settings-fields">
-          <label>
-            Proxy username
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="off"
-              maxLength={300}
-            />
-          </label>
-          <label>
-            Proxy password
-            <input
-              type="password"
-              placeholder={
-                value.has_proxy_credentials &&
-                !clearAuth &&
-                proxy === (value.proxy_url || "")
-                  ? "••••••••"
-                  : undefined
-              }
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="new-password"
-              maxLength={1000}
-            />
-          </label>
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={clearAuth}
-              onChange={(event) => setClearAuth(event.target.checked)}
-            />
-            Clear saved proxy credentials
-          </label>
+        <div className="mam-setup-checks">
+          <section
+            className="mam-network"
+            aria-label="MAM network status"
+            data-health={
+              proxyError
+                ? "unhealthy"
+                : (proxy ? health?.proxy?.ip : health?.direct.ip)
+                  ? "healthy"
+                  : "unknown"
+            }
+          >
+            <div className="mam-network-heading">
+              <h3>Proxy</h3>
+              <span className="mam-network-badge" role="status">
+                {proxyTest.isPending
+                  ? "Testing…"
+                  : proxyError
+                    ? "Unavailable"
+                    : health?.proxy_status === "healthy"
+                      ? "Healthy"
+                      : proxy
+                        ? "Not tested"
+                        : "Direct"}
+              </span>
+            </div>
+            <label>
+              HTTP proxy URL
+              <input
+                type="url"
+                value={proxy}
+                onChange={(event) => setProxy(event.target.value)}
+                placeholder="http://gluetun:8888"
+                maxLength={2000}
+              />
+            </label>
+            <p className="mam-check-hint">
+              Optional. Check the proxy and public IPs without signing in to
+              MAM.
+            </p>
+            <button
+              type="button"
+              disabled={!enabled}
+              onClick={(event) => {
+                if (event.currentTarget.form?.reportValidity())
+                  proxyTest.mutate();
+              }}
+            >
+              {proxyTest.isPending
+                ? "Testing proxy…"
+                : proxy
+                  ? "Test proxy"
+                  : "Test network"}
+            </button>
+            <div aria-live="polite">
+              <MamCheckError message={proxyError} />
+              <dl>
+                <div className="mam-network-address">
+                  <dt>Proxy IP</dt>
+                  <dd>
+                    {health?.proxy?.ip ||
+                      (proxyError
+                        ? "Unavailable"
+                        : proxy
+                          ? "Not tested"
+                          : "Not configured")}
+                  </dd>
+                </div>
+                <div className="mam-network-address">
+                  <dt>Direct server IP</dt>
+                  <dd>
+                    {health?.direct.ip ||
+                      (health?.direct.error ? "Unavailable" : "Not tested")}
+                  </dd>
+                </div>
+              </dl>
+              <MamCheckError
+                message={
+                  health?.direct.error
+                    ? `Direct IP check failed. ${health.direct.error}`
+                    : null
+                }
+              />
+              {health && (
+                <p className="mam-network-checked">
+                  Last checked{" "}
+                  <time dateTime={health.checked_at}>
+                    {new Date(health.checked_at).toLocaleTimeString()}
+                  </time>
+                </p>
+              )}
+              {health?.proxy?.ip && health.proxy.ip === health.direct.ip && (
+                <p className="mam-check-hint">
+                  Both routes report the same IP. Check the VPN if you expect
+                  different addresses.
+                </p>
+              )}
+            </div>
+          </section>
+          <section
+            className="mam-network"
+            aria-label="MAM account check"
+            data-health={
+              accountError
+                ? "unhealthy"
+                : accountStatus === "Authenticated"
+                  ? "healthy"
+                  : "unknown"
+            }
+          >
+            <div className="mam-network-heading">
+              <h3>MAM account</h3>
+              <span
+                className="mam-network-badge"
+                role="status"
+                aria-label="Connection test status"
+              >
+                {cookieTest.isPending
+                  ? "Testing…"
+                  : accountError
+                    ? "Failed"
+                    : accountStatus}
+              </span>
+            </div>
+            <label>
+              mam_id
+              <input
+                type="password"
+                value={cookie}
+                onChange={(event) => setCookie(event.target.value)}
+                autoComplete="new-password"
+                placeholder={
+                  value.has_session ? "••••••••" : "Session cookie value"
+                }
+                maxLength={8192}
+              />
+            </label>
+            <p className="mam-check-hint">
+              Verify your cookie using{" "}
+              {proxy
+                ? proxyFallback
+                  ? "the proxy, with direct fallback"
+                  : "the proxy only"
+                : "the direct connection"}
+              .
+            </p>
+            <button
+              type="button"
+              disabled={!enabled || !(value.has_session || cookie)}
+              onClick={(event) => {
+                if (event.currentTarget.form?.reportValidity())
+                  cookieTest.mutate();
+              }}
+            >
+              {cookieTest.isPending ? "Testing mam_id…" : "Test mam_id"}
+            </button>
+            <div aria-live="polite">
+              <MamCheckError message={accountError} />
+            </div>
+          </section>
         </div>
-      </details>
-      <section
-        className="mam-network"
-        data-health={health?.status || "unknown"}
-        aria-label="MAM network status"
-        aria-live="polite"
-      >
-        <div className="mam-network-heading">
-          <div className="mam-network-title">
-            <h3>Network checks</h3>
-            <SettingHelp label="network checks">
-              Checks public IPs through the proxy and direct server connection,
-              even before you enter mam_id. IP checks never send your MAM cookie
-              or fall back from the proxy to direct. When a cookie is saved, it
-              is also tested using your configured fallback preference.
-            </SettingHelp>
-          </div>
-          <span className="mam-network-badge">
-            {test.isPending
-              ? "Testing…"
-              : health
-                ? health.status
-                : "Not tested"}
-          </span>
-        </div>
-        {health?.status !== "healthy" && (
-          <p className="mam-network-description">
-            {health?.message || "Test connection to refresh these checks."}
-          </p>
-        )}
-        <dl>
-          <div>
-            <dt>Current route</dt>
-            <dd>
-              {!enabled
-                ? "Disabled"
-                : health?.route === "direct-fallback"
-                  ? "Direct fallback"
-                  : health?.route === "proxy"
-                    ? "Proxy"
-                    : proxy
-                      ? proxyFallback
-                        ? "Proxy preferred"
-                        : "Proxy required"
-                      : "Direct"}
-              {dirty ? " · unsaved" : ""}
-            </dd>
-          </div>
-          <div>
-            <dt>MAM cookie</dt>
-            <dd>{health?.cookie_status || "Unverified"}</dd>
-          </div>
-          <div>
-            <dt>Proxy health</dt>
-            <dd>
-              {health?.proxy_status ||
-                (proxy ? "Not tested" : "Not configured")}
-            </dd>
-          </div>
-          <div className="mam-network-address">
-            <dt>Proxy IP</dt>
-            <dd>
-              {health?.proxy?.ip ||
-                health?.proxy?.error ||
-                (proxy ? "Not tested" : "Not configured")}
-            </dd>
-          </div>
-          <div className="mam-network-address">
-            <dt>Direct server IP</dt>
-            <dd>{health?.direct.ip || health?.direct.error || "Not tested"}</dd>
-          </div>
-        </dl>
-        {health && (
-          <p className="mam-network-checked">
-            Last checked{" "}
-            <time dateTime={health.checked_at}>
-              {new Date(health.checked_at).toLocaleString()}
-            </time>
-          </p>
-        )}
-        {health?.proxy?.ip && health.proxy.ip === health.direct.ip && (
-          <p className="notice">
-            The proxy and direct server report the same public IP. Check the
-            proxy's VPN routing if you expect different addresses.
-          </p>
-        )}
-      </section>
-      <label className="check-label">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        Enable MAM
-      </label>
-      <AccountAutomation value={automation} onChange={setAutomation} />
-      <div className="mam-connection-footer">
         <div className="actions">
+          <button className="primary">Save connection</button>
           {value.configured && (
             <DeleteSourceConnection
               source="mam"
               name="MAM"
               generation={value.generation}
-              disabled={save.isPending || test.isPending}
+              disabled={busy}
             />
           )}
-
-          <button
-            className="primary"
-            disabled={save.isPending || test.isPending}
-          >
-            Save connection
-          </button>
-          <button
-            type="button"
-            disabled={!enabled || save.isPending || test.isPending}
-            onClick={(event) => {
-              if (event.currentTarget.form?.reportValidity()) test.mutate();
-            }}
-          >
-            {test.isPending
-              ? "Testing…"
-              : dirty
-                ? value.has_session || cookie
-                  ? "Save & test connection"
-                  : "Save & test network"
-                : value.has_session || cookie
-                  ? "Test connection"
-                  : "Test network"}
-          </button>
-        </div>
-        <div
-          className="mam-action-status"
-          data-health={test.error ? "unhealthy" : health?.status || "unknown"}
-          role="status"
-          aria-label="Connection test status"
-          aria-live="polite"
-        >
-          <div className="mam-action-status-line">
-            <span className="mam-network-badge">
-              {test.isPending
-                ? "Testing…"
-                : test.error
-                  ? "Failed"
-                  : health
-                    ? health.status
-                    : value.status}
+          {dirty && (
+            <span className="mam-check-hint">
+              Tests save your changes first.
             </span>
-            <span>
-              {test.isPending
-                ? "Checking the MAM session and network route."
-                : test.error
-                  ? "Connection test failed. Your entered credentials are still available above."
-                  : health?.message ||
-                    "Test the connection to verify this route."}
-            </span>
-          </div>
-          <Notice error={save.error || test.error} />
-          {value.last_error && !test.error && !save.error && (
-            <p className="notice">{value.last_error}</p>
           )}
         </div>
-      </div>
+        <MamCheckError message={save.error?.message} />
+        <details className="mam-advanced">
+          <summary>Advanced settings</summary>
+          <div className="mam-advanced-fields">
+            <label>
+              MAM URL
+              <input
+                type="url"
+                value={base}
+                onChange={(event) => setBase(event.target.value)}
+                required
+                maxLength={2000}
+              />
+            </label>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={proxyFallback}
+                onChange={(event) => setProxyFallback(event.target.checked)}
+              />
+              Allow direct fallback when the proxy is unavailable
+            </label>
+            {proxyFallback && proxy && (
+              <p className="mam-check-hint">
+                MAM will see the direct server IP if the proxy fails.
+              </p>
+            )}
+            <div className="settings-fields">
+              <label>
+                Proxy username
+                <input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  autoComplete="off"
+                  maxLength={300}
+                />
+              </label>
+              <label>
+                Proxy password
+                <input
+                  type="password"
+                  placeholder={
+                    value.has_proxy_credentials &&
+                    !clearAuth &&
+                    proxy === (value.proxy_url || "")
+                      ? "••••••••"
+                      : undefined
+                  }
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="new-password"
+                  maxLength={1000}
+                />
+              </label>
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={clearAuth}
+                  onChange={(event) => setClearAuth(event.target.checked)}
+                />
+                Clear saved proxy credentials
+              </label>
+            </div>
+          </div>
+        </details>
+        <AccountAutomation value={automation} onChange={setAutomation} />
+      </fieldset>
     </form>
   );
 }

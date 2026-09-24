@@ -283,7 +283,10 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             message = str(error)[:300]
         elif isinstance(error, OSError):
             message = (
-                f"Folder verification failed while {report['failure_step']} "
+                f"Download folder: {describe_os_error(error, Path(report['path']))} "
+                "Review this client's folder mapping in Settings → Download clients."
+                if report.get("folder_kind") == "download" and report.get("path")
+                else f"Folder verification failed while {report['failure_step']} "
                 f"({report['error_code']}). The folders were opened successfully, but this "
                 "filesystem operation failed. Check the worker log for details."
                 if report.get("failure_step")

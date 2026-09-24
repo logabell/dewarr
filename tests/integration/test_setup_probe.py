@@ -110,6 +110,29 @@ async def current(client):
     return response.json()[0]
 
 
+@pytest.mark.parametrize("missing", ["root", "save_folder"])
+async def test_missing_soulseek_download_folder_reports_mapped_path(
+    client, admin, database, empty_route, missing
+):
+    async with database() as db, db.begin():
+        (await db.get(Integration, empty_route["downloader"])).kind = "slskd"
+    (empty_route["source"] / "books").rmdir()
+    if missing == "root":
+        empty_route["source"].rmdir()
+    response = await start(client, empty_route)
+    assert response.status_code == 202
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    assert not checked["publication_available"]
+    async with database() as db:
+        operation = await db.get(Operation, UUID(response.json()["id"]))
+        assert operation.status == "failed"
+        assert "Download folder" in operation.message
+        assert str(empty_route["source"] / "books") in operation.message
+        assert "ENOENT" in operation.message
+        assert str(empty_route["target"]) not in operation.message
+
+
 @pytest.mark.parametrize("kind", ["qbittorrent", "slskd"])
 async def test_empty_folder_can_qualify_before_any_plan_or_download(
     client, admin, database, empty_route, kind

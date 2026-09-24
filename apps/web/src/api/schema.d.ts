@@ -10931,6 +10931,7 @@ export interface components {
       current_connection: boolean;
       /** Query Keys */
       query_keys?: string[];
+      download?: components["schemas"]["ReleaseDownloadStatus"] | null;
     };
     /** ReadIssueView */
     ReadIssueView: {
@@ -11397,6 +11398,46 @@ export interface components {
       formats: string[];
       /** Source Origin */
       source_origin: string;
+    };
+    /** ReleaseDownloadStatus */
+    ReleaseDownloadStatus: {
+      /**
+       * State
+       * @enum {string}
+       */
+      state:
+        | "preparing"
+        | "queued"
+        | "downloading"
+        | "downloaded"
+        | "imported"
+        | "failed"
+        | "cancelled"
+        | "selected"
+        | "needs-review";
+      /** Message */
+      message: string;
+      /**
+       * Request Id
+       * Format: uuid
+       */
+      request_id: string;
+      /** Operation Id */
+      operation_id?: string | null;
+      /** Attempt Id */
+      attempt_id?: string | null;
+      /** Progress */
+      progress?: number | null;
+      /**
+       * Reasons
+       * @default []
+       */
+      reasons: string[];
+      /**
+       * Prevent Download
+       * @default false
+       */
+      prevent_download: boolean;
     };
     /** ReleaseEntry */
     ReleaseEntry: {
@@ -13237,6 +13278,8 @@ export interface components {
         "none" | "search" | "selected-release" | "downloads" | "book";
       /** Progress */
       progress?: number | null;
+      /** Selection Status */
+      selection_status?: string | null;
       /** Attempt State */
       attempt_state?: string | null;
       /** Attempt Id */
@@ -22952,7 +22995,9 @@ export interface operations {
   };
   test_network_api_sources_mam_network_test_post: {
     parameters: {
-      query?: never;
+      query?: {
+        include_cookie?: boolean;
+      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -22966,6 +23011,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["MAMNetworkView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

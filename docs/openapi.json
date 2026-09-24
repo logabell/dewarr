@@ -14271,6 +14271,18 @@
         ],
         "summary": "Test Network",
         "operationId": "test_network_api_sources_mam_network_test_post",
+        "parameters": [
+          {
+            "name": "include_cookie",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Cookie"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -14278,6 +14290,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MAMNetworkView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -31767,6 +31789,16 @@
             },
             "type": "array",
             "title": "Query Keys"
+          },
+          "download": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseDownloadStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -32997,6 +33029,89 @@
           "source_origin"
         ],
         "title": "ReleaseAssessment"
+      },
+      "ReleaseDownloadStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "preparing",
+              "queued",
+              "downloading",
+              "downloaded",
+              "imported",
+              "failed",
+              "cancelled",
+              "selected",
+              "needs-review"
+            ],
+            "title": "State"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "default": []
+          },
+          "prevent_download": {
+            "type": "boolean",
+            "title": "Prevent Download",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "message",
+          "request_id"
+        ],
+        "title": "ReleaseDownloadStatus"
       },
       "ReleaseEntry": {
         "properties": {
@@ -37919,6 +38034,17 @@
               }
             ],
             "title": "Progress"
+          },
+          "selection_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Status"
           },
           "attempt_state": {
             "anyOf": [

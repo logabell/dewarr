@@ -1,23 +1,29 @@
-import { expect, test } from "./fixtures";
+import { expect, test, type Page } from "./fixtures";
 
-test("MAM proxy network can be saved and checked before entering mam_id", async ({
-  page,
-}) => {
-  let connection = {
-    configured: false,
-    base_url: "https://www.myanonamouse.net",
-    proxy_url: "",
-    proxy_fallback_direct: true,
-    has_session: false,
-    has_proxy_credentials: false,
-    enabled: false,
-    generation: 0,
-    status: "not-configured",
-    automation: {},
+async function setupMam(page: Page, configured = true) {
+  const state = {
+    connection: {
+      configured,
+      base_url: "https://www.myanonamouse.net",
+      proxy_url: configured ? "http://gluetun:8888" : "",
+      proxy_fallback_direct: false,
+      has_session: configured,
+      has_proxy_credentials: configured,
+      enabled: configured,
+      generation: configured ? 1 : 0,
+      status: configured ? "untested" : "not-configured",
+      last_error: "",
+      automation: {} as Record<string, unknown>,
+    },
+    actions: [] as string[],
+    writes: [] as Record<string, unknown>[],
+    rejectCookie: false,
+    rejectSave: false,
+    proxyError: "",
   };
-  const actions: string[] = [];
   await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url());
+    const path = url.pathname;
     let data: unknown = [];
     if (path === "/api/auth/me")
       data = {
@@ -32,36 +38,63 @@ test("MAM proxy network can be saved and checked before entering mam_id", async 
     else if (path === "/api/setup/onboarding") data = { status: "completed" };
     else if (path === "/api/sources/mam/connection") {
       if (route.request().method() === "PUT") {
-        actions.push("save");
+        state.actions.push("save");
         const body = route.request().postDataJSON();
-        expect(body.mam_id).toBeNull();
-        expect(body.proxy_url).toBe("http://gluetun:8888");
-        connection = {
-          ...connection,
+        state.writes.push(body);
+        if (state.rejectSave)
+          return route.fulfill({
+            status: 409,
+            json: { detail: "Settings changed; reload before saving." },
+          });
+        expect(body.expected_generation).toBe(state.connection.generation);
+        state.connection = {
+          ...state.connection,
           configured: true,
-          enabled: true,
-          proxy_url: body.proxy_url,
-          has_proxy_credentials: true,
-          generation: 1,
+          base_url: body.base_url,
+          proxy_url: body.proxy_url || "",
+          proxy_fallback_direct: body.proxy_fallback_direct,
+          has_session: Boolean(body.mam_id || state.connection.has_session),
+          has_proxy_credentials: Boolean(
+            body.proxy_password || state.connection.has_proxy_credentials,
+          ),
+          enabled: body.enabled,
+          generation: state.connection.generation + 1,
           status: "untested",
+          last_error: "",
           automation: body.automation,
         };
       }
-      data = connection;
+      data = state.connection;
     } else if (path === "/api/sources/mam/network/test") {
-      actions.push("network");
+      state.actions.push("proxy");
+      expect(url.searchParams.get("include_cookie")).toBe("false");
       data = {
-        connection,
-        status: "degraded",
+        connection: state.connection,
+        status: state.proxyError ? "unhealthy" : "healthy",
         route: "proxy",
-        cookie_status: "not-configured",
-        proxy_status: "healthy",
-        proxy: { ip: "203.0.113.10" },
+        cookie_status: "not-tested",
+        proxy_status: state.proxyError ? "unavailable" : "healthy",
+        proxy: state.proxyError
+          ? { error: state.proxyError }
+          : { ip: "203.0.113.10" },
         direct: { ip: "198.51.100.20" },
         checked_at: "2026-09-24T12:00:00Z",
-        message:
-          "Network checks completed without a MAM cookie. Enter mam_id to verify MAM access.",
+        message: "Network checks completed.",
       };
+    } else if (path === "/api/sources/mam/connection/test") {
+      state.actions.push("cookie");
+      state.connection.status = state.rejectCookie
+        ? "authentication"
+        : "connected";
+      state.connection.last_error = state.rejectCookie
+        ? "MAM rejected the test session."
+        : "";
+      if (state.rejectCookie)
+        return route.fulfill({
+          status: 422,
+          json: { detail: state.connection.last_error },
+        });
+      data = state.connection;
     } else if (path.includes("/connection"))
       data = {
         configured: false,
@@ -79,255 +112,163 @@ test("MAM proxy network can be saved and checked before entering mam_id", async 
     .locator("summary")
     .first()
     .click();
-  const form = page.getByRole("form", { name: "MAM connection settings" });
-  await form.getByText("Proxy options", { exact: true }).click();
-  await form.locator('input[type="url"]').nth(1).fill("http://gluetun:8888");
-  await form.getByLabel("Proxy username", { exact: true }).fill("proxy-user");
-  await form
-    .getByLabel("Proxy password", { exact: true })
-    .fill("proxy-password");
-  await form
-    .getByRole("button", { name: "Save & test network", exact: true })
-    .click();
-  const network = form.getByRole("region", { name: "MAM network status" });
-  await expect(network).toContainText("203.0.113.10");
-  await expect(network).toContainText("198.51.100.20");
-  await expect(network).toContainText("not-configured");
+  return state;
+}
+
+const formFor = (page: Page) =>
+  page.getByRole("form", { name: "MAM connection settings" });
+
+test("proxy setup works without a cookie and both tests precede advanced settings", async ({
+  page,
+}) => {
+  const state = await setupMam(page, false);
+  const form = formFor(page);
   await expect(
-    form.getByRole("button", { name: "Test network", exact: true }),
-  ).toBeEnabled();
-  await expect(form.getByLabel("mam_id", { exact: true })).toHaveValue("");
-  await expect(form.getByLabel("Proxy password", { exact: true })).toHaveValue(
+    form.getByRole("button", { name: "Test mam_id", exact: true }),
+  ).toBeDisabled();
+  await expect(form.locator("details.mam-advanced")).not.toHaveAttribute(
+    "open",
     "",
   );
-  expect(actions).toEqual(["save", "network"]);
+  await form
+    .getByLabel("HTTP proxy URL", { exact: true })
+    .fill("http://gluetun:8888");
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
+  const network = form.getByRole("region", { name: "MAM network status" });
+  await expect(network).toContainText("Healthy");
+  await expect(network).toContainText("203.0.113.10");
+  await expect(network).toContainText("198.51.100.20");
+  expect(state.actions).toEqual(["save", "proxy"]);
+  expect(state.writes[0].mam_id).toBeNull();
+  const advancedBox = await form.locator("details.mam-advanced").boundingBox();
+  for (const name of ["Test proxy", "Test mam_id"]) {
+    const buttonBox = await form
+      .getByRole("button", { name, exact: true })
+      .boundingBox();
+    expect(buttonBox!.y + buttonBox!.height).toBeLessThan(advancedBox!.y);
+  }
 });
 
-test("MAM masks saved secrets and saves edited proxy before testing", async ({
+test("proxy and cookie tests are independent, including failed sign-in and retained IPs", async ({
   page,
 }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  let connection = {
-    configured: true,
-    base_url: "https://www.myanonamouse.net",
-    proxy_url: "http://192.0.2.10:8888",
-    proxy_fallback_direct: true,
-    has_session: true,
-    has_proxy_credentials: true,
-    enabled: true,
-    generation: 1,
-    status: "route",
-    last_error: "Proxy refused the connection.",
-    automation: {} as Record<string, unknown>,
-  };
-  const actions: string[] = [];
-  const writes: Record<string, unknown>[] = [];
-  let rejectSave = false;
-  let rejectTest = false;
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    let data: unknown = [];
-    if (path === "/api/auth/me")
-      data = {
-        user: {
-          id: "reader",
-          role: "admin",
-          display_name: "Reader",
-          onboarding_status: "complete",
-        },
-        csrf_token: "test",
-      };
-    else if (path === "/api/setup/onboarding") data = { status: "completed" };
-    else if (path === "/api/sources/mam/connection") {
-      if (route.request().method() === "PUT") {
-        actions.push("save");
-        const body = route.request().postDataJSON();
-        writes.push(body);
-        if (rejectSave)
-          return route.fulfill({
-            status: 409,
-            json: { detail: "Settings changed; reload before saving." },
-          });
-        connection = {
-          ...connection,
-          base_url: body.base_url,
-          proxy_url: body.proxy_url,
-          proxy_fallback_direct: body.proxy_fallback_direct,
-          enabled: body.enabled,
-          automation: body.automation,
-          generation: connection.generation + 1,
-        };
-      }
-      data = connection;
-    } else if (path === "/api/sources/mam/network/test") {
-      actions.push("test");
-      if (rejectTest) {
-        connection = {
-          ...connection,
-          status: "authentication",
-          last_error: "MAM rejected the test session.",
-        };
-        return route.fulfill({
-          json: {
-            connection,
-            status: "unhealthy",
-            route: "proxy",
-            cookie_status: "rejected",
-            proxy_status: "healthy",
-            proxy: { ip: "203.0.113.10" },
-            direct: { ip: "198.51.100.20" },
-            checked_at: "2026-09-20T12:00:00Z",
-            message: "MAM rejected the test session.",
-          },
-        });
-      }
-      connection = { ...connection, status: "connected", last_error: "" };
-      data = {
-        connection,
-        status: "healthy",
-        route: "proxy",
-        cookie_status: "authenticated",
-        proxy_status: "healthy",
-        proxy: { ip: "203.0.113.10" },
-        direct: { ip: "198.51.100.20" },
-        checked_at: "2026-09-20T12:00:00Z",
-        message: "MAM authenticated through the configured proxy.",
-      };
-    } else if (path.includes("/connection"))
-      data = {
-        configured: false,
-        generation: 0,
-        base_url: "",
-        excluded_indexers: [],
-      };
-    if (
-      new URL(route.request().url()).pathname.includes(
-        "/acquisition/preferences/",
-      )
-    )
-      data = { effective: { desired_media: "both" } };
-    return route.fulfill({ json: data });
-  });
-  await page.goto("/settings#sources");
-  await page
-    .getByRole("region", { name: "MAM settings" })
-    .locator("summary")
-    .first()
-    .click();
-  const form = page.getByRole("form", { name: "MAM connection settings" });
+  const state = await setupMam(page);
+  const form = formFor(page);
   const cookie = form.getByLabel("mam_id", { exact: true });
+  const network = form.getByRole("region", { name: "MAM network status" });
+  const account = form.getByRole("region", { name: "MAM account check" });
   await expect(cookie).toHaveValue("");
   await expect(cookie).toHaveAttribute("placeholder", "••••••••");
-  await expect(
-    form.getByLabel("Proxy password", { exact: true }),
-  ).toHaveAttribute("placeholder", "••••••••");
-  await form.getByText("Proxy options", { exact: true }).click();
-  const proxy = form.locator('input[type="url"]').nth(1);
-  await expect(proxy).toBeVisible();
-  await expect(
-    form.getByRole("checkbox", {
-      name: "Allow direct fallback when the proxy is unavailable",
-    }),
-  ).toBeChecked();
-  const automation = form.locator("details.account-automation");
-  await expect(automation).not.toHaveAttribute("open", "");
-  await automation.locator("summary").click();
-  await expect(
-    form.getByRole("checkbox", {
-      name: "Use a Freeleech wedge on download",
-    }),
-  ).not.toBeChecked();
-  await form.getByRole("checkbox", { name: "Protect minimum ratio" }).check();
-  await expect(form.getByLabel("If ratio falls below")).toHaveValue("2.5");
-  await expect(form.getByLabel("Check interval (hours)")).toHaveValue("3");
-  await form.getByRole("checkbox", { name: "Protect minimum ratio" }).uncheck();
-  await form
-    .getByRole("button", { name: "Test connection", exact: true })
-    .click();
-  await expect(
-    form.getByRole("status", { name: "Connection test status" }),
-  ).toContainText("healthy");
-  expect(actions).toEqual(["test"]);
-  const network = form.getByRole("region", { name: "MAM network status" });
-  await expect(network).toContainText("authenticated");
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
+  await expect(network).toContainText("Healthy");
+  await expect(account).toContainText("Unverified");
+  expect(state.actions).toEqual(["proxy"]);
+  await cookie.fill("replacement-test-cookie");
   await expect(network).toContainText("203.0.113.10");
-  await expect(network).toContainText("198.51.100.20");
-  await proxy.fill("http://proxy.internal:8888");
-  await expect(network).toContainText("Not tested");
-  await expect(network).not.toContainText("203.0.113.10");
-  await form
-    .getByRole("button", { name: "Save & test connection", exact: true })
-    .click();
+  state.rejectCookie = true;
+  await form.getByRole("button", { name: "Test mam_id", exact: true }).click();
+  await expect(account).toContainText(
+    "MAM sign-in failed. Check your mam_id and its allowed IP.",
+  );
   await expect(
-    form.getByRole("button", { name: "Test connection", exact: true }),
-  ).toBeEnabled();
-  expect(actions).toEqual(["test", "save", "test"]);
-  expect(writes[0]).toMatchObject({
-    proxy_url: "http://proxy.internal:8888",
-    mam_id: null,
-    proxy_password: null,
+    account.getByText("MAM rejected the test session.", { exact: true }),
+  ).not.toBeVisible();
+  await expect(network).toContainText("Healthy");
+  await expect(network).toContainText("203.0.113.10");
+  await expect(cookie).toHaveValue("replacement-test-cookie");
+  expect(state.actions).toEqual(["proxy", "save", "cookie"]);
+  await form.screenshot({
+    path: testInfo.outputPath("mam-independent-checks.png"),
   });
-  await network.screenshot({
-    path: testInfo.outputPath("mam-network-healthy.png"),
-  });
+  state.rejectCookie = false;
+  await form.getByRole("button", { name: "Test mam_id", exact: true }).click();
+  await expect(account).toContainText("Authenticated");
+  await expect(cookie).toHaveValue("");
+  expect(state.actions).toEqual(["proxy", "save", "cookie", "cookie"]);
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
+  await expect(account).toContainText("Authenticated");
+  await expect(network).toContainText("Healthy");
+  expect(state.actions.at(-1)).toBe("proxy");
+  expect(errors).toEqual([]);
+});
+
+test("proxy DNS error is short, detailed on demand, and fits a phone", async ({
+  page,
+}, testInfo) => {
+  const state = await setupMam(page);
+  state.proxyError =
+    "Public IP lookup failed. The proxy hostname could not be resolved. For a Docker service name such as gluetun, connect Dewarr and the proxy to the same Docker network.";
+  const form = formFor(page);
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
+  const network = form.getByRole("region", { name: "MAM network status" });
+  await expect(
+    network.getByText(
+      "Proxy not found. Connect Dewarr and Gluetun to the same Docker network.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    network.getByText(state.proxyError, { exact: true }),
+  ).not.toBeVisible();
+  await expect(network).toContainText("198.51.100.20");
+  await network.getByText("Error details", { exact: true }).click();
+  await expect(
+    network.getByText(state.proxyError, { exact: true }),
+  ).toBeVisible();
+  await network.getByText("Error details", { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(network).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await page.reload();
-  await page
-    .getByRole("region", { name: "MAM settings" })
-    .locator("summary")
-    .first()
-    .click();
-  await form.getByText("Proxy options", { exact: true }).click();
-  await expect(cookie).toHaveAttribute("placeholder", "••••••••");
-  await expect(cookie).toHaveValue("");
-  await expect(proxy).toHaveValue("http://proxy.internal:8888");
-  await automation.locator("summary").click();
-  await form.screenshot({
-    path: testInfo.outputPath("mam-masked-settings.png"),
-  });
+  await form.screenshot({ path: testInfo.outputPath("mam-mobile-error.png") });
+  const account = form.getByRole("region", { name: "MAM account check" });
+  expect((await account.boundingBox())!.y).toBeGreaterThan(
+    (await network.boundingBox())!.y,
+  );
+});
+
+test("advanced credentials and automation save before testing, with save conflicts preserved", async ({
+  page,
+}) => {
+  const state = await setupMam(page);
+  const form = formFor(page);
+  await form.getByText("Advanced settings", { exact: true }).click();
+  await expect(
+    form.getByLabel("Proxy password", { exact: true }),
+  ).toHaveAttribute("placeholder", "••••••••");
+  await form
+    .getByLabel("Proxy username", { exact: true })
+    .fill("new-proxy-user");
+  await form
+    .getByLabel("Proxy password", { exact: true })
+    .fill("new-proxy-password");
+  await form.locator("details.account-automation > summary").click();
   await form
     .getByRole("checkbox", { name: "Use a Freeleech wedge on download" })
     .check();
-  const retainedCookie = "keep-this-cookie-after-a-failed-test";
-  await cookie.fill(retainedCookie);
-  rejectTest = true;
-  const failedTestButton = form.getByRole("button", {
-    name: /^(Save & test|Test) connection$/,
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
+  await expect(
+    form.getByRole("region", { name: "MAM network status" }),
+  ).toContainText("Healthy");
+  expect(state.actions).toEqual(["save", "proxy"]);
+  expect(state.writes[0]).toMatchObject({
+    proxy_username: "new-proxy-user",
+    proxy_password: "new-proxy-password",
+    mam_id: null,
+    automation: { use_wedge: true },
   });
-  await expect(failedTestButton).toHaveText("Save & test connection");
-  await failedTestButton.click();
-  await expect(
-    form.getByRole("status", { name: "Connection test status" }),
-  ).toContainText("unhealthy");
-  await expect(
-    form.getByRole("status", { name: "Connection test status" }),
-  ).toContainText("MAM rejected the test session.");
-  await expect(failedTestButton).toBeInViewport();
-  await expect(cookie).toHaveValue(retainedCookie);
-  rejectTest = false;
-  rejectSave = true;
-  await proxy.fill("http://another-proxy:8888");
+  await expect(form.getByLabel("Proxy password", { exact: true })).toHaveValue(
+    "",
+  );
+  state.rejectSave = true;
   await form
-    .getByRole("button", { name: "Save & test connection", exact: true })
-    .click();
+    .getByLabel("HTTP proxy URL", { exact: true })
+    .fill("http://another-proxy:8888");
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
   await expect(form).toContainText("Settings changed; reload before saving.");
-  expect(actions).toEqual(["test", "save", "test", "save", "test", "save"]);
-  expect(writes.at(-1)).toMatchObject({
-    automation: {
-      seedbox_ip: false,
-      auto_vip: false,
-      use_wedge: true,
-      protect_ratio: false,
-      maintain_buffer: false,
-      spend_bonus: false,
-    },
-  });
-  expect(errors).toEqual([]);
+  expect(state.actions).toEqual(["save", "proxy", "save"]);
 });

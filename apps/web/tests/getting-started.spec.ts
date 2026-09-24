@@ -128,6 +128,7 @@ test("onboarding defers, resumes and completes once; settings show one focused s
       .locator("summary")
       .first()
       .click();
+  await mam.getByText("Advanced settings", { exact: true }).click();
   await mam
     .getByLabel("MAM URL", { exact: true })
     .fill("http://127.0.0.1:13379/mam");
@@ -139,12 +140,10 @@ test("onboarding defers, resumes and completes once; settings show one focused s
     .getByRole("button", { name: "Save connection", exact: true })
     .click();
   await expect(mam.getByLabel(/^(mam_id|mam_id)$/)).toHaveValue("");
-  await mam
-    .getByRole("button", { name: "Test connection", exact: true })
-    .click();
+  await mam.getByRole("button", { name: "Test mam_id", exact: true }).click();
   await expect(
     mam.getByRole("status", { name: "Connection test status" }),
-  ).toContainText("MAM authenticated through the direct connection.");
+  ).toContainText("Authenticated");
   await page.goto("/settings#naming");
   await expect(page).toHaveURL(/\/settings#naming$/);
   await expect(

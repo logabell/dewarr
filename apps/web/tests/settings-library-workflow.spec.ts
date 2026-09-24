@@ -107,6 +107,29 @@ for (const clientSetup of ["missing", "unmapped", "multiple"]) {
       "/data/ebooks",
     );
     await expect(dialog.getByRole("radio")).toHaveCount(2);
+    if (clientSetup === "multiple") {
+      const clients = dialog.getByRole("combobox", { name: "Download client" });
+      await clients.click();
+      await page
+        .getByRole("listbox", { name: "Download client" })
+        .getByRole("option", { name: "Second client", exact: true })
+        .click({ timeout: 3000 });
+      await expect(clients).toHaveValue("second");
+      await expect(clients).toBeFocused();
+      await clients.click();
+      await page
+        .getByRole("listbox", { name: "Download client" })
+        .getByRole("option", { name: "Choose a client", exact: true })
+        .click();
+      await expect(clients).toHaveValue("");
+      await clients.press("ArrowDown");
+      await clients.press("Escape");
+      await expect(
+        page.getByRole("listbox", { name: "Download client" }),
+      ).not.toBeVisible();
+      await expect(dialog).toBeVisible();
+      await expect(clients).toBeFocused();
+    }
     await expect(
       dialog.getByRole("checkbox", { name: "Import on completion" }),
     ).toBeChecked();

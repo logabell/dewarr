@@ -10,7 +10,9 @@ from sqlalchemy import select
 from app.db.models import (
     AutomaticImportPolicy,
     DownloadAttempt,
+    ImportDestination,
     Integration,
+    Library,
     ListAcquisitionBook,
     ListAcquisitionPolicy,
     Operation,
@@ -134,10 +136,10 @@ async def test_default_destination_does_not_bypass_library_access(
         headers={"Idempotency-Key": "private-route-default"},
     )
     assert response.status_code == 409, response.text
-    assert response.json()["detail"] == "Saved import destination is unavailable; choose a route"
+    assert "Settings → Libraries" in response.json()["detail"]
 
 
-async def test_clearing_a_default_is_persistent_and_does_not_reenable_inheritance(
+async def test_clearing_destination_override_uses_library_folder_without_restoring_inheritance(
     client, policy_fixture
 ):
     route = policy_fixture["source"]["body"]
@@ -150,7 +152,15 @@ async def test_clearing_a_default_is_persistent_and_does_not_reenable_inheritanc
         json={**policy_fixture["config"], "routes": {}},
         headers={"Idempotency-Key": "cleared-route-default"},
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 201, response.text
+    assert (
+        response.json()["configuration"]["routes"]["audio"]["destination_id"]
+        == route["destination_id"]
+    )
+    assert (
+        response.json()["configuration"]["profile"]["scope_origins"]["audio_destination_id"]
+        == "Configured library folder"
+    )
     restored = await save(client, {})
     assert restored["effective"]["audio_destination_id"] == route["destination_id"]
 
@@ -189,3 +199,223 @@ async def test_saved_usenet_client_backs_up_a_torrent_default(client, database, 
     assert config["downloader_id"] == route["downloader_id"]
     assert config["alternate_downloader_id"] == usenet_id
     assert config["alternate_routes"]["audio"] == config["routes"]["audio"]
+
+
+async def test_only_client_is_used_without_saving_a_downloader_default(client, policy_fixture):
+    route = policy_fixture["source"]["body"]
+    await save(client, {"audio_destination_id": route["destination_id"]})
+    plan = await preview(
+        client, policy_fixture, downloader_id=None, downloader_generation=None, routes={}
+    )
+    assert plan["configuration"]["downloader_id"] == route["downloader_id"]
+
+
+async def test_sole_usenet_client_is_automatically_available_alongside_torrent(
+    client, database, policy_fixture
+):
+    route = policy_fixture["source"]["body"]
+    async with database() as db, db.begin():
+        primary = await db.get(Integration, UUID(route["downloader_id"]))
+        usenet = Integration(
+            kind="sabnzbd",
+            name="Only Usenet client",
+            base_url="http://sab.test",
+            encrypted_secrets=primary.encrypted_secrets,
+            credential_generation=primary.credential_generation,
+            status="connected",
+            config=deepcopy(primary.config),
+        )
+        disabled = Integration(
+            kind="nzbget",
+            name="Disabled Usenet client",
+            base_url="http://disabled.test",
+            enabled=False,
+            encrypted_secrets=primary.encrypted_secrets,
+            status="connected",
+            config=deepcopy(primary.config),
+        )
+        db.add_all([usenet, disabled])
+        await db.flush()
+        usenet_id = str(usenet.id)
+    await save(client, {"audio_destination_id": route["destination_id"]})
+    plan = await preview(
+        client, policy_fixture, downloader_id=None, downloader_generation=None, routes={}
+    )
+    assert plan["configuration"]["downloader_id"] == route["downloader_id"]
+    assert plan["configuration"]["alternate_downloader_id"] == usenet_id
+
+
+async def test_multiple_torrent_clients_require_an_explicit_default(
+    client, database, policy_fixture
+):
+    route = policy_fixture["source"]["body"]
+    async with database() as db, db.begin():
+        primary = await db.get(Integration, UUID(route["downloader_id"]))
+        second = Integration(
+            kind="transmission",
+            name="Second torrent client",
+            base_url="http://transmission.test",
+            encrypted_secrets=primary.encrypted_secrets,
+            credential_generation=primary.credential_generation,
+            status="connected",
+            config=deepcopy(primary.config),
+        )
+        db.add(second)
+    await save(client, {"audio_destination_id": route["destination_id"]})
+    response = await client.post(
+        f"/api/lists/{policy_fixture['list']}/acquisition/preview",
+        json={
+            **policy_fixture["config"],
+            "downloader_id": None,
+            "downloader_generation": None,
+            "routes": {},
+        },
+        headers={"Idempotency-Key": "ambiguous-torrent-default"},
+    )
+    assert response.status_code == 422, response.text
+    assert "default downloader" in response.json()["detail"]
+    await save(
+        client,
+        {
+            "torrent_downloader_id": route["downloader_id"],
+            "audio_destination_id": route["destination_id"],
+        },
+    )
+    plan = await preview(
+        client, policy_fixture, downloader_id=None, downloader_generation=None, routes={}
+    )
+    assert plan["configuration"]["downloader_id"] == route["downloader_id"]
+
+
+async def test_library_folder_is_used_without_saving_any_route_defaults(client, policy_fixture):
+    plan = await preview(
+        client, policy_fixture, downloader_id=None, downloader_generation=None, routes={}
+    )
+    assert plan["configuration"]["routes"] == policy_fixture["config"]["routes"]
+    assert (
+        plan["configuration"]["profile"]["scope_origins"]["audio_destination_id"]
+        == "Configured library folder"
+    )
+
+
+@pytest.mark.parametrize(
+    "extra_state", ["enabled", "disabled", "deleted", "ebook", "other-library"]
+)
+async def test_destination_inference_respects_library_medium_and_configured_choices(
+    client, database, catalog, policy_fixture, extra_state
+):
+    from datetime import UTC, datetime
+
+    async with database() as db, db.begin():
+        original = await db.get(
+            ImportDestination, UUID(policy_fixture["source"]["body"]["destination_id"])
+        )
+        library_id = original.library_id
+        if extra_state == "other-library":
+            original_library = await db.get(Library, original.library_id)
+            library = Library(
+                integration_id=original_library.integration_id,
+                external_id="second",
+                name="Other library",
+            )
+            db.add(library)
+            await db.flush()
+            library_id = library.id
+        extra = ImportDestination(
+            root_key="second-folder",
+            library_id=library_id,
+            medium="ebook" if extra_state == "ebook" else "audio",
+            backend_path="/other",
+            enabled=extra_state != "disabled",
+            deleted_at=datetime.now(UTC) if extra_state == "deleted" else None,
+        )
+        db.add(extra)
+        await db.flush()
+        extra_id = str(extra.id)
+    if extra_state == "other-library":
+        # The requested library takes precedence over a default for another library.
+        await save(client, {"audio_destination_id": extra_id})
+    response = await client.post(
+        f"/api/lists/{policy_fixture['list']}/acquisition/preview",
+        json={
+            **policy_fixture["config"],
+            "routes": {},
+            "specification": {"mode": "audio", "audio_library_id": str(catalog["library"])},
+        },
+        headers={"Idempotency-Key": "inferred-library-destination"},
+    )
+    if extra_state == "enabled":
+        # Even an unverified second destination is a choice, not permission to switch folders.
+        assert response.status_code == 422, response.text
+        assert "Several audiobook library folders" in response.text
+        await save(
+            client, {"audio_destination_id": policy_fixture["source"]["body"]["destination_id"]}
+        )
+        plan = await preview(client, policy_fixture, routes={})
+        assert plan["configuration"]["routes"] == policy_fixture["config"]["routes"]
+    else:
+        assert response.status_code == 201, response.text
+        assert response.json()["configuration"]["routes"] == policy_fixture["config"]["routes"]
+    if extra_state in {"disabled", "deleted"}:
+        options = (await client.get("/api/acquisition/selections/options")).json()
+        assert len(options["destinations"]) == 1
+
+
+@pytest.mark.parametrize("state", ["unverified", "no-approval", "missing", "private"])
+async def test_inferred_destination_still_requires_valid_setup_and_access(
+    client, database, admin, policy_fixture, state
+):
+    async with database() as db, db.begin():
+        destination = await db.get(
+            ImportDestination, UUID(policy_fixture["source"]["body"]["destination_id"])
+        )
+        if state == "unverified":
+            destination.probe = None
+        elif state == "no-approval":
+            (await db.scalar(select(AutomaticImportPolicy))).enabled = False
+        elif state == "missing":
+            destination.enabled = False
+        else:
+            user = await db.get(User, UUID(admin["id"]))
+            user.role, user.can_automate = "member", True
+    response = await client.post(
+        f"/api/lists/{policy_fixture['list']}/acquisition/preview",
+        json={**policy_fixture["config"], "routes": {}},
+        headers={"Idempotency-Key": "inferred-folder-still-needs-setup"},
+    )
+    assert response.status_code in {409, 422}, response.text
+    if state in {"missing", "private"}:
+        assert "Settings → Libraries" in response.json()["detail"]
+    async with database() as db:
+        assert not await db.scalar(select(DownloadAttempt.id))
+
+
+async def test_fallback_client_cannot_choose_a_different_library_folder(
+    client, database, admin, policy_fixture, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from app.domain import automatic_routes
+
+    async with database() as db, db.begin():
+        original = await db.get(
+            ImportDestination, UUID(policy_fixture["source"]["body"]["destination_id"])
+        )
+        other = ImportDestination(
+            root_key="other-final-folder",
+            library_id=original.library_id,
+            medium="audio",
+            backend_path="/other",
+        )
+        db.add(other)
+        await db.flush()
+        # Only the other folder would work for the alternate client's mapping.
+        verify = AsyncMock(side_effect=lambda _db, dest, _config, _mapping: dest.id == other.id)
+        monkeypatch.setattr(automatic_routes, "verified_probe", verify)
+        user = await db.get(User, UUID(admin["id"]))
+        route = await automatic_routes.verified_destination(
+            db, user, "audio", {"source_key": "other"}, original.id
+        )
+        assert route is None
+        assert verify.await_count == 1
+        assert verify.call_args.args[1].id == original.id

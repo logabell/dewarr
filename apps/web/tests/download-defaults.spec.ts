@@ -34,7 +34,15 @@ test("download defaults inherit per field and persist after reload", async ({
   });
   await expect(torrentDefault).toBeVisible();
   await expect(usenetDefault).toBeVisible();
-  await expect(torrentDefault).toHaveValue("");
+  const options = await (
+    await page.request.get("/api/acquisition/selections/options")
+  ).json();
+  const torrents = options.downloaders.filter(
+    (item: { protocol: string }) => item.protocol === "torrent",
+  );
+  expect(torrents).toHaveLength(1);
+  await expect(torrentDefault).toHaveValue(torrents[0].id);
+  await expect(torrentDefault).toBeDisabled();
   await expect(usenetDefault).toHaveValue("");
   await panel.getByLabel("Apply to").selectOption("installation");
   await panel.getByText("Formats and transfer limits", { exact: true }).click();

@@ -43,6 +43,68 @@ docker compose -f compose.yaml -f deploy/compose.build.yaml up -d --build
 
 This uses the same two-service layout with a locally built app image. The container entrypoint initializes `/config`, waits for PostgreSQL, runs migrations, and supervises the API and worker. Unit tests in `tests/unit/test_container.py` cover startup and process lifecycle behavior.
 
+## Fast homelab iteration with `:dev`
+
+Keep running the native development environment above on your workstation. When
+you want to test a batch of changes in your existing homelab stack, publish a dev
+image through the **Publish dev image** workflow. It builds one native architecture
+with Docker layer caching, checks startup, migrations, and the bundled UI against
+a disposable PostgreSQL instance, and then updates `ghcr.io/logabell/dewarr:dev`.
+It does not run the full application CI suite or create a GitHub release.
+
+One-time setup: the workflow file must be present on GitHub's default branch
+(`main`) before it can be dispatched. This is a repository change, not a release.
+The branch being built must contain the current Dockerfile and smoke-test script.
+
+After committing the changes you want to test locally:
+
+```sh
+git push origin dev
+gh workflow run dev-image.yml --ref main -f ref=dev -f arch=amd64
+```
+
+Use `arch=arm64` for an ARM homelab. `:dev` contains only the architecture selected
+in the most recent successful run; use the same choice for subsequent builds.
+For a specific pushed commit, pass its SHA as `ref`. This builds pushed code, not
+uncommitted workstation changes. Docker is not required on the workstation.
+
+Follow the build in GitHub Actions, or find the run with
+`gh run list --workflow dev-image.yml` and use `gh run watch RUN_ID --exit-status`.
+The summary reports a unique `dev-<commit>-<run>.<attempt>-<architecture>` image tag
+as well as `:dev`. The app displays the matching dev build identity.
+
+In your existing homelab Compose file, change only the Dewarr image:
+
+```yaml
+services:
+  dewarr:
+    image: ghcr.io/logabell/dewarr:dev
+```
+
+Keep your existing environment, volumes, network, ports, and PostgreSQL service.
+After a successful build, run this from that stack's Compose directory:
+
+```sh
+docker compose up -d --no-deps --pull always --wait dewarr
+```
+
+This pulls the image before recreating Dewarr and waits for its health check.
+There is no need to stop the entire stack, and `docker compose restart` alone
+does not load a new image. If you use the repository's Compose files directly,
+`deploy/compose.dev.yaml` provides the image override.
+
+The first image build will take longer while caches fill. Later runs reuse
+unchanged dependencies and runtime layers; timing depends on the changes and
+GitHub runner availability. Failed builds or startup checks leave `:dev` unchanged.
+Stable release publishing still owns `:latest`; the dev workflow only publishes
+dev tags. Full checks remain on pull requests, main/release publishing, and manual
+**Application checks** runs.
+
+Because this uses your existing database, [back up PostgreSQL and config](DOCKER.md#backups)
+before testing a build with schema changes. Startup applies migrations; changing
+the image back to `:latest` does not reverse them. Use the saved image tag or digest
+with a matching backup when a schema change prevents an image-only rollback.
+
 ## Checks
 
 ```sh
@@ -69,7 +131,7 @@ The URL above is an example; create the database and use your own local credenti
 in parallel. Both final runtime images must start successfully against PostgreSQL,
 complete migrations, serve their bundled frontend, and contain the packaged catalog.
 Release channels change only after every application check, secret scan, and image
-smoke test passes. Pull requests, `dev` pushes, and manual check runs use the same
+smoke test passes. Pull requests and manual check runs use the same
 checks and native image smoke tests without publishing. Feature branches are checked
 through their pull requests to avoid duplicate push/PR runs. A newer commit cancels
 obsolete checks on the same branch or pull request.
@@ -84,6 +146,8 @@ validation errors fail closed.
 
 Container channels have separate owners:
 
+- `dev` is an on-demand, single-architecture homelab build with a startup smoke test.
+  It is not a fully validated release candidate. See the fast iteration workflow above.
 - `edge` follows the current checked main commit; superseded main runs cannot update it.
 - `vX.Y.Z` identifies an immutable stable release. The Git tag must match the backend,
   frontend, and npm lockfile versions. Prerelease versions are not supported by this workflow.

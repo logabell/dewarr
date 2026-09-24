@@ -628,9 +628,12 @@
 }
 .source-download-message {
   display: block;
-  min-width: 0;
-  max-width: 220px;
-  padding-left: calc(var(--control-height) + 2px);
+  width: 244px;
+  max-width: 244px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
   font-size: 11px;
   line-height: 1.5;
   color: var(--muted);
@@ -639,6 +642,10 @@
 }
 .source-download-message a {
   display: block;
+}
+.source-download-message ul {
+  margin: 6px 0;
+  padding-left: 16px;
 }
 .source-download-spinner {
   animation: source-download-spin 1s linear infinite;
@@ -748,4 +755,47 @@
 .list-downloads .quick-add-split svg {
   width: 14px;
   height: 14px;
+}
+
+.source-download-message[data-tone="error"] {
+  border-color: color-mix(in srgb, #fda4af 35%, transparent);
+  background: color-mix(in srgb, #fda4af 7%, var(--surface));
+}
+.source-download-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.source-download-heading svg {
+  flex-shrink: 0;
+}
+.source-download-message[data-tone="error"] .source-download-heading {
+  color: #fda4af;
+}
+.source-download-message[data-tone="success"] .source-download-heading {
+  color: #a2e5cf;
+}
+.source-download-message[data-tone="success"] {
+  border-color: color-mix(in srgb, #a2e5cf 30%, transparent);
+  background: color-mix(in srgb, #a2e5cf 6%, var(--surface));
+}
+.source-download-message a {
+  margin-top: 7px;
+  font-weight: 600;
+}
+.source-download-message progress {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  accent-color: var(--accent);
+}
+
+.source-row-actions:has(.source-download-message) {
+  min-width: 244px;
+}
+.source-table .release-format + small {
+  white-space: nowrap;
 }

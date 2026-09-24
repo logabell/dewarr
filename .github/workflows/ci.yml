@@ -1,8 +1,6 @@
 name: Application checks
 on:
-  push:
-    # Feature branches run through PRs; main/tags use Publish container.
-    branches: [dev]
+  # Dev images are requested separately; main/tags use Publish container.
   pull_request:
   workflow_dispatch:
   workflow_call:

@@ -81,6 +81,7 @@ class TargetView(BaseModel):
     source_artifact_id: UUID | None = None
     next_action: Literal["none", "search", "selected-release", "downloads", "book"] = "none"
     progress: float | None = None
+    selection_status: str | None = None
     attempt_state: str | None = None
     attempt_id: UUID | None = None
     can_view_download_history: bool = False
@@ -425,6 +426,10 @@ def _chip(card, target) -> str:
         return "in-library"
     if target.next_action == "downloads" and target.attempt_state != "cancelled":
         return "downloading"
+    if getattr(target, "selection_status", None) in {"held", "failed"}:
+        return "download-not-started"
+    if getattr(target, "selection_status", None) in {"queued", "running"}:
+        return "preparing-download"
     if target.state == "wanted":
         return "wanted"
     if target.state == "cancelled":
@@ -782,6 +787,24 @@ async def view(db, user, intent):
                     )
                     if quick and quick.status in {"queued", "running", "held"}:
                         target.message = quick.message
+                    selected = await db.scalar(
+                        select(Operation)
+                        .where(
+                            Operation.owner_id == intent.owner_id,
+                            Operation.kind == "acquisition.auto-select",
+                            Operation.payload["command"]["intent_id"].astext == str(intent.id),
+                            Operation.payload["command"]["slot"].astext == target.slot,
+                        )
+                        .order_by(Operation.created_at.desc(), Operation.id.desc())
+                        .limit(1)
+                    )
+                    if selected and (not quick or selected.created_at >= quick.created_at):
+                        from app.domain.release_download_status import selection_feedback
+
+                        target.selection_status = selected.status
+                        target.message = selection_feedback(selected)[0]
+                        if selected.status in {"queued", "running"}:
+                            target.next_action = "none"
             else:
                 target.next_action = "book"
         if owner and owner.id != user.id:
