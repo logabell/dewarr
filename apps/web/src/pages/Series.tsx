@@ -12,6 +12,7 @@ import BookCover from "../components/BookCover";
 import DetailTabs from "../components/DetailTabs";
 import SeriesRequests from "./SeriesRequests";
 import SeriesScopeReview from "./SeriesScopeReview";
+import FollowCatalog from "../components/FollowCatalog";
 import FollowRelease from "../components/FollowRelease";
 import { randomUUID } from "../randomUUID";
 
@@ -269,6 +270,13 @@ function SeriesContent({
         <div className="entity-hero-copy">
           <p className="eyebrow">THE SERIES</p>
           <h1>{data.name}</h1>
+          {canEdit && (
+            <FollowCatalog
+              kind="series"
+              externalId={externalId}
+              name={data.name}
+            />
+          )}
           <p className="entity-intro">Find your place in the story.</p>
           {data.fetched_at && (
             <>

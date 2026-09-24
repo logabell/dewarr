@@ -319,7 +319,7 @@ async def catalog_match(db, owner, record, *, previous=True, create=True, provid
 
 
 async def ensure_membership(db, row, observation):
-    if observation.excluded or not observation.present:
+    if observation.excluded or not observation.present or observation.snapshot.get("filter_reason"):
         return
     exists = await db.scalar(
         select(ListEntry.id).where(
@@ -336,6 +336,9 @@ async def ensure_membership(db, row, observation):
                 work_id=observation.work_id,
                 position=(position or 0) + 1,
                 locally_added=False,
+                created_at=observation.created_at
+                if observation.snapshot.get("source_kind")
+                else datetime.now(UTC),
             )
         )
         await db.flush()
@@ -393,7 +396,7 @@ async def apply_records(db, row, owner, items):
             }
             observation.last_seen_at = now
             observation.present = True
-        if not observation.excluded and observation.present:
+        if not observation.excluded and observation.present and not record.get("filter_reason"):
             root = await canonical_work(db, observation.work_id)
             # Backfill older RSS imports without replacing curated artwork or
             # clearing a saved cover when a later feed omits it.
@@ -403,7 +406,11 @@ async def apply_records(db, row, owner, items):
                 position += 1
                 db.add(
                     ListEntry(
-                        list_id=row.list_id, work_id=root.id, position=position, locally_added=False
+                        list_id=row.list_id,
+                        work_id=root.id,
+                        position=position,
+                        locally_added=False,
+                        created_at=observation.created_at if record.get("source_kind") else now,
                     )
                 )
                 listed.add(root.id)

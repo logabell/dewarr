@@ -22,7 +22,13 @@ import { randomUUID } from "../randomUUID";
 type Policy = components["schemas"]["ListPolicyView"];
 type Input = components["schemas"]["ListPolicyInput"];
 
-export default function ListPolicy({ listId }: { listId: string }) {
+export default function ListPolicy({
+  listId,
+  follow = false,
+}: {
+  listId: string;
+  follow?: boolean;
+}) {
   const cache = useQueryClient();
   const path = { list_id: listId };
   const policy = useQuery({
@@ -53,6 +59,7 @@ export default function ListPolicy({ listId }: { listId: string }) {
   });
   const saved = (value: Policy) => {
     cache.setQueryData(["list-policy", listId], value);
+    void cache.invalidateQueries({ queryKey: ["following"] });
     void cache.invalidateQueries({ queryKey: ["list-policy-books", listId] });
   };
   const pause = useMutation({
@@ -67,10 +74,11 @@ export default function ListPolicy({ listId }: { listId: string }) {
   });
   return (
     <section className="panel editor" aria-label="List acquisition policy">
-      <h2>List acquisition</h2>
+      <h2>{follow ? "Follow acquisition" : "List acquisition"}</h2>
       <p>
         Keep browsing, request books yourself, or automatically acquire missing
-        media when books join this list.
+        media when{" "}
+        {follow ? "matching books are discovered" : "books join this list"}.
       </p>
       <Notice error={policy.error || books.error || pause.error} />
       {policy.isPending ? (
@@ -98,6 +106,7 @@ export default function ListPolicy({ listId }: { listId: string }) {
           <PolicyEditor
             key={`${listId}:${policy.data?.revision || 0}`}
             listId={listId}
+            follow={follow}
             policy={policy.data}
             saved={saved}
           />
@@ -155,10 +164,12 @@ export default function ListPolicy({ listId }: { listId: string }) {
 
 function PolicyEditor({
   listId,
+  follow,
   policy,
   saved,
 }: {
   listId: string;
+  follow: boolean;
   policy: Policy | null;
   saved: (value: Policy) => void;
 }) {
@@ -198,7 +209,9 @@ function PolicyEditor({
     delete values.preferred_medium;
     return values;
   });
-  const [profileId] = useState(policy?.configuration.profile.id || "");
+  const [profileId, setProfileId] = useState(
+    policy?.configuration.profile.id || "",
+  );
   const [downloaderId, setDownloaderId] = useState(
     (policy?.configuration.route_options || policy?.configuration)
       ?.downloader_id || "",
@@ -385,6 +398,22 @@ function PolicyEditor({
               </select>
             </label>
             <label>
+              Download profile
+              <select
+                value={profileId}
+                onChange={(e) => {
+                  setProfileId(e.target.value);
+                  changed();
+                }}
+              >
+                {profiles.data?.map((p) => (
+                  <option key={p.id || "default"} value={p.id || ""}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Desired media
               <select
                 value={medium || ""}
@@ -510,13 +539,18 @@ function PolicyEditor({
                   (!downloader || media.some((m) => !destination(m))))
               }
             >
-              Preview list policy
+              {follow ? "Preview follow policy" : "Preview list policy"}
             </button>
           </fieldset>
         </form>
       ) : receipt.data ? (
         <div aria-label="List activation preview">
           <h3>Review {receipt.data.configuration.mode} mode</h3>
+          <p>
+            {receipt.data.counts?.owned || 0} owned ·{" "}
+            {receipt.data.counts?.missing || 0} missing ·{" "}
+            {receipt.data.counts?.excluded || 0} excluded
+          </p>
           <EffectiveScope
             specification={receipt.data.configuration.specification}
             origins={receipt.data.configuration.profile.scope_origins}

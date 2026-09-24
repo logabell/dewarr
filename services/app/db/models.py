@@ -572,6 +572,14 @@ class ListCatalogBinding(Identity, Base):
 
 class ListSubscription(Identity, Base):
     __tablename__ = "list_subscriptions"
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind IS NULL OR "
+            "(provider = 'hardcover' AND source_kind IN ('author', 'series'))",
+            name="list_subscription_source_kind",
+        ),
+    )
+    source_kind: Mapped[str | None] = mapped_column(String(20))
     provider: Mapped[str] = mapped_column(
         String(20), default="goodreads", server_default="goodreads"
     )

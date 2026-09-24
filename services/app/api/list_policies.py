@@ -69,6 +69,7 @@ class ActivationView(BaseModel):
     expires_at: datetime
     configuration: PolicyConfiguration
     records: list[ActivationRecord]
+    counts: dict[str, int] = Field(default_factory=dict)
     total: int
     selected: int
     offset: int
@@ -132,6 +133,7 @@ def preview_view(operation, offset=0, limit=50):
         configuration=data["configuration"],
         records=data["records"][offset : offset + limit],
         total=len(data["records"]),
+        counts=data.get("counts", {}),
         selected=sum(r["selected"] for r in data["records"]),
         offset=offset,
         limit=limit,
