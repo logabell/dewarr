@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Dewarr", version="0.2.3", lifespan=lifespan)
+    app = FastAPI(title="Dewarr", version="0.3.0", lifespan=lifespan)
     app.include_router(application_release.router, prefix="/api")
     app.include_router(notifications.router, prefix="/api")
 

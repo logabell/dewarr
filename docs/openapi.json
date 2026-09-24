@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Dewarr",
-    "version": "0.2.3"
+    "version": "0.3.0"
   },
   "paths": {
     "/api/application/release": {
