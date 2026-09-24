@@ -91,7 +91,7 @@ def account_view(row):
     return AccountView(
         configured=bool(row),
         enabled=bool(row and row.enabled),
-        status=row.status if row else "not-configured",
+        status=(row.status if row.enabled else "disabled") if row else "not-configured",
         last_error=row.last_error if row else None,
         last_success_at=row.last_success_at if row else None,
         suggest_series_gaps=bool(row and row.suggest_series_gaps),
@@ -174,10 +174,20 @@ async def save_account(body: AccountInput, user: CurrentUser, db: Database):
             raise HTTPException(422, "Enter your Hardcover API token")
         account = CatalogAccount(user_id=user.id, generation=0)
         db.add(account)
-    if body.token:
+    token_changed = bool(
+        body.token
+        and (
+            not account.encrypted_token
+            or decrypt_secrets(account.encrypted_token)["token"] != body.token.get_secret_value()
+        )
+    )
+    connection_changed = token_changed or account.enabled != body.enabled
+    if token_changed:
         account.encrypted_token = encrypt_secrets({"token": body.token.get_secret_value()})
-    account.enabled, account.status, account.last_error = body.enabled, "untested", None
-    account.last_success_at = None
+    account.enabled = body.enabled
+    if connection_changed:
+        account.status, account.last_error = "untested", None
+        account.last_success_at = None
     account.generation += 1
     db.add(AuditEvent(actor_id=user.id, action="metadata.account.updated", entity_id=user.id))
     await db.commit()

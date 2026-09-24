@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,13 +15,15 @@ from app.adapters.grimmory import Grimmory
 from app.config import get_settings
 from app.db.models import AuditEvent, ImportDestination, Integration, Library, Operation, User
 from app.db.session import session_factory
-from app.domain.downloaders import DOWNLOAD_KINDS, mapped_path
+from app.domain.downloaders import TRANSFER_KINDS, mapped_path
 from app.importing.backend import verify_backend
 from app.importing.filesystem import InspectionError, describe_os_error, directory
 from app.importing.naming import fingerprint
 from app.importing.publication import PublishFile, probe_destination, probe_download_folder
 from app.importing.storage import import_sources, storage_settings
 from app.security import decrypt_secrets
+
+logger = logging.getLogger(__name__)
 
 STAGING_NAME = ".book-search-staging"
 
@@ -116,7 +119,7 @@ async def setup_route_current(db, evidence):
     if not binding:
         return True
     row = await db.get(Integration, UUID(binding["id"]), populate_existing=True)
-    if not row or row.kind not in DOWNLOAD_KINDS or row.owner_id is not None or not row.enabled:
+    if not row or row.kind not in TRANSFER_KINDS or row.owner_id is not None or not row.enabled:
         return False
     if row.credential_generation != binding["generation"] or row.status != "connected":
         return False
@@ -261,7 +264,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             "qBittorrent will rename completed downloads into this folder. "
             "The seeding file and the library file are the same copy."
             if ok and seeding_rename
-            else "Hardlinks are unavailable across these mounts. "
+            else "Hardlinks are unavailable for these folders. "
             "Downloads will be copied into the library."
             if uses_copy
             else "Filesystem and library folder mapping verified; ready for a reviewed import plan"
@@ -274,11 +277,18 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         if ok and report.get("warnings"):
             message = " ".join([message, *report["warnings"]])
     except (OSError, ValueError, AdapterError) as error:
-        report, ok, copy_fallback = {}, False, False
+        report, ok, copy_fallback = getattr(error, "probe_report", {}), False, False
+        logger.warning("Library route probe %s failed", operation_id, exc_info=True)
         if isinstance(error, (InspectionError, AdapterError)):
             message = str(error)[:300]
         elif isinstance(error, OSError):
-            message = describe_os_error(error)
+            message = (
+                f"Folder verification failed while {report['failure_step']} "
+                f"({report['error_code']}). The folders were opened successfully, but this "
+                "filesystem operation failed. Check the worker log for details."
+                if report.get("failure_step")
+                else describe_os_error(error)
+            )
         else:
             message = "Destination probe failed; check paths, permissions and filesystem support"
     async with session_factory()() as db, db.begin():

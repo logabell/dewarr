@@ -12,15 +12,21 @@ Supported destinations:
   cover thumbnails when available. Mentions are disabled.
 - **ntfy:** the full topic URL, for example `https://ntfy.sh/my-topic`, and an
   optional bearer token. Self-hosted servers work too.
-- **Apprise:** one notification URL per line, up to 20. See the
+- **Apprise (administrators only):** one notification URL per line, up to 20. See the
   [Apprise URL documentation](https://github.com/caronc/apprise/wiki).
 - **JSON webhook:** an HTTP(S) POST destination and optional bearer token.
 
 Destinations, URL lists and tokens use Dewarr's existing encryption key and are
 never returned by the API. Keep the configuration directory with that key when
-backing up. Members' destinations must resolve to public IP addresses;
-administrators can configure private self-hosted destinations. Redirects are not
-followed by the first-class HTTP adapters.
+backing up. Members' destinations must resolve exclusively to public IP addresses.
+HTTP delivery connects directly to a checked address while preserving the original
+Host header and TLS hostname verification; DNS changes cannot redirect it into a
+private network. Administrators can configure private self-hosted destinations.
+Redirects are not followed by the first-class HTTP adapters. Apprise plugins use
+their own network transports, so only administrators can configure or send them.
+Existing member-owned Apprise channels must switch to Discord, ntfy or a JSON
+webhook; members can still pause or delete those channels. The worker checks this
+restriction again before delivery, including when an administrator loses that role.
 
 **Send test** queues a synthetic notification to that channel. It sends no book
 or user data. The ordinary worker checks the ledger every minute. Last delivery

@@ -24,6 +24,7 @@ from app.importing.publication import (
     remember_rename_plan,
 )
 from app.importing.recovery import journal_census
+from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
 from tests.media_fixtures import epub
 
 
@@ -196,6 +197,7 @@ def test_retry_recognizes_published_item_even_if_download_was_later_removed(spec
 
 
 @pytest.mark.parametrize("mode", ["hardlink", "copy"])
+@pytest.mark.usefixtures("path_bound_directory_handles")
 def test_post_rename_inode_change_recovers_by_publication_marker(specification, mode):
     spec = specification.model_copy(update={"mode": mode})
 
@@ -448,6 +450,7 @@ def test_probe_preserves_replaced_destination_during_cleanup(specification, monk
     assert not list(spec.staging_root.iterdir())
 
 
+@pytest.mark.usefixtures("path_bound_directory_handles")
 def test_probe_accepts_a_post_rename_directory_inode_change(specification, monkeypatch):
     spec = specification
     real_stat = os.stat
@@ -776,3 +779,14 @@ def test_smb_noserverino_mounts_are_reported(tmp_path):
     )
     assert len(warnings) == 1 and "/data/My Media" in warnings[0] and "serverino" in warnings[0]
     assert publication.mount_warnings(Path("/data/x"), mountinfo=tmp_path / "missing") == []
+
+
+@pytest.mark.usefixtures("path_bound_directory_handles")
+def test_copy_publication_with_path_bound_handles_preserves_download(specification, no_hardlinks):
+    spec = specification.model_copy(update={"mode": "copy"})
+    original = spec.source_root / "pack/book.epub"
+    before = original.read_bytes()
+    assert publish_item(spec)["state"] == "published"
+    assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == before
+    assert original.read_bytes() == before
+    assert publish_item(spec)["state"] == "published"

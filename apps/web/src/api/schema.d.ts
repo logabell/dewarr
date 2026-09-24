@@ -4011,6 +4011,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/organization/library-folders/browse": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Browse Library Folders */
+    get: operations["browse_library_folders_api_organization_library_folders_browse_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/organization/library-folders/{medium}": {
     parameters: {
       query?: never;
@@ -4790,6 +4807,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/downloaders/folders": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Folders */
+    get: operations["folders_api_downloaders_folders_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/downloaders/{connection_id}": {
     parameters: {
       query?: never;
@@ -4835,6 +4869,23 @@ export interface paths {
     put?: never;
     /** Preview Path */
     post: operations["preview_path_api_downloaders__connection_id__preview_path_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/downloaders/{connection_id}/mappings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Update Mappings */
+    put: operations["update_mappings_api_downloaders__connection_id__mappings_put"];
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -5355,7 +5406,7 @@ export interface components {
       protect_ratio: boolean;
       /**
        * Ratio Below
-       * @default 1.5
+       * @default 2.5
        */
       ratio_below: number;
       /**
@@ -5395,7 +5446,7 @@ export interface components {
       bonus_buy_gb: number;
       /**
        * Upload Interval Hours
-       * @default 6
+       * @default 3
        */
       upload_interval_hours: number;
     };
@@ -7317,6 +7368,17 @@ export interface components {
       /** Maximum Bytes */
       maximum_bytes?: number | null;
     };
+    /** DownloadFolderView */
+    DownloadFolderView: {
+      /** Path */
+      path: string | null;
+      /** Parent */
+      parent: string | null;
+      /** Directories */
+      directories: string[];
+      /** Truncated */
+      truncated: boolean;
+    };
     /** DownloadMapping */
     DownloadMapping: {
       /** Download Root */
@@ -7393,7 +7455,7 @@ export interface components {
        * Protocol
        * @enum {string}
        */
-      protocol: "torrent" | "nzb";
+      protocol: "torrent" | "nzb" | "soulseek";
       /** Source Key */
       source_key: string | null;
       /** Ready */
@@ -7460,7 +7522,13 @@ export interface components {
        * Kind
        * @enum {string}
        */
-      kind: "qbittorrent" | "transmission" | "deluge" | "sabnzbd" | "nzbget";
+      kind:
+        | "qbittorrent"
+        | "transmission"
+        | "deluge"
+        | "sabnzbd"
+        | "nzbget"
+        | "slskd";
       /** Name */
       name: string;
       /** Base Url */
@@ -8465,6 +8533,17 @@ export interface components {
       /** Retry After */
       retry_after?: number | null;
     };
+    /** LibraryFolderBrowseView */
+    LibraryFolderBrowseView: {
+      /** Path */
+      path: string | null;
+      /** Parent */
+      parent: string | null;
+      /** Directories */
+      directories: string[];
+      /** Truncated */
+      truncated: boolean;
+    };
     /** LibraryGroup */
     LibraryGroup: {
       /** Name */
@@ -8879,6 +8958,11 @@ export interface components {
       base_url: string;
       /** Proxy Url */
       proxy_url?: string | null;
+      /**
+       * Proxy Fallback Direct
+       * @default true
+       */
+      proxy_fallback_direct: boolean;
       /** Mam Id */
       mam_id?: string | null;
       /** Proxy Username */
@@ -8912,6 +8996,8 @@ export interface components {
       base_url: string;
       /** Proxy Url */
       proxy_url: string | null;
+      /** Proxy Fallback Direct */
+      proxy_fallback_direct: boolean;
       /** Has Session */
       has_session: boolean;
       /** Has Proxy Credentials */
@@ -8938,6 +9024,11 @@ export interface components {
       checked_at: string;
       /** Status */
       status: string;
+      /**
+       * Route
+       * @enum {string}
+       */
+      route: "direct" | "proxy" | "direct-fallback";
       /** Cookie Status */
       cookie_status: string;
       /** Proxy Status */
@@ -9119,6 +9210,13 @@ export interface components {
       revision?: string | null;
       /** Records */
       records: components["schemas"]["PackBook"][];
+    };
+    /** MappingInput */
+    MappingInput: {
+      /** Expected Generation */
+      expected_generation: number;
+      /** Mappings */
+      mappings: components["schemas"]["DownloadMapping"][];
     };
     /** MatchCandidate */
     MatchCandidate: {
@@ -11149,6 +11247,8 @@ export interface components {
       enabled: boolean;
       /** Proxy Url */
       proxy_url: string | null;
+      /** Proxy Fallback Direct */
+      proxy_fallback_direct: boolean;
       /** Has Credentials */
       has_credentials: boolean;
       /** Has Proxy Credentials */
@@ -12800,6 +12900,11 @@ export interface components {
       enabled: boolean;
       /** Proxy Url */
       proxy_url?: string | null;
+      /**
+       * Proxy Fallback Direct
+       * @default true
+       */
+      proxy_fallback_direct: boolean;
       /** Mam Id */
       mam_id?: string | null;
       /** Api Key */
@@ -22020,6 +22125,37 @@ export interface operations {
       };
     };
   };
+  browse_library_folders_api_organization_library_folders_browse_get: {
+    parameters: {
+      query?: {
+        path?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LibraryFolderBrowseView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   choose_api_organization_library_folders__medium__put: {
     parameters: {
       query?: never;
@@ -23647,6 +23783,37 @@ export interface operations {
       };
     };
   };
+  folders_api_downloaders_folders_get: {
+    parameters: {
+      query?: {
+        path?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloadFolderView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   update_connection_api_downloaders__connection_id__put: {
     parameters: {
       query?: never;
@@ -23735,6 +23902,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PathPreviewView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_mappings_api_downloaders__connection_id__mappings_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MappingInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DownloaderView"];
         };
       };
       /** @description Validation Error */

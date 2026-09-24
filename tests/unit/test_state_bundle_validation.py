@@ -2,11 +2,14 @@ import json
 import os
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from alembic.script import ScriptDirectory
 from cryptography.fernet import Fernet
 
+from app import state_bundle
 from app.config import Settings
 from app.state_bundle import (
     CONFIG_FIELDS,
@@ -19,6 +22,11 @@ from app.state_bundle import (
     private_write,
     validate_bundle,
 )
+
+
+def test_supported_bundle_schema_tracks_the_single_migration_head():
+    migrations = ScriptDirectory(str(Path(state_bundle.__file__).parent / "db" / "migrations"))
+    assert migrations.get_heads() == [SCHEMA]
 
 
 @pytest.fixture
@@ -95,6 +103,12 @@ def test_symlinks_and_undeclared_entries_rejected(bundle, tmp_path):
 def test_other_versions_are_not_silently_restored(bundle):
     rewrite(bundle, lambda data: data.update(format_version=2))
     with pytest.raises(BundleError, match="version 1"):
+        validate_bundle(bundle)
+
+
+def test_previous_schema_is_not_silently_restored(bundle):
+    rewrite(bundle, lambda data: data.update(schema_revision="0066_notifications_follows"))
+    with pytest.raises(BundleError, match="same schema revision"):
         validate_bundle(bundle)
 
 

@@ -1,3 +1,19 @@
+import {
+  ArrowRight,
+  CheckCircle2,
+  CircleAlert,
+  Download,
+  Folder,
+  FolderOpen,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
+import SlskdSettings from "./SlskdSettings";
+import MountedFolderBrowser from "../components/MountedFolderBrowser";
+import BookDialog from "../components/BookDialog";
+import ConnectionTestStatus from "../components/ConnectionTestStatus";
+import "./downloaders.css";
 import SettingHelp from "../components/SettingHelp";
 import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,10 +23,10 @@ import type { components } from "../api/schema";
 import { Empty, Loading, Notice } from "../components";
 
 type Connection = components["schemas"]["DownloaderView"];
-type DownloaderKind = Connection["kind"];
+type DownloaderKind = Exclude<Connection["kind"], "slskd">;
 
 const CLIENTS: Record<
-  DownloaderKind,
+  Connection["kind"],
   {
     name: string;
     placeholder: string;
@@ -19,6 +35,13 @@ const CLIENTS: Record<
     saved: string;
   }
 > = {
+  slskd: {
+    name: "Soulseek",
+    placeholder: "http://slskd:5030",
+    url: "",
+    category: "",
+    saved: "",
+  },
   qbittorrent: {
     name: "qBittorrent",
     placeholder: "http://qbittorrent:8080",
@@ -66,7 +89,7 @@ const CLIENTS: Record<
 };
 
 function draftKind(editing: string, selected?: Connection): DownloaderKind {
-  if (selected?.kind) return selected.kind;
+  if (selected?.kind && selected.kind !== "slskd") return selected.kind;
   if (editing === "transmission" || editing === "deluge") return editing;
   if (editing === "sab") return "sabnzbd";
   if (editing === "nzb") return "nzbget";
@@ -91,282 +114,480 @@ export default function Downloaders({
           params: { path: { connection_id: id } },
         }),
       ),
-    onSettled: () => cache.invalidateQueries({ queryKey: ["downloaders"] }),
+    onSettled: () =>
+      Promise.all([
+        cache.invalidateQueries({ queryKey: ["downloaders"] }),
+        cache.invalidateQueries({ queryKey: ["setup-readiness"] }),
+        cache.invalidateQueries({ queryKey: ["library-folder-options"] }),
+      ]),
   });
+  const saved = (connection: Connection) => {
+    cache.setQueryData<Connection[]>(["downloaders"], (current = []) => [
+      ...current.filter((item) => item.id !== connection.id),
+      connection,
+    ]);
+    setEditing(null);
+    if (connection.enabled) test.mutate(connection.id);
+  };
   const selected = connections.data?.find(
     (connection) => connection.id === editing,
   );
   return (
-    <>
+    <div className="downloader-settings">
       <header className="page-heading">
         {!embedded && (
           <div>
             <p className="eyebrow">DOWNLOAD CONNECTIONS</p>
             <h1>Downloaders</h1>
             <p>
-              Connect qBittorrent, Transmission or Deluge for torrents, or
-              SABnzbd or NZBGet for Usenet.
+              Connect a download client. Dewarr tests the connection when you
+              save.
             </p>
             <Link to="/settings#libraries">Library connections</Link>
           </div>
         )}
         <div className="button-row">
-          <button className="primary" onClick={() => setEditing("qbit")}>
-            Connect qBittorrent
+          {(
+            [
+              "qbittorrent",
+              "transmission",
+              "deluge",
+              "sabnzbd",
+              "nzbget",
+            ] as const
+          ).map((kind) => (
+            <button
+              key={kind}
+              disabled={test.isPending}
+              className={kind === "qbittorrent" ? "primary" : ""}
+              onClick={() =>
+                setEditing(
+                  {
+                    qbittorrent: "qbit",
+                    sabnzbd: "sab",
+                    nzbget: "nzb",
+                    transmission: "transmission",
+                    deluge: "deluge",
+                  }[kind],
+                )
+              }
+            >
+              <Plus size={14} aria-hidden="true" /> Connect {CLIENTS[kind].name}
+            </button>
+          ))}
+          <button disabled={test.isPending} onClick={() => setEditing("slskd")}>
+            <Plus size={14} /> Connect Soulseek
           </button>
-          <button onClick={() => setEditing("transmission")}>
-            Connect Transmission
-          </button>
-          <button onClick={() => setEditing("deluge")}>Connect Deluge</button>
-          <button onClick={() => setEditing("sab")}>Connect SABnzbd</button>
-          <button onClick={() => setEditing("nzb")}>Connect NZBGet</button>
         </div>
       </header>
-      <Notice error={connections.error || test.error} />
-      {editing &&
-        (editing === "qbit" ||
-          editing === "sab" ||
-          editing === "nzb" ||
-          editing === "transmission" ||
-          editing === "deluge" ||
-          selected) && (
+      <DownloadDispatchNotice />
+      <Notice error={connections.error} />
+      {editing === "slskd" ? (
+        <BookDialog title="Soulseek connection" close={() => setEditing(null)}>
+          <SlskdSettings onConfigureFolder={() => setEditing(null)} />
+        </BookDialog>
+      ) : (
+        editing && (
           <ConnectionForm
             key={`${editing}:${selected?.generation || 0}`}
             kind={draftKind(editing, selected)}
             connection={selected}
             close={() => setEditing(null)}
+            saved={saved}
           />
-        )}
+        )
+      )}
       {connections.isPending ? (
         <Loading />
       ) : connections.data?.length ? (
-        <div className="connection-grid">
-          {connections.data.map((connection) => (
-            <article
-              className="panel"
-              key={connection.id}
-              aria-label={connection.name}
-            >
-              <div className="section-heading">
-                <h2>{connection.name}</h2>
-                <span className="status">
-                  {connection.enabled ? connection.status : "Disabled"}
-                </span>
-              </div>
-              <p className="break-text">{connection.base_url}</p>
-              {connection.capabilities && (
-                <p className="muted">
-                  Attempt tags:{" "}
-                  {connection.capabilities.attempt_tagging
-                    ? "supported"
-                    : "unavailable; unique folders identify attempts"}
-                  . In-client rename:{" "}
-                  {connection.capabilities.in_client_rename
-                    ? "available when enabled"
-                    : "unavailable"}
-                  . Categories:{" "}
-                  {connection.capabilities.categories
-                    ? "supported"
-                    : "Label plugin required"}
-                  . Sequential/first-last controls:{" "}
-                  {connection.capabilities.sequential_first_last
-                    ? "supported"
-                    : "unavailable"}
-                  .
-                </p>
-              )}
-              {(connection.limitations || []).map((limit) => (
-                <p className="muted" key={limit}>
-                  {limit}
-                </p>
-              ))}
-              <p>
-                {connection.version
-                  ? `${CLIENTS[connection.kind].name} ${connection.version}`
-                  : "Version not checked"}
-              </p>
-              <p className="muted">
-                {connection.last_success_at
-                  ? `Last successful test: ${new Date(connection.last_success_at).toLocaleString()}`
-                  : "Test the saved connection to check access."}
-              </p>
-              {connection.last_error && (
-                <p className="notice error">{connection.last_error}</p>
-              )}
-              <dl className="source-facts">
-                <dt>Category</dt>
-                <dd>{connection.category}</dd>
-                {connection.save_path && (
-                  <>
-                    <dt>qBittorrent folder</dt>
-                    <dd className="break-text">{connection.save_path}</dd>
-                  </>
+        <div className="connection-grid downloader-grid">
+          {connections.data.map((connection) => {
+            const testing = test.isPending && test.variables === connection.id;
+            const testError =
+              test.variables === connection.id ? test.error : null;
+            const shared =
+              connection.mappings_current &&
+              connection.mappings.every(
+                (mapping) => mapping.download_root === mapping.worker_path,
+              );
+            const folderMapping = connection.mappings_current
+              ? connection.mappings.find(
+                  (mapping) =>
+                    connection.save_path === mapping.download_root ||
+                    connection.save_path.startsWith(
+                      `${mapping.download_root}/`,
+                    ),
+                )
+              : undefined;
+            const localFolder = folderMapping
+              ? folderMapping.worker_path +
+                connection.save_path.slice(folderMapping.download_root.length)
+              : undefined;
+            return (
+              <article
+                className="panel downloader-card"
+                key={connection.id}
+                aria-label={connection.name}
+              >
+                <div className="downloader-heading">
+                  <span className="downloader-icon">
+                    <Download size={21} aria-hidden="true" />
+                  </span>
+                  <div className="downloader-identity">
+                    <h2>{connection.name}</h2>
+                    <p className="muted break-text">{connection.base_url}</p>
+                  </div>
+                  {connection.enabled ? (
+                    <ConnectionTestStatus
+                      configured
+                      status={connection.status}
+                      lastSuccessAt={connection.last_success_at}
+                      isPending={testing}
+                      error={testError}
+                    />
+                  ) : (
+                    <span className="status">Disabled</span>
+                  )}
+                </div>
+                {(testError || connection.last_error) && (
+                  <div role="alert" className="notice error">
+                    <strong>Connection saved. Test unsuccessful.</strong>
+                    <p>{testError?.message || connection.last_error}</p>
+                    <p>Check the address and credentials, then test again.</p>
+                  </div>
                 )}
-              </dl>
-              {connection.mappings_current &&
-                connection.mappings.map((mapping) => (
-                  <p className="muted break-text" key={mapping.download_root}>
-                    {mapping.download_root} → {mapping.worker_path}
+                <dl className="downloader-facts">
+                  <div>
+                    <dt>Version</dt>
+                    <dd>{connection.version || "Not checked"}</dd>
+                  </div>
+                  <div>
+                    <dt>Download category</dt>
+                    <dd>{connection.category || "Default (no category)"}</dd>
+                  </div>
+                </dl>
+                <div className="downloader-folder">
+                  <Folder size={18} aria-hidden="true" />
+                  <div>
+                    <h3>Download folder</h3>
+                    {connection.save_path ? (
+                      <code>{connection.save_path}</code>
+                    ) : (
+                      <p className="muted">
+                        {testing
+                          ? "Reading the folder from your download client…"
+                          : "A successful connection test will detect this folder."}
+                      </p>
+                    )}
+                    <p className="muted">
+                      {connection.category
+                        ? `Folder for “${connection.category}”, managed in ${CLIENTS[connection.kind].name}.`
+                        : `Default folder, managed in ${CLIENTS[connection.kind].name}.`}
+                    </p>
+                    {localFolder && localFolder !== connection.save_path && (
+                      <p className="downloader-local-folder">
+                        Dewarr folder: <code>{localFolder}</code>
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {connection.save_path && (
+                  <div
+                    className="downloader-folder-status"
+                    data-ready={connection.mappings_current}
+                  >
+                    {connection.mappings_current ? (
+                      <CheckCircle2 size={16} aria-hidden="true" />
+                    ) : (
+                      <CircleAlert size={16} aria-hidden="true" />
+                    )}
+                    <div>
+                      <strong>
+                        {shared
+                          ? "Same folder path · no translation needed"
+                          : connection.mappings_current
+                            ? "Folder mapping configured"
+                            : "Folder setup needed"}
+                      </strong>
+                      <p>
+                        {shared
+                          ? "No manual path mapping needed. Library setup verifies file access before importing."
+                          : connection.mappings_current
+                            ? "Dewarr will translate the download path when importing. Library setup verifies file access."
+                            : "The connection and folder setup are separate. If both apps share this path, check the volume mount and test again. If the paths differ, add a mapping below."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <PathMap
+                  key={`${connection.id}:${connection.generation}:${connection.save_path}:${JSON.stringify(connection.mappings)}`}
+                  connection={connection}
+                  saved={saved}
+                  disabled={test.isPending}
+                />
+                {connection.kind !== "slskd" && (
+                  <details className="downloader-details">
+                    <summary>Client capabilities</summary>
+                    <p className="muted">
+                      Attempt tags:{" "}
+                      {connection.capabilities?.attempt_tagging
+                        ? "supported"
+                        : "unique folders identify attempts"}
+                      . In-client rename:{" "}
+                      {connection.capabilities?.in_client_rename
+                        ? "available when enabled"
+                        : "unavailable"}
+                      . Categories:{" "}
+                      {connection.capabilities?.categories
+                        ? "supported"
+                        : "Label plugin required"}
+                      . Sequential/first-last controls:{" "}
+                      {connection.capabilities?.sequential_first_last
+                        ? "supported"
+                        : "unavailable"}
+                      .
+                    </p>
+                    {(connection.limitations || []).map((limit) => (
+                      <p className="muted" key={limit}>
+                        {limit}
+                      </p>
+                    ))}
+                  </details>
+                )}
+                {connection.kind === "slskd" && (
+                  <p className="muted">
+                    Soulseek searches and downloads through the same slskd
+                    connection.
                   </p>
-                ))}
-              <PathMap
-                key={`${connection.id}:${connection.generation}`}
-                connection={connection}
-              />
-              <div className="button-row">
-                <button onClick={() => setEditing(connection.id)}>
-                  Edit downloader
-                </button>
-                <button
-                  disabled={test.isPending || !connection.enabled}
-                  onClick={() => test.mutate(connection.id)}
-                >
-                  {test.isPending && test.variables === connection.id
-                    ? "Testing…"
-                    : "Test saved connection"}
-                </button>
-              </div>
-            </article>
-          ))}
+                )}
+                <div className="button-row downloader-actions">
+                  <button
+                    disabled={test.isPending}
+                    onClick={() =>
+                      setEditing(
+                        connection.kind === "slskd" ? "slskd" : connection.id,
+                      )
+                    }
+                  >
+                    Edit downloader
+                  </button>
+                  <button
+                    disabled={test.isPending || !connection.enabled}
+                    onClick={() => test.mutate(connection.id)}
+                  >
+                    <RefreshCw size={14} aria-hidden="true" />
+                    {testing ? "Testing…" : "Test connection"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : embedded ? (
         <p className="muted">No download clients connected.</p>
       ) : (
         <Empty title="No downloaders connected">
-          Add qBittorrent for torrents, or SABnzbd or NZBGet for Usenet.
-          qBittorrent and NZBGet credentials are optional. SABnzbd needs an API
-          key.
+          Choose a client above. Saving automatically tests the connection and
+          detects its download folder.
         </Empty>
       )}
-    </>
+    </div>
   );
 }
 
-function PathMap({ connection }: { connection: Connection }) {
-  const cache = useQueryClient();
-  const [rows, setRows] = useState(
-    connection.mappings.length
-      ? connection.mappings.map((item) => ({
-          download_root: item.download_root,
-          worker_path: item.worker_path,
-        }))
-      : [{ download_root: connection.save_path, worker_path: "" }],
+function PathMap({
+  connection,
+  saved,
+  disabled,
+}: {
+  connection: Connection;
+  saved: (connection: Connection) => void;
+  disabled: boolean;
+}) {
+  const [rows, setRows] = useState(() =>
+    connection.mappings.map((item) => ({
+      download_root: item.download_root,
+      worker_path: item.worker_path,
+    })),
   );
+  const [browsing, setBrowsing] = useState<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const change = (
+    index: number,
+    field: "download_root" | "worker_path",
+    value: string,
+  ) =>
+    setRows((current) =>
+      current.map((item, i) =>
+        i === index ? { ...item, [field]: value } : item,
+      ),
+    );
   const save = useMutation({
-    mutationFn: async () => {
-      const saved = result(
-        await api.PUT("/api/downloaders/{connection_id}", {
+    mutationFn: async () =>
+      result(
+        await api.PUT("/api/downloaders/{connection_id}/mappings", {
           params: { path: { connection_id: connection.id } },
-          body: {
-            kind: connection.kind,
-            name: connection.name,
-            base_url: connection.base_url,
-            category: connection.category,
-            enabled: connection.enabled,
-            expected_generation: connection.generation,
-            mappings: rows,
-          },
+          body: { expected_generation: connection.generation, mappings: rows },
         }),
-      );
-      return result(
-        await api.POST("/api/downloaders/{connection_id}/test", {
-          params: { path: { connection_id: saved.id } },
-        }),
-      );
-    },
-    onSettled: () => cache.invalidateQueries({ queryKey: ["downloaders"] }),
+      ),
+    onSuccess: saved,
   });
   if (!connection.save_path) return null;
+  const dirty =
+    JSON.stringify(rows) !==
+    JSON.stringify(
+      connection.mappings.map(({ download_root, worker_path }) => ({
+        download_root,
+        worker_path,
+      })),
+    );
   return (
-    <form
-      className="path-map"
-      aria-label="Download path mapping"
-      onSubmit={(event) => {
-        event.preventDefault();
-        save.mutate();
-      }}
+    <details
+      className="downloader-details downloader-mappings"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <fieldset>
-        <legend>Download path mapping</legend>
-        <p className="muted">
-          Map the folder qBittorrent reports to the folder Dewarr can read. Use
-          this when the download client and Dewarr see the same files at
-          different paths.
-        </p>
-        {rows.map((row, index) => (
-          <div className="path-map-row" key={index}>
-            <label>
-              Path in qBittorrent
-              <input
-                value={row.download_root}
-                onChange={(event) =>
-                  setRows((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index
-                        ? { ...item, download_root: event.target.value }
-                        : item,
-                    ),
-                  )
-                }
-                required
-                maxLength={2000}
+      <summary>
+        Advanced · path mappings{" "}
+        <span className="muted">
+          {connection.mappings.filter((m) => m.download_root !== m.worker_path)
+            .length || "Optional"}
+        </span>
+      </summary>
+      <p className="muted">
+        Only needed when the same files have different paths in your download
+        client and Dewarr. Sharing a Docker Compose stack works without a
+        mapping when both containers mount the downloads at the same path.
+      </p>
+      <p className="downloader-example">
+        For example: <code>/downloads</code> in {CLIENTS[connection.kind].name}{" "}
+        → <code>/data/torrents</code> in Dewarr. A mapping translates the path;
+        it does not mount or move files.
+      </p>
+      <form
+        aria-label="Download path mapping"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.mutate();
+        }}
+      >
+        <fieldset disabled={disabled || save.isPending}>
+          <legend className="sr-only">Folder mappings</legend>
+          {rows.map((row, index) => (
+            <div className="downloader-map-row" key={index}>
+              <label>
+                Folder in {CLIENTS[connection.kind].name}
+                <input
+                  aria-label={`Folder in ${CLIENTS[connection.kind].name} ${index + 1}`}
+                  value={row.download_root}
+                  onChange={(event) =>
+                    change(index, "download_root", event.target.value)
+                  }
+                  required
+                  maxLength={2000}
+                />
+              </label>
+              <ArrowRight
+                className="downloader-map-arrow"
+                size={18}
+                aria-hidden="true"
               />
-            </label>
-            <label>
-              Path on Dewarr
-              <input
-                value={row.worker_path}
-                placeholder="/data/downloads"
-                onChange={(event) =>
-                  setRows((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index
-                        ? { ...item, worker_path: event.target.value }
-                        : item,
-                    ),
-                  )
-                }
-                required
-                maxLength={2000}
-              />
-            </label>
-            {rows.length > 1 && (
+              <label>
+                Same folder in Dewarr
+                <span className="downloader-path-input">
+                  <input
+                    aria-label={`Same folder in Dewarr ${index + 1}`}
+                    value={row.worker_path}
+                    placeholder="/data/torrents"
+                    onChange={(event) =>
+                      change(index, "worker_path", event.target.value)
+                    }
+                    required
+                    maxLength={2000}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Browse Dewarr folder ${index + 1}`}
+                    onClick={() => setBrowsing(index)}
+                  >
+                    <FolderOpen size={17} aria-hidden="true" />
+                  </button>
+                </span>
+              </label>
               <button
+                className="downloader-remove"
                 type="button"
+                aria-label={`Remove mapping ${index + 1}`}
                 onClick={() =>
-                  setRows((current) =>
-                    current.filter((_, itemIndex) => itemIndex !== index),
-                  )
+                  setRows((current) => current.filter((_, i) => i !== index))
                 }
               >
-                Remove mapping {index + 1}
+                <Trash2 size={16} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          <div className="button-row">
+            <button
+              type="button"
+              disabled={rows.length >= 20}
+              onClick={() =>
+                setRows((current) => [
+                  ...current,
+                  {
+                    download_root: current.length ? "" : connection.save_path,
+                    worker_path: "",
+                  },
+                ])
+              }
+            >
+              <Plus size={15} aria-hidden="true" /> Add mapping
+            </button>
+            {dirty && (
+              <button className="primary" type="submit">
+                {save.isPending
+                  ? "Saving…"
+                  : rows.length
+                    ? "Save & test mappings"
+                    : "Use automatic folder matching"}
               </button>
             )}
           </div>
-        ))}
-        <button
-          type="button"
-          disabled={rows.length >= 20}
-          onClick={() =>
-            setRows((current) => [
-              ...current,
-              { download_root: "", worker_path: "" },
-            ])
-          }
-        >
-          Add path mapping
-        </button>
-      </fieldset>
-      {!connection.mappings_current && (
-        <p className="notice">
-          Dewarr cannot read the download folder until this map is saved.
-        </p>
+          {!rows.length && (
+            <p className="muted">
+              Automatic matching is used when no custom mappings are saved.
+            </p>
+          )}
+        </fieldset>
+        <Notice error={save.error} />
+      </form>
+      {browsing !== null && (
+        <DownloadFolderPicker
+          close={() => setBrowsing(null)}
+          select={(path) => {
+            change(browsing, "worker_path", path);
+            setBrowsing(null);
+          }}
+        />
       )}
-      <Notice error={save.error} />
-      <button className="primary" disabled={save.isPending}>
-        {save.isPending ? "Saving path map…" : "Save path map"}
-      </button>
-    </form>
+    </details>
+  );
+}
+
+function DownloadFolderPicker({
+  close,
+  select,
+}: {
+  close: () => void;
+  select: (path: string) => void;
+}) {
+  return (
+    <BookDialog
+      title="Choose Dewarr download folder"
+      close={close}
+      className="download-folder-dialog"
+    >
+      <MountedFolderBrowser purpose="download" select={select} cancel={close} />
+    </BookDialog>
   );
 }
 
@@ -374,13 +595,14 @@ function ConnectionForm({
   connection,
   kind,
   close,
+  saved,
 }: {
   connection?: Connection;
   kind: DownloaderKind;
   close: () => void;
+  saved: (connection: Connection) => void;
 }) {
   const urlId = useId();
-  const cache = useQueryClient();
   const client = CLIENTS[kind];
   const token = kind === "sabnzbd";
   const [url, setUrl] = useState(connection?.base_url || "");
@@ -410,13 +632,7 @@ function ConnectionForm({
           )
         : result(await api.POST("/api/downloaders", { body }));
     },
-    onSuccess: () => {
-      setUsername("");
-      setPassword("");
-      setApiKey("");
-      cache.invalidateQueries({ queryKey: ["downloaders"] });
-      close();
-    },
+    onSuccess: saved,
   });
   return (
     <form
@@ -427,6 +643,12 @@ function ConnectionForm({
         save.mutate();
       }}
     >
+      <h2>
+        {connection ? "Edit" : "Connect"} {client.name}
+      </h2>
+      <p className="muted">
+        Save to test access and detect the download folder automatically.
+      </p>
       <Notice error={save.error} />
       <div style={{ display: "grid", gap: 6, maxWidth: "32rem" }}>
         <div className="setting-label">
@@ -501,12 +723,30 @@ function ConnectionForm({
       <p className="muted">{client.category}</p>
       <div className="button-row">
         <button className="primary" disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save downloader"}
+          {save.isPending ? "Saving…" : "Save & test connection"}
         </button>
         <button type="button" onClick={close}>
           Cancel
         </button>
       </div>
     </form>
+  );
+}
+
+function DownloadDispatchNotice() {
+  const readiness = useQuery({
+    queryKey: ["setup-readiness"],
+    queryFn: async () => result(await api.GET("/api/setup/readiness")),
+  });
+  if (readiness.data?.download_dispatch_enabled !== false) return null;
+  return (
+    <div className="notice">
+      <strong>Downloads are disabled on this server</strong>
+      <p>
+        You can connect clients and verify folders now. To start downloads, set{" "}
+        <code>BOOK_DOWNLOAD_DISPATCH_ENABLED=true</code> in Dewarr’s environment
+        and restart the container.
+      </p>
+    </div>
   );
 }

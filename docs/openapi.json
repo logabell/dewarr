@@ -13168,6 +13168,56 @@
         }
       }
     },
+    "/api/organization/library-folders/browse": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "summary": "Browse Library Folders",
+        "operationId": "browse_library_folders_api_organization_library_folders_browse_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFolderBrowseView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/organization/library-folders/{medium}": {
       "put": {
         "tags": [
@@ -15384,6 +15434,56 @@
         }
       }
     },
+    "/api/downloaders/folders": {
+      "get": {
+        "tags": [
+          "downloaders"
+        ],
+        "summary": "Folders",
+        "operationId": "folders_api_downloaders_folders_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadFolderView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/downloaders/{connection_id}": {
       "put": {
         "tags": [
@@ -15516,6 +15616,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PathPreviewView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/downloaders/{connection_id}/mappings": {
+      "put": {
+        "tags": [
+          "downloaders"
+        ],
+        "summary": "Update Mappings",
+        "operationId": "update_mappings_api_downloaders__connection_id__mappings_put",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloaderView"
                 }
               }
             }
@@ -16964,7 +17117,7 @@
             "maximum": 1000.0,
             "exclusiveMinimum": 0.0,
             "title": "Ratio Below",
-            "default": 1.5
+            "default": 2.5
           },
           "ratio_buy_gb": {
             "type": "integer",
@@ -17016,7 +17169,7 @@
             "maximum": 168.0,
             "minimum": 1.0,
             "title": "Upload Interval Hours",
-            "default": 6
+            "default": 3
           }
         },
         "type": "object",
@@ -22135,6 +22288,51 @@
         "type": "object",
         "title": "DownloadConstraints"
       },
+      "DownloadFolderView": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directories"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "parent",
+          "directories",
+          "truncated"
+        ],
+        "title": "DownloadFolderView"
+      },
       "DownloadMapping": {
         "properties": {
           "download_root": {
@@ -22315,7 +22513,8 @@
             "type": "string",
             "enum": [
               "torrent",
-              "nzb"
+              "nzb",
+              "soulseek"
             ],
             "title": "Protocol"
           },
@@ -22442,8 +22641,7 @@
                   "$ref": "#/components/schemas/DownloadMapping"
                 },
                 "type": "array",
-                "maxItems": 20,
-                "minItems": 1
+                "maxItems": 20
               },
               {
                 "type": "null"
@@ -22516,7 +22714,8 @@
               "transmission",
               "deluge",
               "sabnzbd",
-              "nzbget"
+              "nzbget",
+              "slskd"
             ],
             "title": "Kind"
           },
@@ -25095,6 +25294,52 @@
         ],
         "title": "LibraryDiscoveryShelf"
       },
+      "LibraryFolderBrowseView": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directories"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "parent",
+          "directories",
+          "truncated"
+        ],
+        "title": "LibraryFolderBrowseView"
+      },
       "LibraryGroup": {
         "properties": {
           "name": {
@@ -26182,6 +26427,11 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct",
+            "default": true
+          },
           "mam_id": {
             "anyOf": [
               {
@@ -26275,6 +26525,10 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct"
+          },
           "has_session": {
             "type": "boolean",
             "title": "Has Session"
@@ -26328,6 +26582,7 @@
           "enabled",
           "base_url",
           "proxy_url",
+          "proxy_fallback_direct",
           "has_session",
           "has_proxy_credentials",
           "generation",
@@ -26351,6 +26606,15 @@
           "status": {
             "type": "string",
             "title": "Status"
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "proxy",
+              "direct-fallback"
+            ],
+            "title": "Route"
           },
           "cookie_status": {
             "type": "string",
@@ -26383,6 +26647,7 @@
           "connection",
           "checked_at",
           "status",
+          "route",
           "cookie_status",
           "proxy_status",
           "proxy",
@@ -26906,6 +27171,29 @@
           "records"
         ],
         "title": "ManualPackPreview"
+      },
+      "MappingInput": {
+        "properties": {
+          "expected_generation": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Generation"
+          },
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadMapping"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Mappings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected_generation",
+          "mappings"
+        ],
+        "title": "MappingInput"
       },
       "MatchCandidate": {
         "properties": {
@@ -32175,6 +32463,10 @@
             ],
             "title": "Proxy Url"
           },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct"
+          },
           "has_credentials": {
             "type": "boolean",
             "title": "Has Credentials"
@@ -32209,6 +32501,7 @@
           "base_url",
           "enabled",
           "proxy_url",
+          "proxy_fallback_direct",
           "has_credentials",
           "has_proxy_credentials",
           "excluded_indexers",
@@ -36627,6 +36920,11 @@
               }
             ],
             "title": "Proxy Url"
+          },
+          "proxy_fallback_direct": {
+            "type": "boolean",
+            "title": "Proxy Fallback Direct",
+            "default": true
           },
           "mam_id": {
             "anyOf": [

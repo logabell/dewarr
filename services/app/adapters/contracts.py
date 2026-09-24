@@ -25,6 +25,7 @@ class AdapterError(Exception):
         super().__init__(message)
         self.kind = kind
         self.retry_after = retry_after
+        self.proxy_retryable = False
 
 
 class MutationError(AdapterError):

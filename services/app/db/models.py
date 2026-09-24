@@ -327,6 +327,9 @@ class SourceConnection(Base):
     key: Mapped[str] = mapped_column(String(40), primary_key=True)
     base_url: Mapped[str] = mapped_column(Text)
     proxy_url: Mapped[str | None] = mapped_column(Text)
+    proxy_fallback_direct: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
     encrypted_secrets: Mapped[str] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     generation: Mapped[int] = mapped_column(Integer, default=1)

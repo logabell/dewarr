@@ -13,7 +13,7 @@ from app.db.models import (
     NotificationEvent,
     NotificationPolicy,
 )
-from app.notifications.channels import ChannelSecrets, validate_config
+from app.notifications.channels import APPRISE_ADMIN_ONLY, ChannelSecrets, validate_config
 from app.notifications.delivery import allowed_events
 from app.notifications.events import DEFAULT_MEMBER_EVENTS, EVENTS
 from app.security import encrypt_secrets
@@ -127,6 +127,14 @@ async def settings(user: CurrentUser, db: Database):
 async def apply(db, user, body, channel):
     if body.installation and user.role != "admin":
         raise HTTPException(403, "Only administrators can manage installation channels")
+    if (
+        body.kind == "apprise"
+        and user.role != "admin"
+        and (not channel or channel.kind != "apprise" or body.enabled or body.secrets is not None)
+    ):
+        # Existing owners can still pause/delete an old Apprise channel or switch
+        # it to a supported HTTP service, but cannot create or enable one.
+        raise HTTPException(403, APPRISE_ADMIN_ONLY)
     allowed = set(EVENTS) if body.installation else set(await allowed_events(db, user))
     if body.enabled and set(body.events) - allowed:
         raise HTTPException(403, "One or more events are not permitted for this channel")
@@ -220,6 +228,8 @@ async def history(channel_id: UUID, user: CurrentUser, db: Database):
 @router.post("/channels/{channel_id}/test", response_model=NotificationChannelView, status_code=202)
 async def test(channel_id: UUID, user: CurrentUser, db: Database):
     channel = await owned(db, user, channel_id)
+    if channel.kind == "apprise" and user.role != "admin":
+        raise HTTPException(403, APPRISE_ADMIN_ONLY)
     if not channel.enabled:
         raise HTTPException(409, "Enable this channel before testing")
     recent = await db.scalar(

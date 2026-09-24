@@ -226,7 +226,9 @@ export default function Notifications({ admin }: { admin: boolean }) {
                   <option value="webhook">JSON webhook</option>
                   <option value="discord">Discord</option>
                   <option value="ntfy">ntfy</option>
-                  <option value="apprise">Apprise</option>
+                  <option value="apprise" disabled={!admin}>
+                    {admin ? "Apprise" : "Apprise (administrator only)"}
+                  </option>
                 </select>
               </label>
               {admin && (
@@ -363,6 +365,13 @@ export default function Notifications({ admin }: { admin: boolean }) {
                 {channel.installation ? "Installation" : "Personal"} ·{" "}
                 {channel.enabled ? "Enabled" : "Paused"}
               </p>
+              {!admin && channel.kind === "apprise" && (
+                <p>
+                  Apprise requires an administrator. Edit this channel to choose
+                  Discord, ntfy or a JSON webhook. You can also pause or delete
+                  it.
+                </p>
+              )}
               <p>
                 Last delivery:{" "}
                 <strong>{channel.last_status ?? "Not tested"}</strong>
@@ -373,13 +382,20 @@ export default function Notifications({ admin }: { admin: boolean }) {
               <div className="actions">
                 <button onClick={() => edit(channel)}>Edit</button>
                 <button
-                  disabled={action.isPending || !channel.enabled}
+                  disabled={
+                    action.isPending ||
+                    !channel.enabled ||
+                    (!admin && channel.kind === "apprise")
+                  }
                   onClick={() => action.mutate({ channel, type: "test" })}
                 >
                   Send test
                 </button>
                 <button
-                  disabled={action.isPending}
+                  disabled={
+                    action.isPending ||
+                    (!admin && channel.kind === "apprise" && !channel.enabled)
+                  }
                   onClick={() => action.mutate({ channel, type: "toggle" })}
                 >
                   {channel.enabled ? "Pause" : "Enable"}

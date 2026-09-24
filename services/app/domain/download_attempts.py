@@ -253,7 +253,11 @@ async def start(
             raise HTTPException(409, "This command key was already used for another operation")
         return await owned_attempt(db, user, UUID(receipt.payload["attempt_id"]))
     if not get_settings().download_dispatch_enabled:
-        raise HTTPException(409, "Download dispatch is not enabled for this installation")
+        raise HTTPException(
+            409,
+            "Downloads are disabled on this server. Ask an administrator to set "
+            "BOOK_DOWNLOAD_DISPATCH_ENABLED=true and restart Dewarr.",
+        )
     selection = await owned_selection(db, user, selection_id)
     members = [selection] + [
         await owned_selection(db, user, identifier) for identifier in additional

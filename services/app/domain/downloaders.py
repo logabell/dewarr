@@ -16,14 +16,16 @@ from app.adapters.nzbget import NzbClient
 from app.adapters.qbittorrent import QbitClient, absolute_path
 from app.adapters.sabnzbd import SabClient
 from app.adapters.transmission import TransmissionClient
-from app.db.models import Integration
+from app.db.models import ImportStorageSettings, Integration
 from app.db.session import session_factory
+from app.domain.download_folders import browse_roots, readable_folder
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
 from app.security import decrypt_secrets
 
 TORRENT_KINDS = {"qbittorrent", "transmission", "deluge"}
 DOWNLOAD_KINDS = {*TORRENT_KINDS, "sabnzbd", "nzbget"}
+TRANSFER_KINDS = {*DOWNLOAD_KINDS, "slskd"}
 USENET_KINDS = {"sabnzbd", "nzbget"}
 
 
@@ -191,6 +193,60 @@ def mapped_path(row, path, sources):
     return matches[0]
 
 
+async def remember_download_root(db, row, observed_path):
+    """Bind identical visible paths; never guess a remote-to-local translation."""
+    mappings = row.config.get("mappings", [])
+    try:
+        observed_path = absolute_path(observed_path)
+    except ValueError:
+        # A remote path dialect must not become a local root by accident.
+        row.config = {**row.config, "save_path": observed_path}
+        return
+    if not mappings:
+        from app.importing.storage import storage_settings
+
+        settings = await storage_settings(db)
+        sources = settings.import_sources
+        candidates = [
+            (key, str(root))
+            for key, root in sources.items()
+            if relative_to(observed_path, str(root)) is not None
+        ]
+        if candidates:
+            key, root = max(candidates, key=lambda item: len(item[1]))
+            mappings = [
+                {
+                    "download_root": root,
+                    "source_key": key,
+                    "source_path": root,
+                }
+            ]
+        else:
+            # Never guess a remote-to-local translation from folder names.
+            roots = await asyncio.to_thread(browse_roots, settings)
+            readable = await asyncio.to_thread(readable_folder, observed_path, roots)
+            path = Path(observed_path)
+            if (
+                readable
+                and not library_conflict(path, settings)
+                and not any(overlaps(path, Path(root)) for root in sources.values())
+            ):
+                key = allocate_key(path, sources)
+                storage = await db.get(ImportStorageSettings, 1, with_for_update=True)
+                if not storage:
+                    storage = ImportStorageSettings(id=1, destinations={}, sources={})
+                    db.add(storage)
+                storage.sources = {**storage.sources, key: observed_path}
+                mappings = [
+                    {
+                        "download_root": observed_path,
+                        "source_key": key,
+                        "source_path": observed_path,
+                    }
+                ]
+    row.config = {**row.config, "save_path": observed_path, "mappings": mappings}
+
+
 async def connection_or_404(db, connection_id):
     row = await db.get(Integration, connection_id, populate_existing=True)
     if not row or row.kind not in DOWNLOAD_KINDS or row.owner_id is not None:
@@ -201,7 +257,7 @@ async def connection_or_404(db, connection_id):
 async def transfer_connection(db, connection_id):
     """Saved download client, including Soulseek. Settings tests stay on connection_or_404."""
     row = await db.get(Integration, connection_id, populate_existing=True)
-    if not row or row.kind not in {*DOWNLOAD_KINDS, "slskd"} or row.owner_id is not None:
+    if not row or row.kind not in TRANSFER_KINDS or row.owner_id is not None:
         raise HTTPException(404, "Downloader connection not found")
     return row
 
@@ -276,26 +332,7 @@ async def test_connection(user_id, connection_id):
             if not failure:
                 row.last_success_at = datetime.now(UTC)
                 if observed_path is not None:
-                    # Existing mount bindings remain import evidence, never torrent overrides.
-                    mappings = row.config.get("mappings", [])
-                    if not mappings:
-                        from app.importing.storage import import_sources
-
-                        candidates = [
-                            (key, str(root))
-                            for key, root in (await import_sources(db)).items()
-                            if relative_to(observed_path, str(root)) is not None
-                        ]
-                        if candidates:
-                            key, root = max(candidates, key=lambda item: len(item[1]))
-                            mappings = [
-                                {
-                                    "download_root": root,
-                                    "source_key": key,
-                                    "source_path": root,
-                                }
-                            ]
-                    row.config = {**row.config, "save_path": observed_path, "mappings": mappings}
+                    await remember_download_root(db, row, observed_path)
         if failure:
             row.next_sync_at = datetime.now(UTC) + timedelta(
                 seconds=max(60, failure.retry_after or 0)

@@ -10,7 +10,8 @@ from app.api.dependencies import Admin, Database
 from app.api.metadata import adapter_http_error
 from app.db.models import Integration, SourceConnection
 from app.domain import slskd_connection
-from app.domain.downloaders import relative_to
+from app.domain.downloaders import mappings_current
+from app.importing.storage import import_sources
 
 router = APIRouter(prefix="/sources/slskd", tags=["sources"])
 
@@ -52,18 +53,16 @@ class SlskdConnectionView(BaseModel):
     downloader_generation: int
 
 
-def view(source: SourceConnection | None, client: Integration | None) -> SlskdConnectionView:
+def view(
+    source: SourceConnection | None, client: Integration | None, sources
+) -> SlskdConnectionView:
     secrets = {}
     if source:
         from app.security import decrypt_secrets
 
         secrets = decrypt_secrets(source.encrypted_secrets)
     root = (client.config.get("save_path") if client else "") or ""
-    mappings = client.config.get("mappings", []) if client else []
-    mapped = bool(
-        root
-        and any(relative_to(root, item.get("download_root", "")) is not None for item in mappings)
-    )
+    mapped = bool(client and mappings_current(client, sources))
     return SlskdConnectionView(
         configured=bool(source),
         enabled=bool(source and source.enabled),
@@ -82,14 +81,18 @@ def view(source: SourceConnection | None, client: Integration | None) -> SlskdCo
 
 @router.get("/connection", response_model=SlskdConnectionView)
 async def connection(admin: Admin, db: Database):
-    return view(await db.get(SourceConnection, "slskd"), await slskd_connection.integration(db))
+    return view(
+        await db.get(SourceConnection, "slskd"),
+        await slskd_connection.integration(db),
+        await import_sources(db),
+    )
 
 
 @router.put("/connection", response_model=SlskdConnectionView)
 async def save_connection(body: SlskdConnectionInput, admin: Admin, db: Database):
     source, client = await slskd_connection.save(db, admin, body)
     await db.commit()
-    return view(source, client)
+    return view(source, client, await import_sources(db))
 
 
 @router.post("/connection/test", response_model=SlskdConnectionView)
@@ -103,4 +106,5 @@ async def test_connection(admin: Admin, db: Database):
     return view(
         await db.get(SourceConnection, "slskd", populate_existing=True),
         await slskd_connection.integration(db),
+        await import_sources(db),
     )

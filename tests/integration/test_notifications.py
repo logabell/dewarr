@@ -13,6 +13,7 @@ from app.db.models import (
     NotificationDelivery,
     NotificationEvent,
     Operation,
+    User,
     Work,
 )
 from app.notifications import channels
@@ -157,6 +158,80 @@ async def test_private_routing_policy_and_channel_permissions(client, admin, dat
             await member.get("/api/notifications/channels/" + personal["id"] + "/deliveries")
         ).json()
         assert history[0]["state"] == "cancelled"
+
+
+async def test_apprise_requires_admin_at_configuration_and_delivery(
+    client, admin, database, monkeypatch
+):
+    import apprise
+
+    async def unexpected_notify(*args, **kwargs):
+        pytest.fail("Demoted owner's Apprise channel reached the plugin transport")
+
+    monkeypatch.setattr(apprise.Apprise, "async_notify", unexpected_notify)
+    created = await client.post(
+        "/api/auth/users",
+        json={
+            "username": "notify-demoted",
+            "display_name": "Former administrator",
+            "password": "long fixture password",
+            "role": "admin",
+        },
+    )
+    assert created.status_code == 201, created.text
+    owner = UUID(created.json()["id"])
+    async with aclosing(await session_for("notify-demoted", "long fixture password")) as member:
+        saved = await channel(
+            member,
+            [],
+            kind="apprise",
+            secrets={"urls": ["json://notifications.example/hook"]},
+        )
+        route = "/api/notifications/channels/" + saved["id"]
+        assert (await member.post(route + "/test")).status_code == 202
+        async with database() as db, db.begin():
+            (await db.get(User, owner)).role = "member"
+        assert await deliver_one()
+        history = (await member.get(route + "/deliveries")).json()
+        assert history[0]["state"] == "failed"
+        assert "requires an administrator" in history[0]["message"]
+        assert (await member.post(route + "/test")).status_code == 403
+        body = {"name": saved["name"], "kind": "apprise", "events": [], "enabled": True}
+        assert (await member.put(route, json=body)).status_code == 403
+        assert (
+            await member.put(
+                route,
+                json={
+                    **body,
+                    "enabled": False,
+                    "secrets": {"urls": ["json://notifications.example/replacement"]},
+                },
+            )
+        ).status_code == 403
+        assert (
+            await member.post(
+                "/api/notifications/channels",
+                json={**body, "secrets": {"urls": ["json://notifications.example/hook"]}},
+            )
+        ).status_code == 403
+        # The old channel remains manageable without permitting another delivery.
+        assert (await member.put(route, json={**body, "enabled": False})).status_code == 200
+        switched = await member.put(
+            route,
+            json={**body, "kind": "webhook", "secrets": {"url": "https://example.com/hook"}},
+        )
+        assert switched.status_code == 200, switched.text
+        assert (
+            await member.put(
+                route,
+                json={
+                    **body,
+                    "enabled": False,
+                    "secrets": {"urls": ["json://notifications.example/hook"]},
+                },
+            )
+        ).status_code == 403
+        assert (await member.delete(route)).status_code == 204
 
 
 async def test_discovery_digest_batches_two_hundred_events(client, admin, database, sent):

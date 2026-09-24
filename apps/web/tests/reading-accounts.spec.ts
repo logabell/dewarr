@@ -119,16 +119,14 @@ test("connect Goodreads in onboarding, choose shelves, pause and refresh from se
     page.getByRole("heading", { name: "Reading accounts", exact: true }),
   ).toBeVisible();
   const goodreads = page.getByRole("region", { name: "Goodreads connection" });
-  await goodreads.locator(".reading-connection > summary").click();
+
   await expect(
-    goodreads.getByRole("link", { name: /Open my Goodreads books/ }),
+    goodreads.getByRole("link", { name: /Sign in to Goodreads/ }),
   ).toHaveAttribute("href", "https://www.goodreads.com/review/list");
   await goodreads
     .getByLabel("Goodreads profile or books link")
     .fill("https://www.goodreads.com/user/show/123-reader");
-  await goodreads
-    .getByRole("button", { name: "Find my Goodreads shelves" })
-    .click();
+  await goodreads.getByRole("button", { name: "Connect Goodreads" }).click();
   await expect(
     goodreads.getByRole("checkbox", { name: /Want to read/ }),
   ).toBeChecked();
@@ -412,9 +410,7 @@ test("connect StoryGraph, follow a shelf, and paste a tag list", async ({
   await expect(guide).toContainText("remember_user_token");
   await storygraph.getByLabel("_storygraph_session").fill("session-token");
   await storygraph.getByLabel("remember_user_token").fill("remember-token");
-  await storygraph
-    .getByRole("button", { name: "Find my StoryGraph lists" })
-    .click();
+  await storygraph.getByRole("button", { name: "Connect StoryGraph" }).click();
   await expect(
     storygraph.getByRole("checkbox", { name: /To-read/ }),
   ).toBeChecked();

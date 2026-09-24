@@ -1179,6 +1179,7 @@ class RecoverySourceSettings(BaseModel):
     base_url: str
     enabled: bool
     proxy_url: str | None
+    proxy_fallback_direct: bool
     has_credentials: bool
     has_proxy_credentials: bool
     excluded_indexers: list[int]

@@ -181,9 +181,7 @@ def category_folder(options, category):
             )
         try:
             chosen = (
-                folder
-                if folder.startswith("/")
-                else str(PurePosixPath(root) / folder.strip("/"))
+                folder if folder.startswith("/") else str(PurePosixPath(root) / folder.strip("/"))
             )
             return absolute_path(chosen)
         except ValueError as error:

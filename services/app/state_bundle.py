@@ -24,7 +24,7 @@ from app.config import Settings, get_settings
 from app.db.models import Base
 from app.recovery import MAINTENANCE_LOCK
 
-SCHEMA = "0066_notifications_follows"
+SCHEMA = "0067_mam_proxy_fallback"
 CONFIG_FIELDS = {
     "public_url",
     "cookie_secure",

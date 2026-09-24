@@ -1,4 +1,4 @@
-import { connectionLabel } from "./settingLabels";
+import ConnectionStatus from "../components/ConnectionStatus";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, result } from "../api/client";
 import { Loading, Notice } from "../components";
@@ -33,24 +33,22 @@ export default function SourceSettings() {
         <details className="source-connection">
           <summary>
             <span>MAM</span>
-            <span className="connection-state">
-              {connectionLabel(mam.data?.status)}
-            </span>
+            <ConnectionStatus
+              status={mam.isPending ? "checking" : mam.data?.status}
+            />
           </summary>
           <Notice error={mam.error} />
           {mam.isPending && <Loading />}
-          {mam.data && (
-            <MamConnectionForm key={mam.data.generation} value={mam.data} />
-          )}
+          {mam.data && <MamConnectionForm value={mam.data} />}
         </details>
       </section>
       <section aria-label="Prowlarr settings">
         <details className="source-connection">
           <summary>
             <span>Prowlarr</span>
-            <span className="connection-state">
-              {connectionLabel(prowlarr.data?.status)}
-            </span>
+            <ConnectionStatus
+              status={prowlarr.isPending ? "checking" : prowlarr.data?.status}
+            />
           </summary>
           <Notice error={prowlarr.error} />
           {prowlarr.isPending && <Loading />}
@@ -70,27 +68,22 @@ export default function SourceSettings() {
         <details className="source-connection">
           <summary>
             <span>Soulseek</span>
-            <span className="connection-state">
-              {connectionLabel(slskd.data?.status)}
-            </span>
+            <ConnectionStatus
+              status={slskd.isPending ? "checking" : slskd.data?.status}
+            />
           </summary>
           <Notice error={slskd.error} />
           {slskd.isPending && <Loading />}
-          {slskd.data && (
-            <SlskdConnectionForm
-              key={slskd.data.generation}
-              value={slskd.data}
-            />
-          )}
+          {slskd.data && <SlskdConnectionForm value={slskd.data} />}
         </details>
       </section>
       <section aria-label="AudiobookBay settings">
         <details className="source-connection">
           <summary>
             <span>AudiobookBay</span>
-            <span className="connection-state">
-              {connectionLabel(abb.data?.status)}
-            </span>
+            <ConnectionStatus
+              status={abb.isPending ? "checking" : abb.data?.status}
+            />
           </summary>
           <Notice error={abb.error} />
           {abb.isPending && <Loading />}

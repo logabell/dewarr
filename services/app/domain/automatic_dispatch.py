@@ -82,8 +82,14 @@ async def lock_group_principals(db, selections, *, additional_user_ids=()):
 async def approve_route(db, owner_id, destination_id, revision, *, expected=None, lock=False):
     from app.importing.automatic import check_policy
 
-    if get_settings().recovery_mode or not get_settings().download_dispatch_enabled:
-        raise HTTPException(409, "Automatic download dispatch is not enabled for this installation")
+    if get_settings().recovery_mode:
+        raise HTTPException(409, "Downloads are paused while this installation is in recovery mode")
+    if not get_settings().download_dispatch_enabled:
+        raise HTTPException(
+            409,
+            "Downloads are disabled on this server. Ask an administrator to set "
+            "BOOK_DOWNLOAD_DISPATCH_ENABLED=true and restart Dewarr.",
+        )
     user = await db.get(User, owner_id, populate_existing=True)
     if not user or not user.active or user.role == "viewer":
         raise HTTPException(403, "The requesting account can no longer acquire books")

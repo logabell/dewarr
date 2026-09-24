@@ -13,6 +13,7 @@ from app.importing.filesystem import identity
 from app.jobs.queue import get_queue
 from app.security import encrypt_secrets
 from tests.abs_import_fixture import ImportBackendFixture
+from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -109,9 +110,12 @@ async def current(client):
     return response.json()[0]
 
 
+@pytest.mark.parametrize("kind", ["qbittorrent", "slskd"])
 async def test_empty_folder_can_qualify_before_any_plan_or_download(
-    client, admin, database, empty_route
+    client, admin, database, empty_route, kind
 ):
+    async with database() as db, db.begin():
+        (await db.get(Integration, empty_route["downloader"])).kind = kind
     responses = await asyncio.gather(*(start(client, empty_route) for _ in range(3)))
     assert all(item.status_code == 202 for item in responses)
     assert len({item.json()["id"] for item in responses}) == 1
@@ -225,11 +229,13 @@ async def test_failed_setup_does_not_touch_downloaded_files(
 
 
 @pytest.mark.parametrize("mode", ["hardlink", "copy"])
+@pytest.mark.parametrize("link_error", [errno.EXDEV, errno.EPERM])
+@pytest.mark.usefixtures("path_bound_directory_handles")
 async def test_cross_filesystem_route_copies_when_hardlink_is_impossible(
-    client, admin, empty_route, monkeypatch, mode
+    client, admin, empty_route, monkeypatch, mode, link_error
 ):
     def cross_device(*args, **kwargs):
-        raise OSError(errno.EXDEV, "different filesystem")
+        raise OSError(link_error, "hardlinks unavailable")
 
     monkeypatch.setattr(publication.os, "link", cross_device)
     saved = empty_route["destination"]
@@ -311,3 +317,26 @@ async def test_seeding_rename_is_optional_and_does_not_require_a_hardlink(
     )
     assert activated.status_code == 200, activated.text
     assert activated.json()["seeding_rename"] is True and activated.json()["publication_available"]
+
+
+async def test_probe_operation_error_does_not_blame_missing_mount(
+    client, admin, empty_route, monkeypatch
+):
+    real_move = publication.no_replace
+
+    def fail_library_move(source_fd, source_name, destination_fd, destination_name):
+        if source_name.startswith("probe-"):
+            raise OSError(errno.ENOENT, "Synthetic rename failure")
+        return real_move(source_fd, source_name, destination_fd, destination_name)
+
+    monkeypatch.setattr(publication, "no_replace", fail_library_move)
+    assert (await start(client, empty_route)).status_code == 202
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    assert not checked["publication_available"]
+    assert checked["probe"]["status"] == "failed"
+    assert checked["probe"]["failure_step"] == "checking safe library publication"
+    assert "(ENOENT)" in checked["probe"]["message"]
+    assert "folders were opened successfully" in checked["probe"]["message"]
+    assert not list(empty_route["staging"].iterdir())
+    assert not list(empty_route["target"].iterdir())

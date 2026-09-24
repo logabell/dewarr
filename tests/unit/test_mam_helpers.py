@@ -67,7 +67,10 @@ def test_helpers_do_nothing_until_an_administrator_enables_one():
     assert due_command({"use_wedge": True}, {}, now) is None
     assert due_command({"seedbox_ip": "yes"}, {}, now) is None
     command = due_command({"seedbox_ip": True, "auto_vip": True, "protect_ratio": True}, {}, now)
+    assert command is not None
     assert command.seedbox and command.seedbox_stale and command.vip and command.upload_ratio
+    assert command.ratio_below == 2.5
+    assert AccountAutomation().upload_interval_hours == 3
     recent = now.isoformat()
     assert (
         due_command(

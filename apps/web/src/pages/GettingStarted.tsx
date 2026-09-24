@@ -252,7 +252,9 @@ export default function GettingStarted({ role }: { role: string }) {
                       !readiness.data.download_dispatch_enabled && (
                         <p className="onboarding-finish-note">
                           Downloads are disabled on this server. Browsing and
-                          lists are ready.
+                          lists are ready. To enable downloads, set{" "}
+                          <code>BOOK_DOWNLOAD_DISPATCH_ENABLED=true</code> and
+                          restart Dewarr.
                         </p>
                       )}
                   </>

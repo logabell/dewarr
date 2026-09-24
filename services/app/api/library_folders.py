@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from cryptography.fernet import InvalidToken
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import Field, field_validator, model_validator
 from sqlalchemy import func, select
 
@@ -27,6 +27,7 @@ from app.db.models import (
     Integration,
     Library,
 )
+from app.domain.download_folders import browse_folders
 from app.domain.operations import transaction_lock
 from app.domain.release_profiles import DEFAULTS_LOCK
 from app.importing.destination_view import DestinationView, view
@@ -120,6 +121,22 @@ async def folders(admin: Admin, db: Database):
         return row
 
     return await asyncio.gather(*(option(library, integration) for library, integration in rows))
+
+
+class LibraryFolderBrowseView(StrictModel):
+    path: str | None
+    parent: str | None
+    directories: list[str]
+    truncated: bool
+
+
+@router.get("/browse", response_model=LibraryFolderBrowseView)
+async def browse_library_folders(
+    admin: Admin, db: Database, path: str | None = Query(default=None, max_length=2000)
+):
+    return await asyncio.to_thread(
+        browse_folders, await storage_settings(db), path, include_libraries=True
+    )
 
 
 class FolderInput(StrictModel):

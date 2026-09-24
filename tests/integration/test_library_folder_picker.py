@@ -226,3 +226,36 @@ async def test_staging_stays_while_unfinished_imports_use_it(
     response = await choose()
     assert response.status_code == 200, response.text
     assert await saved_staging(database) == str(route["target"].parent / ".book-search-staging")
+
+
+async def test_library_folder_browser_is_read_only_and_confined(
+    client, admin, database, monkeypatch, tmp_path
+):
+    from app.domain import download_folders
+
+    root = tmp_path.resolve() / "mounted-media"
+    library = root / "library"
+    library.mkdir(parents=True)
+    (library / "existing.epub").write_bytes(b"existing book")
+    (root / "outside").symlink_to(tmp_path, target_is_directory=True)
+    monkeypatch.setattr(download_folders, "volume_roots", lambda: {root})
+    monkeypatch.setattr(get_settings(), "import_sources", {})
+    listed = await client.get("/api/organization/library-folders/browse")
+    assert listed.status_code == 200
+    assert listed.json()["directories"] == [str(root)]
+    folders = await client.get(
+        "/api/organization/library-folders/browse", params={"path": str(root)}
+    )
+    assert folders.json()["directories"] == [str(library)]
+    for path in ["/", str(tmp_path), str(root / "outside"), str(library / "existing.epub")]:
+        assert (
+            await client.get("/api/organization/library-folders/browse", params={"path": path})
+        ).status_code == 422
+    assert (library / "existing.epub").read_bytes() == b"existing book"
+    async with database() as db:
+        assert list(await db.scalars(select(ImportDestination))) == []
+        assert await db.get(ImportStorageSettings, 1) is None
+
+
+async def test_library_folder_browser_requires_admin(client):
+    assert (await client.get("/api/organization/library-folders/browse")).status_code == 401

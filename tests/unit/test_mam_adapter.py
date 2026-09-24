@@ -168,6 +168,34 @@ async def test_bounded_transport_failures_are_classified_without_body_disclosure
     assert len(requests) == 1
 
 
+@pytest.mark.parametrize(
+    "status,retryable",
+    [
+        (407, True),
+        (502, True),
+        (503, True),
+        (504, True),
+        (302, False),
+        (401, False),
+        (429, False),
+        (500, False),
+    ],
+)
+async def test_only_proxy_route_failures_are_eligible_for_direct_fallback(status, retryable):
+    transport = httpx.MockTransport(lambda request: httpx.Response(status))
+    async with MAMClient(
+        "https://mam.test",
+        "cookie-fixture",
+        transport=transport,
+    ) as client:
+        # MockTransport replaces HTTPX's proxy transport, so mark this request as
+        # proxied explicitly while exercising the response-classification policy.
+        client.uses_proxy = True
+        with pytest.raises(AdapterError) as error:
+            await client.test()
+    assert error.value.proxy_retryable is retryable
+
+
 async def test_required_http_proxy_receives_request_and_never_falls_back_direct():
     direct_requests, proxy_requests = [], []
 
@@ -263,6 +291,7 @@ async def test_refused_proxy_reports_actionable_error_without_exposing_credentia
         with pytest.raises(AdapterError, match="proxy refused the connection") as error:
             await client.test()
     assert error.value.kind == FailureKind.ROUTE
+    assert error.value.proxy_retryable
     assert "No direct fallback" in str(error.value)
     assert "private-" not in str(error.value)
 
@@ -285,6 +314,7 @@ async def test_https_proxy_tunnel_rejection_has_safe_actionable_error():
             with pytest.raises(AdapterError, match="proxy rejected the HTTPS tunnel") as error:
                 await client.test()
     assert error.value.kind == FailureKind.ROUTE
+    assert error.value.proxy_retryable
     assert "private-" not in str(error.value)
 
 

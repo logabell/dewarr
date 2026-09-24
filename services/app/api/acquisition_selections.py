@@ -14,7 +14,13 @@ from app.db.models import AcquisitionSelection, ImportDestination, Integration, 
 from app.domain import acquisition_selection as selections
 from app.domain import automatic_dispatch, manual_pack
 from app.domain.acquisition_selection import SelectionInput
-from app.domain.downloaders import TORRENT_KINDS, USENET_KINDS, mapped_path, mappings_current
+from app.domain.downloaders import (
+    TORRENT_KINDS,
+    USENET_KINDS,
+    client_protocol,
+    mapped_path,
+    mappings_current,
+)
 from app.domain.visibility import visible_library
 from app.importing.destinations import destination_configuration
 from app.importing.naming import fingerprint
@@ -88,7 +94,7 @@ class DownloaderChoice(BaseModel):
     id: UUID
     name: str
     generation: int
-    protocol: Literal["torrent", "nzb"]
+    protocol: Literal["torrent", "nzb", "soulseek"]
     source_key: str | None
     ready: bool
 
@@ -183,7 +189,7 @@ async def options(user: Member, db: Database):
                 id=row.id,
                 name=row.name,
                 generation=row.credential_generation,
-                protocol="nzb" if row.kind in USENET_KINDS else "torrent",
+                protocol=client_protocol(row.kind),
                 source_key=mapping["source_key"] if mapping else None,
                 ready=current and row.status == "connected",
             )

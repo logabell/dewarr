@@ -157,9 +157,7 @@ async def test_disabled_nzbget_history_is_rejected():
     def handler(request):
         method = json.loads(request.content)["method"]
         result = (
-            "26.3"
-            if method == "version"
-            else config() + [{"Name": "KeepHistory", "Value": "0"}]
+            "26.3" if method == "version" else config() + [{"Name": "KeepHistory", "Value": "0"}]
         )
         return httpx.Response(200, json={"jsonrpc": "2.0", "result": result, "id": 1})
 

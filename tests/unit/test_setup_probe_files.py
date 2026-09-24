@@ -14,6 +14,7 @@ from app.importing.destinations import (
     holds_journals,
 )
 from app.importing.filesystem import InspectionError, describe_os_error
+from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
 
 
 @pytest.fixture
@@ -180,3 +181,53 @@ def test_staging_with_receipts_is_recognized(media):
 def test_os_errors_are_explained_with_their_code(code, expected):
     message = describe_os_error(OSError(code, os.strerror(code)))
     assert expected in message and message.endswith(f"({errno.errorcode[code]})")
+
+
+@pytest.mark.usefixtures("path_bound_directory_handles")
+def test_probe_copy_fallback_does_not_use_a_moved_directory_handle(roots, monkeypatch):
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EPERM, "Hardlinks not supported")
+
+    monkeypatch.setattr(publication.os, "link", unsupported)
+    source, target, stage = roots
+    result = publication.probe_download_folder(source, "", target, stage)
+    assert not result["hardlink"] and result["hardlink_error"] == "EPERM"
+    assert result["copy"] and result["no_replace"]
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_probe_error_preserves_failed_operation_and_cleans_up(roots, monkeypatch):
+    real_move = publication.no_replace
+
+    def fail_library_move(source_fd, source_name, destination_fd, destination_name):
+        if source_name.startswith("probe-"):
+            raise OSError(errno.ENOENT, "Synthetic rename failure")
+        return real_move(source_fd, source_name, destination_fd, destination_name)
+
+    monkeypatch.setattr(publication, "no_replace", fail_library_move)
+    source, target, stage = roots
+    with pytest.raises(OSError) as caught:
+        publication.probe_download_folder(source, "", target, stage)
+    assert caught.value.errno == errno.ENOENT
+    assert caught.value.probe_report["failure_step"] == "checking safe library publication"
+    assert caught.value.probe_report["error_code"] == "ENOENT"
+    assert caught.value.probe_report["copy"]
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_incomplete_probe_marker_keeps_original_error_and_cleans_owned_files(roots, monkeypatch):
+    real_write = publication.write_all
+
+    def fail_marker(fd, content):
+        if content.startswith(b"book-search destination probe "):
+            os.write(fd, content[:4])
+            raise OSError(errno.ENOSPC, "Synthetic full disk")
+        return real_write(fd, content)
+
+    monkeypatch.setattr(publication, "write_all", fail_marker)
+    source, target, stage = roots
+    with pytest.raises(OSError) as caught:
+        publication.probe_download_folder(source, "", target, stage)
+    assert caught.value.errno == errno.ENOSPC
+    assert caught.value.probe_report["error_code"] == "ENOSPC"
+    assert all(not list(root.iterdir()) for root in roots)

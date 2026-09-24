@@ -10,7 +10,7 @@ import {
   Ellipsis,
 } from "lucide-react";
 import SettingHelp from "../components/SettingHelp";
-import { connectionLabel } from "./settingLabels";
+import ConnectionStatus from "../components/ConnectionStatus";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -53,24 +53,39 @@ function ReadingSection({
   label,
   title,
   status,
+  help,
   className = "",
   children,
 }: {
   label: string;
   title: string;
-  status: string;
+  status: ReactNode;
+  help?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
+  const location = useLocation();
+  const [open, setOpen] = useState(location.pathname === "/onboarding");
   return (
     <section
       className={`reading-account ${className}`.trim()}
       aria-label={label}
     >
-      <details className="reading-connection">
+      <details
+        className="reading-connection"
+        open={open}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
         <summary>
-          <span>{title}</span>
-          <span className="connection-state">{status}</span>
+          <span className="reading-account-heading">
+            <span>{title}</span>
+            {help}
+          </span>
+          {typeof status === "string" ? (
+            <ConnectionStatus status={status} />
+          ) : (
+            status
+          )}
         </summary>
         <div className="reading-connection-body">{children}</div>
       </details>
@@ -170,8 +185,20 @@ function GoodreadsConnection({
     <ReadingSection
       label="Goodreads connection"
       title="Goodreads"
+      help={
+        <SettingHelp label="Goodreads">
+          Paste your profile, My Books address, user ID or shelf RSS link.
+          Goodreads feeds may contain only part of a shelf.
+        </SettingHelp>
+      }
       status={
-        account.isPending ? "Checking…" : data ? "Connected" : "Not connected"
+        account.isPending
+          ? "checking"
+          : account.isError
+            ? "unavailable"
+            : data
+              ? "connected"
+              : "not-configured"
       }
     >
       <div className="reading-connection-tools">
@@ -181,18 +208,13 @@ function GoodreadsConnection({
           </a>
         )}
         <a
-          className="reading-profile-link"
+          className="reading-sign-in"
           href="https://www.goodreads.com/review/list"
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="Open my Goodreads books"
         >
-          My books ↗
+          {data ? "Open Goodreads books ↗" : "Sign in to Goodreads ↗"}
         </a>
-        <SettingHelp label="Goodreads">
-          Paste your profile, My Books address, user ID or shelf RSS link.
-          Goodreads feeds may contain only part of a shelf.
-        </SettingHelp>
       </div>
       <Notice error={account.error || connect.error || discover.error} />
 
@@ -261,7 +283,7 @@ function GoodreadsConnection({
               ? "Finding your shelves…"
               : data
                 ? "Update Goodreads connection"
-                : "Find my Goodreads shelves"}
+                : "Connect Goodreads"}
           </button>
         </form>
       </ConnectionEditor>
@@ -353,22 +375,42 @@ function StoryGraphConnection({
     <ReadingSection
       label="StoryGraph connection"
       title="StoryGraph"
-      status={
-        account.isPending ? "Checking…" : data ? "Connected" : "Not connected"
-      }
-    >
-      <div className="reading-connection-tools">
-        {data && (
-          <a href={data.profile_url} target="_blank" rel="noopener noreferrer">
-            {data.username} ↗
-          </a>
-        )}
+      help={
         <SettingHelp label="StoryGraph">
           Paste the _storygraph_session and remember_user_token cookies from
           app.thestorygraph.com. They are a full StoryGraph login. Dewarr stores
           them encrypted and does not show them again. Shelves, tags, and lists
           you paste stay in sync with that session.
         </SettingHelp>
+      }
+      status={
+        account.isPending
+          ? "checking"
+          : account.isError
+            ? "unavailable"
+            : data
+              ? "connected"
+              : "not-configured"
+      }
+    >
+      <div className="reading-connection-tools">
+        {data ? (
+          <a href={data.profile_url} target="_blank" rel="noopener noreferrer">
+            {data.username} ↗
+          </a>
+        ) : (
+          <>
+            <a
+              className="reading-sign-in"
+              href="https://app.thestorygraph.com/users/sign_in"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Sign in to StoryGraph ↗
+            </a>
+            <p className="muted">Then copy your session values below.</p>
+          </>
+        )}
       </div>
       <Notice
         error={
@@ -430,7 +472,7 @@ function StoryGraphConnection({
         connected={!!data}
       >
         <form
-          className="editor reading-connect-form"
+          className="editor reading-connect-form reading-connect-form-pair"
           onSubmit={(event) => {
             event.preventDefault();
             connect.mutate();
@@ -466,7 +508,7 @@ function StoryGraphConnection({
               ? "Finding your lists…"
               : data
                 ? "Update StoryGraph connection"
-                : "Find my StoryGraph lists"}
+                : "Connect StoryGraph"}
           </button>
         </form>
       </ConnectionEditor>
@@ -492,22 +534,28 @@ function HardcoverConnection({
     <ReadingSection
       label="Hardcover connection"
       title="Hardcover"
-      status={
-        account.isPending
-          ? "Checking…"
-          : account.data?.status
-            ? connectionLabel(account.data.status)
-            : account.data?.enabled
-              ? "Connected"
-              : "Not connected"
-      }
-    >
-      <div className="reading-connection-tools">
+      help={
         <SettingHelp label="Hardcover lists">
           Uses the connection in Metadata. Choose your own or followed lists to
           track here.
         </SettingHelp>
-      </div>
+      }
+      status={
+        account.isPending
+          ? "checking"
+          : account.isError
+            ? "unavailable"
+            : account.data?.configured && !account.data.enabled
+              ? "disabled"
+              : account.data?.status || "not-configured"
+      }
+    >
+      {account.data?.enabled && (
+        <p className="reading-connection-note muted">
+          Uses your Hardcover connection from Metadata. Choose the lists to keep
+          in sync.
+        </p>
+      )}
       <Notice error={account.error} />
       {account.isPending && <Loading />}
       {account.data &&
@@ -959,7 +1007,11 @@ function LocalLists({ subscriptions }: { subscriptions: Subscription[] }) {
       className="reading-local"
       label="Local lists"
       title="Local lists"
-      status={count === 1 ? "1 list" : `${count} lists`}
+      status={
+        <span className="connection-state">
+          {count === 1 ? "1 list" : `${count} lists`}
+        </span>
+      }
     >
       <p className="muted">Lists you keep in this app.</p>
       {local.map((list) => (

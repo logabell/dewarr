@@ -1,13 +1,16 @@
 """Channel adapters. Errors returned to the UI never include response bodies or URLs."""
 
 import asyncio
-import ipaddress
 import logging
 import socket
 from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.network_addresses import public_address
+
+APPRISE_ADMIN_ONLY = "Apprise requires an administrator. Choose Discord, ntfy or a JSON webhook."
 
 
 class ChannelSecrets(BaseModel):
@@ -56,14 +59,18 @@ def validate_config(kind: str, config: ChannelSecrets):
 
 
 async def check_public_destination(url: str):
-    host = urlsplit(url).hostname
-    if not host:
+    target = httpx.URL(url)
+    if not target.host:
         raise ValueError("Invalid destination")
-    addresses = await asyncio.to_thread(socket.getaddrinfo, host, None)
-    if not addresses or any(
-        not ipaddress.ip_address(address[4][0]).is_global for address in addresses
-    ):
+    records = await asyncio.get_running_loop().getaddrinfo(
+        target.raw_host.decode("ascii"),
+        target.port or (443 if target.scheme == "https" else 80),
+        type=socket.SOCK_STREAM,
+    )
+    addresses = list(dict.fromkeys(record[4][0] for record in records))
+    if not addresses or any(not public_address(address) for address in addresses):
         raise ValueError("Personal destinations must use public addresses")
+    return addresses
 
 
 class DeliveryError(Exception):
@@ -71,10 +78,13 @@ class DeliveryError(Exception):
 
 
 async def send(kind: str, config: dict, payload: dict, *, private_allowed: bool):
+    # Apprise plugins own their transports (and may follow redirects or make
+    # secondary requests). A DNS preflight cannot secure those connections.
+    # Recheck at delivery so old channels and demoted owners cannot bypass this.
+    if kind == "apprise" and not private_allowed:
+        raise DeliveryError(APPRISE_ADMIN_ONLY)
     settings = ChannelSecrets.model_validate(config)
     validate_config(kind, settings)
-    if not private_allowed and kind != "apprise":
-        await check_public_destination(settings.url)
     events = payload["events"]
     title = events[0]["title"] if len(events) == 1 else f"Dewarr: {len(events)} updates"
     body = "\n\n".join(f"{event['message']}\n{event['url']}" for event in events)
@@ -85,14 +95,6 @@ async def send(kind: str, config: dict, payload: dict, *, private_allowed: bool)
         quiet_apprise()
         notifier = apprise.Apprise()
         notifier.add(settings.urls)
-        if not private_allowed:
-            for service in notifier:
-                # Cloud services often encode API identifiers in the Apprise URL's
-                # host position. Validate their actual fixed endpoint instead.
-                endpoint = getattr(service, "notify_url", None)
-                if getattr(service, "mode", None) == "cloud":
-                    endpoint = getattr(service, "cloud_notify_url", endpoint)
-                await check_public_destination(endpoint or service.request_url)
         if not await notifier.async_notify(title=title, body=body):
             raise DeliveryError("Apprise reported a delivery failure")
         return
@@ -118,11 +120,30 @@ async def send(kind: str, config: dict, payload: dict, *, private_allowed: bool)
         data = None
     else:
         data = payload
+    target = httpx.URL(settings.url)
+    targets, extensions = [target], {}
+    if not private_allowed:
+        addresses = await check_public_destination(settings.url)
+        # Connect to the checked IP, never resolve the untrusted name a second
+        # time. Preserve virtual hosting, custom ports and TLS certificate checks.
+        targets = [target.copy_with(host=address) for address in addresses[:4]]
+        headers["Host"] = httpx.Request("POST", target).headers["Host"]
+        extensions["sni_hostname"] = target.raw_host.decode("ascii")
     async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
-        response = (
-            await client.post(settings.url, headers=headers, json=data)
-            if data is not None
-            else await client.post(settings.url, headers=headers, content=body.encode())
-        )
-        if not 200 <= response.status_code < 300:
-            raise DeliveryError(f"Destination returned HTTP {response.status_code}")
+        for index, target in enumerate(targets):
+            try:
+                response = await client.post(
+                    target,
+                    headers=headers,
+                    extensions=extensions,
+                    **({"json": data} if data is not None else {"content": body.encode()}),
+                )
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                # Only connection establishment can try another checked IP.
+                # Never replay a POST after a write/read failure or HTTP response.
+                if index == len(targets) - 1:
+                    raise
+                continue
+            if not 200 <= response.status_code < 300:
+                raise DeliveryError(f"Destination returned HTTP {response.status_code}")
+            return

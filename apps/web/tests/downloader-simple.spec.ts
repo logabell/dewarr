@@ -38,6 +38,16 @@ test("qBittorrent setup only needs an address and category", async ({
   await expect(
     page.getByRole("button", { name: "Sign out", exact: true }),
   ).toBeVisible();
+  let connectionTests = 0;
+  // These example addresses are intentionally offline. Keep the settings
+  // workflow deterministic while exercising the automatic test request.
+  await page.route("**/api/downloaders/*/test", async (route) => {
+    connectionTests++;
+    await route.fulfill({
+      status: 502,
+      json: { detail: "The example download client is offline." },
+    });
+  });
   let rootsRequested = false;
   await page.route("**/api/organization/download-roots", async (route) => {
     rootsRequested = true;
@@ -69,7 +79,7 @@ test("qBittorrent setup only needs an address and category", async ({
       response.request().method() === "POST",
   );
   await form
-    .getByRole("button", { name: "Save downloader", exact: true })
+    .getByRole("button", { name: "Save & test connection", exact: true })
     .click();
   const response = await saved;
   expect(response.status()).toBe(201);
@@ -125,7 +135,7 @@ test("qBittorrent setup only needs an address and category", async ({
       response.request().method() === "POST",
   );
   await sab
-    .getByRole("button", { name: "Save downloader", exact: true })
+    .getByRole("button", { name: "Save & test connection", exact: true })
     .click();
   const sabResponse = await sabSaved;
   expect(sabResponse.status()).toBe(201);
@@ -169,7 +179,7 @@ test("qBittorrent setup only needs an address and category", async ({
       response.request().method() === "POST",
   );
   await nzb
-    .getByRole("button", { name: "Save downloader", exact: true })
+    .getByRole("button", { name: "Save & test connection", exact: true })
     .click();
   const nzbResponse = await nzbSaved;
   expect(nzbResponse.status()).toBe(201);
@@ -197,4 +207,5 @@ test("qBittorrent setup only needs an address and category", async ({
     )
     .toBe(true);
   expect(rootsRequested).toBe(false);
+  expect(connectionTests).toBe(3);
 });

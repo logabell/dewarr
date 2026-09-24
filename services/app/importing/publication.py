@@ -1390,6 +1390,7 @@ def probe_destination(
         report.update(
             destination_identity=object_id(destination), staging_identity=object_id(staging)
         )
+        phase = "writing to the staging folder"
         try:
             output = os.open(
                 write_name,
@@ -1428,6 +1429,7 @@ def probe_destination(
                         report["hardlink"] = same_object(fd, file.identity)
                 except OSError as error:
                     report["hardlink_error"] = errno.errorcode.get(error.errno, "IO_ERROR")
+            phase = "checking safe journal creation"
             # Publication journals are created with a file no-replace rename inside staging.
             claim = os.open(claim_name, exclusive, 0o600, dir_fd=staging)
             created["claim"] = object_id(claim)
@@ -1440,24 +1442,30 @@ def probe_destination(
             if not refused(lambda: no_replace(staging, claim_name, staging, claimed_name)):
                 created["claimed"], created["claim"] = created["claim"], None
                 raise PublicationError("Staging filesystem replaced an existing journal")
+            phase = "checking filesystem locks"
             lock = os.open(lock_name, exclusive, 0o600, dir_fd=staging)
             created["lock"] = object_id(lock)
             handles.callback(os.close, lock)
             _acquire(lock, "Another probe holds this lock")
             fcntl.flock(lock, fcntl.LOCK_UN)
+            phase = "checking safe library publication"
             os.mkdir(staged, mode=0o700, dir_fd=staging)
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
-            report["no_replace_mode"] = no_replace(staging, staged, destination, target)
-            created["target"], created["stage"] = created["stage"], None
+            # Write proof of ownership before moving the directory. Some mounted
+            # filesystems resolve an open directory handle through its old path,
+            # so creating a child through that handle after rename raises ENOENT.
             target_handle = stage_handle
-            output = os.open(marker, exclusive, 0o600, dir_fd=target_handle)
+            output = os.open(marker, exclusive, 0o600, dir_fd=stage_handle)
             created["marker"] = object_id(output)
+            handles.callback(os.close, os.dup(output))
             try:
                 write_all(output, marker_content)
                 os.fsync(output)
             finally:
                 os.close(output)
+            report["no_replace_mode"] = no_replace(staging, staged, destination, target)
+            created["target"], created["stage"] = created["stage"], None
             # Some FUSE and network filesystems report a different inode for a directory
             # after it is renamed. Recognize the random marker through the destination
             # name before accepting the post-rename identity.
@@ -1490,8 +1498,38 @@ def probe_destination(
             report["available_bytes"] = space.f_bavail * space.f_frsize
             report["warnings"] = mount_warnings(destination_root, staging_root)
             return report
+        except OSError as error:
+            # Keep the failed operation and original errno. A post-rename ENOENT
+            # is not evidence that the operator entered an unmounted folder.
+            error.probe_report = {
+                **report,
+                "failure_step": phase,
+                "error_code": errno.errorcode.get(error.errno, "IO_ERROR"),
+            }
+            raise
         finally:
             changed = False
+            marker_removed = False
+            # A refused move leaves our marker in staging, not in the existing
+            # library object. Remove only our own marker before removing staging.
+            if created["stage"] and created["marker"] and not created["target"]:
+                try:
+                    with beneath(staging, staged, folder=True) as original_stage:
+                        with beneath(original_stage, marker) as original_marker:
+                            owned = (
+                                object_id(original_stage) == created["stage"]
+                                and object_id(original_marker) == created["marker"]
+                            )
+                        if owned:
+                            # A failed write may leave our marker incomplete. Its
+                            # retained handle proves ownership without matching bytes.
+                            os.unlink(marker, dir_fd=original_stage)
+                            marker_removed = True
+                        else:
+                            changed = True
+                            created["stage"] = None
+                except FileNotFoundError:
+                    pass
             for fd, name, folder, owned in (
                 (staging, linked, False, created["link"]),
                 (staging, staged, True, created["stage"]),
@@ -1510,7 +1548,6 @@ def probe_destination(
                     (os.rmdir if folder else os.unlink)(name, dir_fd=fd)
                 except FileNotFoundError:
                     pass
-            marker_removed = False
             if created["target"]:
                 try:
                     with beneath(destination, target, folder=True) as current_target:
