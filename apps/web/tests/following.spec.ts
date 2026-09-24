@@ -121,6 +121,8 @@ async function fixture(page: Page) {
       };
     else if (path.endsWith("/acquisition/books"))
       data = { items: [], total: 0 };
+    else if (path === "/api/acquisition/selections/options")
+      data = { downloaders: [], destinations: [] };
     else if (path === "/api/acquisition/profiles") data = [profile];
     else if (path.endsWith("/acquisition/preview")) {
       lastPreview = route.request().postDataJSON();
