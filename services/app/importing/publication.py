@@ -1294,6 +1294,14 @@ def probe_download_folder(
             try:
                 write_all(fd, content)
                 os.fsync(fd)
+                # SMB may finalize write timestamps when the writer closes. Keep
+                # the inode pinned by a checked read handle, then freeze its
+                # identity exactly as we would for a completed download.
+                reader = handles.enter_context(beneath(parent, name))
+                if not same_object(reader, owned):
+                    raise PublicationError("Setup probe changed; replacement preserved")
+                writer, fd = fd, None
+                os.close(writer)
                 source = f"{relative}/{name}" if relative else name
                 return probe_destination(
                     source_root,
@@ -1302,7 +1310,7 @@ def probe_download_folder(
                         source=name,
                         name="probe",
                         sha256=hashlib.sha256(content).hexdigest(),
-                        identity=identity(os.fstat(fd)),
+                        identity=identity(os.fstat(reader)),
                     ),
                     destination_root,
                     staging_root,
@@ -1321,7 +1329,8 @@ def probe_download_folder(
                     os.unlink(name, dir_fd=parent)
                     sync_directory(parent)
         finally:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
 
 
 def probe_destination(

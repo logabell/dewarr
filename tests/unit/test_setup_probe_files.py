@@ -53,6 +53,80 @@ def test_failed_link_reports_copy_capability_without_claiming_a_hardlink(roots, 
     assert all(not list(root.iterdir()) for root in roots)
 
 
+def test_setup_probe_freezes_identity_after_the_writer_is_closed(roots, monkeypatch):
+    """SMB can finalize mtime on reopening/closing a newly written file."""
+    source, target, stage = roots
+    real_open, real_close = os.open, os.close
+    writers = {}
+
+    def settle(path):
+        if path.exists():
+            observed = path.stat()
+            os.utime(path, ns=(observed.st_atime_ns, observed.st_mtime_ns + 1_000_000))
+
+    def opening(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if str(path).startswith(".book-search-route-"):
+            full_path = source / path
+            if flags & os.O_CREAT:
+                writers[fd] = full_path
+            elif full_path in writers.values():
+                settle(full_path)
+        return fd
+
+    def closing(fd):
+        path = writers.pop(fd, None)
+        if path is not None:
+            settle(path)
+        return real_close(fd)
+
+    monkeypatch.setattr(publication.os, "open", opening)
+    monkeypatch.setattr(publication.os, "close", closing)
+    report = publication.probe_download_folder(source, "", target, stage)
+    assert report["copy"] and report["no_replace"]
+    assert not writers
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_writer_close_error_does_not_retry_a_reused_descriptor(roots, monkeypatch):
+    source, target, stage = roots
+    real_open, real_close = os.open, os.close
+    writer = None
+    replacement = None
+
+    def opening(path, flags, *args, **kwargs):
+        nonlocal writer
+        fd = real_open(path, flags, *args, **kwargs)
+        if str(path).startswith(".book-search-route-") and flags & os.O_CREAT:
+            writer = fd
+        return fd
+
+    def closing(fd):
+        nonlocal replacement
+        if fd == writer and replacement is None:
+            real_close(fd)
+            replacement = real_open(os.devnull, os.O_RDONLY)
+            assert replacement == fd
+            raise OSError(errno.EIO, "synthetic close error after descriptor release")
+        return real_close(fd)
+
+    monkeypatch.setattr(publication.os, "open", opening)
+    monkeypatch.setattr(publication.os, "close", closing)
+    try:
+        with pytest.raises(OSError, match="synthetic close error"):
+            publication.probe_download_folder(source, "", target, stage)
+        assert replacement is not None
+        os.fstat(replacement)  # A second close must not consume this unrelated FD.
+        assert all(not list(root.iterdir()) for root in roots)
+    finally:
+        if replacement is not None:
+            try:
+                real_close(replacement)
+            except OSError as error:
+                if error.errno != errno.EBADF:
+                    raise
+
+
 def test_failed_probe_removes_owned_source_file(roots, monkeypatch):
     def fail(*args, **kwargs):
         raise publication.PublicationError("synthetic probe failure")
