@@ -1,4 +1,4 @@
-"""SABnzbd 3.x/4.x transport. Submission is not association or completion.
+"""SABnzbd 3.x/4.x/5.x transport. Submission is not association or completion.
 
 Callers journal dispatch before submit, then reconcile the attempt name, category
 and completed folder. This client never changes SABnzbd settings or server paths.
@@ -220,8 +220,10 @@ class SabClient:
             return self._capabilities
         payload = await self._request("version")
         version = payload.get("version")
-        if not isinstance(version, str) or not re.fullmatch(r"[34]\.\d+\.\d+", version):
-            raise AdapterError(FailureKind.UNSUPPORTED, "This adapter requires SABnzbd 3.x or 4.x.")
+        if not isinstance(version, str) or not re.fullmatch(r"[345]\.\d+\.\d+", version):
+            raise AdapterError(
+                FailureKind.UNSUPPORTED, "This adapter requires SABnzbd 3.x, 4.x, or 5.x."
+            )
         self._capabilities = Capabilities(
             version=version,
             operations={"submit", "find", "status"},

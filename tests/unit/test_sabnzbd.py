@@ -70,6 +70,21 @@ async def test_connection_reads_category_folder_without_logging_the_key(transpor
     assert all(call.url.params["output"] == "json" for call in calls)
 
 
+async def test_sabnzbd_5_is_supported():
+    def handler(request):
+        assert request.url.params["mode"] == "version"
+        return httpx.Response(200, json={"version": "5.1.3"})
+
+    async with SabClient(
+        "http://sab.test:8080",
+        "private-sab-key",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        capabilities = await client.capabilities()
+
+    assert capabilities.version == "5.1.3"
+
+
 async def test_queue_filename_suffix_still_matches_the_attempt():
     def handler(request):
         mode = request.url.params["mode"]
