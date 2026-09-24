@@ -1,4 +1,4 @@
-"""SABnzbd 3.x/4.x transport. Submission is not association or completion.
+"""SABnzbd 3.x/4.x/5.x transport. Submission is not association or completion.
 
 Callers journal dispatch before submit, then reconcile the attempt name, category
 and completed folder. This client never changes SABnzbd settings or server paths.
@@ -89,6 +89,11 @@ def job_names(row):
     names = {name}
     if name.lower().endswith(".nzb"):
         names.add(name[:-4])
+    # SAB replaces ':' in filenames. Decode only our exact, validated namespace
+    # so reconciliation still compares the original journaled attempt tag.
+    for candidate in tuple(names):
+        if re.fullmatch(r"book-search_[a-zA-Z0-9_-]{1,80}", candidate):
+            names.add(candidate.replace("book-search_", "book-search:", 1))
     return names
 
 
@@ -155,7 +160,7 @@ class SabClient:
         self._capabilities = None
         self.client = httpx.AsyncClient(
             base_url=configured_url(base_url) + "/",
-            headers={"X-Api-Key": api_key, "Accept": "application/json"},
+            headers={"Accept": "application/json"},
             trust_env=False,
             follow_redirects=False,
             timeout=httpx.Timeout(40, connect=10),
@@ -173,10 +178,10 @@ class SabClient:
         uncertain = FailureKind.UNCERTAIN if mutating else FailureKind.PARSER
         try:
             async with asyncio.timeout(50):
-                response = await (
-                    self.client.post("api", params=query, files=files)
-                    if files
-                    else self.client.get("api", params=query)
+                # SABnzbd authenticates an apikey parameter, not X-Api-Key.
+                # POST even read-only modes to keep the key out of request URLs.
+                response = await self.client.post(
+                    "api", params=query, data={"apikey": self._api_key}, files=files
                 )
         except (httpx.HTTPError, TimeoutError) as error:
             raise AdapterError(
@@ -220,8 +225,10 @@ class SabClient:
             return self._capabilities
         payload = await self._request("version")
         version = payload.get("version")
-        if not isinstance(version, str) or not re.fullmatch(r"[34]\.\d+\.\d+", version):
-            raise AdapterError(FailureKind.UNSUPPORTED, "This adapter requires SABnzbd 3.x or 4.x.")
+        if not isinstance(version, str) or not re.fullmatch(r"[345]\.\d+\.\d+", version):
+            raise AdapterError(
+                FailureKind.UNSUPPORTED, "This adapter requires SABnzbd 3.x, 4.x or 5.x."
+            )
         self._capabilities = Capabilities(
             version=version,
             operations={"submit", "find", "status"},
@@ -258,12 +265,13 @@ class SabClient:
             ) from error
 
     async def _matching(self, tag):
+        search = tag.replace(":", "_")
         queue = slots(
-            await self._request("queue", params={"search": tag, "start": 0, "limit": 20}),
+            await self._request("queue", params={"search": search, "start": 0, "limit": 20}),
             "queue",
         )
         history = slots(
-            await self._request("history", params={"search": tag, "start": 0, "limit": 20}),
+            await self._request("history", params={"search": search, "start": 0, "limit": 20}),
             "history",
         )
         found = {}
@@ -292,7 +300,9 @@ class SabClient:
             "queue",
         )
         history = slots(
-            await self._request("history", params={"search": external_id, "start": 0, "limit": 20}),
+            await self._request(
+                "history", params={"nzo_ids": external_id, "start": 0, "limit": 20}
+            ),
             "history",
         )
         matches = [
@@ -325,7 +335,7 @@ class SabClient:
         if not isinstance(artifact, bytes) or not 0 < len(artifact) <= MAX_ARTIFACT:
             raise ValueError("Expected one bounded NZB artifact")
         await self.capabilities()
-        params = {"nzbname": tag}
+        params = {"nzbname": tag.replace(":", "_")}
         if category:
             params["cat"] = category
         payload = await self._request(
