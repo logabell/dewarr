@@ -164,7 +164,7 @@ async function fixture(page: Page) {
 
 test("author follow verifies catalog, defaults to future only, and keeps exclusions", async ({
   page,
-}) => {
+}, testInfo) => {
   const state = await fixture(page);
   await page.goto("/authors/hardcover/9");
   await page.getByRole("link", { name: "Follow author" }).click();
@@ -197,7 +197,7 @@ test("author follow verifies catalog, defaults to future only, and keeps exclusi
     page.getByText("Excluded by you", { exact: true }),
   ).toBeVisible();
   await page.screenshot({
-    path: "/private/tmp/nor31-following-desktop.png",
+    path: testInfo.outputPath("following-desktop.png"),
     fullPage: true,
   });
   await page.getByRole("button", { name: "Pause follow", exact: true }).click();
@@ -215,7 +215,7 @@ test("author follow verifies catalog, defaults to future only, and keeps exclusi
   ).toBeVisible();
 });
 
-test("Following is usable at a narrow viewport", async ({ page }) => {
+test("Following is usable at a narrow viewport", async ({ page }, testInfo) => {
   await fixture(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/following?kind=series&externalId=7&name=Earthsea");
@@ -229,7 +229,7 @@ test("Following is usable at a narrow viewport", async ({ page }) => {
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
   await page.screenshot({
-    path: "/private/tmp/nor31-following-mobile.png",
+    path: testInfo.outputPath("following-mobile.png"),
     fullPage: true,
   });
 });
