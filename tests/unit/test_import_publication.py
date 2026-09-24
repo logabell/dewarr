@@ -195,6 +195,55 @@ def test_retry_recognizes_published_item_even_if_download_was_later_removed(spec
     assert publish_item(spec)["state"] == "published"
 
 
+@pytest.mark.parametrize("mode", ["hardlink", "copy"])
+def test_post_rename_inode_change_recovers_by_publication_marker(specification, mode):
+    spec = specification.model_copy(update={"mode": mode})
+
+    def crash(phase):
+        if phase == "published-before-receipt":
+            raise RuntimeError("simulated mergerfs rename")
+
+    with pytest.raises(RuntimeError, match="mergerfs"):
+        publish_item(spec, checkpoint=crash)
+    receipt_path = spec.staging_root / f"{spec.entry_id}.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["stage_identity"]["inode"] += 1
+    receipt_path.write_text(json.dumps(receipt))
+    published = spec.destination_root / spec.folder
+    assert (published / publication.PUBLICATION_MARKER).is_file()
+    assert publication.remaining_import_bytes(spec) == 0
+    recovered = publish_item(spec)
+    assert recovered["state"] == "published"
+    assert recovered["stage_identity"]["inode"] == published.stat().st_ino
+    assert not (published / publication.PUBLICATION_MARKER).exists()
+    assert publish_item(spec)["state"] == "published"
+
+
+def test_publication_marker_does_not_adopt_an_identical_replacement(specification):
+    spec = specification
+
+    def crash(phase):
+        if phase == "published-before-receipt":
+            raise RuntimeError("stop after rename")
+
+    with pytest.raises(RuntimeError, match="after rename"):
+        publish_item(spec, checkpoint=crash)
+    published = spec.destination_root / spec.folder
+    moved = published.with_name("Moved original")
+    published.rename(moved)
+    published.mkdir()
+    for source in moved.iterdir():
+        if source.name != publication.PUBLICATION_MARKER:
+            shutil.copy2(source, published / source.name)
+    with pytest.raises(PublicationError, match="another item"):
+        publish_item(spec)
+    assert sorted(path.name for path in published.iterdir()) == [
+        "First Harbor.epub",
+        "metadata.opf",
+    ]
+    assert (moved / publication.PUBLICATION_MARKER).is_file()
+
+
 def test_same_filesystem_rename_reserves_sidecar_bytes_only(specification):
     spec = specification.model_copy(update={"mode": "rename"})
     assert publication.remaining_import_bytes(spec) == len(b"<package/>")

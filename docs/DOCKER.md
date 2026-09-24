@@ -56,6 +56,21 @@ SMB/CIFS mounts need a few options, because the share, not Linux, decides owners
 
 Shares without hardlink support, such as many NAS SMB exports, fall back to copying.
 
+### mergerfs and pooled storage
+
+Mount the pooled parent once, such as `/mnt/user/data:/data`, and choose library and download
+folders below `/data`. Do not give Dewarr separate Docker mounts for the download and library
+subfolders, and do not mix a mergerfs pool path with one of its underlying branch paths. A single
+shared view lets mergerfs place hardlinks on the same branch and matches the path layout recommended
+for Sonarr and Radarr.
+
+mergerfs can report a different directory inode after a rename because its default `hybrid-hash`
+mode derives directory identities from their paths. Dewarr supports that behavior: route tests and
+interrupted imports use private random ownership markers while a directory moves, then record the
+identity at its final library path. File hardlinks are still verified independently. See the
+[mergerfs inode calculation documentation](https://github.com/trapexit/mergerfs/blob/master/mkdocs/docs/config/inodecalc.md)
+for the available policies and their tradeoffs.
+
 ## Existing PostgreSQL
 
 Remove the `postgres` service and Dewarr's `depends_on` section, then set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` to your existing database. Dewarr waits for the database and applies migrations before starting.

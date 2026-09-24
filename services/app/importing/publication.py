@@ -44,6 +44,9 @@ class PublicationBusy(PublicationError):
     pass
 
 
+PUBLICATION_MARKER = ".book-search-publication"
+
+
 class PublishFile(StrictModel):
     source: str
     name: str
@@ -112,6 +115,8 @@ class PublicationSpec(StrictModel):
             ):
                 raise ValueError("Generated cover is not a bounded JPEG")
         names.extend(self.binary_sidecars)
+        if PUBLICATION_MARKER in names:
+            raise ValueError("The publication marker name is reserved")
         if len({collision_key(name) for name in names}) != len(names):
             raise ValueError("Published filenames collide")
         for root in (self.source_root, self.destination_root, self.staging_root):
@@ -155,6 +160,63 @@ def object_id(fd):
 
 def same_object(fd, expected):
     return object_id(fd) == {key: expected[key] for key in ("device", "inode")}
+
+
+def publication_marker_content(receipt):
+    token = receipt.get("publication_marker")
+    if not token:
+        return None
+    return f"book-search publication {receipt['entry_id']} {token}\n".encode()
+
+
+def has_publication_marker(folder, receipt):
+    content = publication_marker_content(receipt)
+    if content is None:
+        return False
+    try:
+        with beneath(folder, PUBLICATION_MARKER) as marker:
+            info = os.fstat(marker)
+            if info.st_size != len(content) or info.st_nlink != 1:
+                return False
+            os.lseek(marker, 0, os.SEEK_SET)
+            return os.read(marker, len(content) + 1) == content
+    except (FileNotFoundError, InspectionError):
+        return False
+
+
+def ensure_publication_marker(stage, staging, receipt_name, receipt):
+    if not receipt.get("publication_marker"):
+        receipt["publication_marker"] = uuid4().hex
+        write_receipt(staging, receipt_name, receipt)
+    content = publication_marker_content(receipt)
+    try:
+        marker = os.open(
+            PUBLICATION_MARKER,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o644,
+            dir_fd=stage,
+        )
+    except FileExistsError:
+        if not has_publication_marker(stage, receipt):
+            raise PublicationError("Staged publication marker changed") from None
+        return
+    try:
+        write_all(marker, content)
+        os.fsync(marker)
+    finally:
+        os.close(marker)
+    sync_directory(stage)
+
+
+def remove_publication_marker(folder, receipt):
+    try:
+        if not has_publication_marker(folder, receipt):
+            return False
+        os.unlink(PUBLICATION_MARKER, dir_fd=folder)
+        sync_directory(folder)
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def seeding_same_file(fd, expected):
@@ -465,9 +527,14 @@ def leaf_names(folder, spec):
     return present
 
 
-def verify_item(folder, spec, deadline, derived=None):
+def verify_item(folder, spec, deadline, derived=None, receipt=None):
     expected = published_names(spec) | set(generated_files(spec))
-    if leaf_names(folder, spec) != expected:
+    present = leaf_names(folder, spec)
+    if PUBLICATION_MARKER in present:
+        if not receipt or not has_publication_marker(folder, receipt):
+            raise PublicationError("Item contains an unrecognized publication marker")
+        present.remove(PUBLICATION_MARKER)
+    if present != expected:
         raise PublicationError("Item contains missing or unplanned files")
     if spec.conversion:
         recorded = (derived or {}).get(spec.conversion.output_name)
@@ -529,6 +596,7 @@ def prepare_stage(staging, receipt_name, receipt, spec):
         with beneath(staging, name, folder=True) as fd:
             if not same_object(fd, receipt["stage_identity"]):
                 raise PublicationError("Staged item identity changed")
+            ensure_publication_marker(fd, staging, receipt_name, receipt)
         return
     # A crash between mkdir and identity journaling leaves an unconfirmed, unwatched orphan.
     # Allocate another private staging path; never adopt or remove an unrecognized directory.
@@ -544,6 +612,8 @@ def prepare_stage(staging, receipt_name, receipt, spec):
     with beneath(staging, name, folder=True) as fd:
         receipt["stage_identity"] = object_id(fd)
     write_receipt(staging, receipt_name, receipt)
+    with beneath(staging, name, folder=True) as fd:
+        ensure_publication_marker(fd, staging, receipt_name, receipt)
 
 
 def stage_conversion(
@@ -780,7 +850,7 @@ def remaining_stage_bytes(staging, receipt, spec, deadline):
         try:
             with beneath(staging, receipt["stage_name"], folder=True) as stage:
                 if same_object(stage, receipt["stage_identity"]):
-                    verify_item(stage, spec, deadline, receipt.get("derived"))
+                    verify_item(stage, spec, deadline, receipt.get("derived"), receipt)
                     return 0
         except (FileNotFoundError, PublicationError):
             pass  # Incomplete staging conservatively reserves a fresh complete copy.
@@ -813,11 +883,12 @@ def remaining_import_bytes(spec, *, timeout=600):
             if receipt:
                 try:
                     with beneath(target, spec.folder, folder=True) as existing:
-                        if not receipt.get("stage_identity") or not same_object(
-                            existing, receipt["stage_identity"]
+                        if not receipt.get("stage_identity") or (
+                            not same_object(existing, receipt["stage_identity"])
+                            and not has_publication_marker(existing, receipt)
                         ):
                             raise PublicationError("Destination belongs to another item")
-                        verify_item(existing, spec, deadline, receipt.get("derived"))
+                        verify_item(existing, spec, deadline, receipt.get("derived"), receipt)
                         return 0
                 except FileNotFoundError:
                     pass
@@ -1067,13 +1138,16 @@ def publish_item(
             # may have succeeded even when DB acknowledgement or receipt update was interrupted.
             try:
                 with beneath(destination, spec.folder, folder=True) as existing:
-                    if not receipt.get("stage_identity") or not same_object(
-                        existing, receipt["stage_identity"]
+                    if not receipt.get("stage_identity") or (
+                        not same_object(existing, receipt["stage_identity"])
+                        and not has_publication_marker(existing, receipt)
                     ):
                         raise PublicationError("Destination exists and belongs to another item")
-                    verify_item(existing, spec, deadline, receipt.get("derived"))
+                    verify_item(existing, spec, deadline, receipt.get("derived"), receipt)
+                    receipt["stage_identity"] = object_id(existing)
                     receipt["state"] = "published"
                     write_receipt(staging, receipt_name, receipt)
+                    remove_publication_marker(existing, receipt)
                     return receipt
             except FileNotFoundError:
                 if receipt["state"] == "published":
@@ -1106,7 +1180,7 @@ def publish_item(
                         on_progress=on_progress,
                         pause_library_lock=pause,
                     )
-                    verify_item(stage, spec, deadline, receipt.get("derived"))
+                    verify_item(stage, spec, deadline, receipt.get("derived"), receipt)
                     for file in (*spec.files, *conversion_inputs(spec)):
                         checked_source(source, file, deadline)
                     receipt["state"] = "prepared"
@@ -1147,9 +1221,16 @@ def publish_item(
                             sync_directory(parent)
                             sync_directory(staging)
                             checkpoint("published-before-receipt")
-                            receipt["state"] = "published"
-                            write_receipt(staging, receipt_name, receipt)
-                            return receipt
+                            with beneath(parent, leaf, folder=True) as published:
+                                if not has_publication_marker(published, receipt):
+                                    raise PublicationError(
+                                        "Published directory lost its ownership marker"
+                                    )
+                                receipt["stage_identity"] = object_id(published)
+                                receipt["state"] = "published"
+                                write_receipt(staging, receipt_name, receipt)
+                                remove_publication_marker(published, receipt)
+                                return receipt
 
 
 def _mounts(mountinfo="/proc/self/mountinfo"):
