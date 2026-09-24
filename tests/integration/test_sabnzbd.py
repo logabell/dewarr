@@ -40,7 +40,10 @@ def sab_body(**changes):
     }
 
 
-async def test_sabnzbd_connection_keeps_the_api_key_private(client, admin, database, monkeypatch):
+@pytest.mark.parametrize("version", ["3.7.2", "4.5.1", "5.1.1", "5.1.3"])
+async def test_sabnzbd_connection_keeps_the_api_key_private(
+    client, admin, database, monkeypatch, version
+):
     monkeypatch.setattr(get_settings(), "import_sources", {})
     calls = []
 
@@ -52,7 +55,7 @@ async def test_sabnzbd_connection_keeps_the_api_key_private(client, admin, datab
         assert params["apikey"] == ["private-sab-key"]
         mode = params["mode"][0]
         if mode == "version":
-            return httpx.Response(200, json={"version": "5.1.3"})
+            return httpx.Response(200, json={"version": version})
         if mode == "get_config" and params["section"] == ["misc"]:
             return httpx.Response(
                 200, json={"config": {"misc": {"complete_dir": "/downloads/complete"}}}
@@ -76,7 +79,7 @@ async def test_sabnzbd_connection_keeps_the_api_key_private(client, admin, datab
     tested = await client.post(f"/api/downloaders/{created.json()['id']}/test")
     assert tested.status_code == 200, tested.text
     assert tested.json()["status"] == "connected"
-    assert tested.json()["version"] == "5.1.3"
+    assert tested.json()["version"] == version
     assert tested.json()["save_path"] == "/downloads/books"
     assert "private-sab-key" not in tested.text
     async with database() as db:
