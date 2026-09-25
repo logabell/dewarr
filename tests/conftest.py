@@ -39,7 +39,7 @@ def migrated_database():
         with psycopg.connect(admin_url, autocommit=True) as connection:
             connection.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
             connection.execute(f'CREATE DATABASE "{name}"')
-    subprocess.run(["uv", "run", "alembic", "upgrade", "head"], check=True)
+    subprocess.run(["uv", "run", "alembic", "upgrade", "head"], check=True, timeout=60)
 
 
 @pytest.fixture
@@ -64,11 +64,15 @@ async def database(migrated_database):
     # Cancelling a worker waits for its running jobs with no limit by default, so a stuck
     # job would outlast a test's asyncio.wait_for and hang the whole run.
     queue.worker_defaults["shutdown_graceful_timeout"] = 30
-    async with queue.open_async():
-        yield session_factory()
-    await get_engine().dispose()
-    get_engine.cache_clear()
-    get_queue.cache_clear()
+    try:
+        async with queue.open_async():
+            yield session_factory()
+    finally:
+        try:
+            await get_engine().dispose()
+        finally:
+            get_engine.cache_clear()
+            get_queue.cache_clear()
 
 
 @pytest.fixture
@@ -96,3 +100,10 @@ async def admin(client):
     assert response.status_code == 201, response.text
     client.headers["X-CSRF-Token"] = response.json()["csrf_token"]
     return response.json()["user"]
+
+
+@pytest.fixture(autouse=True)
+def isolated_import_journals(tmp_path, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "import_journal_root", tmp_path.resolve() / "journals")

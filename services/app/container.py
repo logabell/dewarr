@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -12,6 +13,8 @@ from pathlib import Path
 import psycopg
 from cryptography.fernet import Fernet
 from sqlalchemy.engine import URL, make_url
+
+from app.origins import configured_origin, parse_origin
 
 LOG = logging.getLogger("dewarr")
 MAINTENANCE_LOCK = 720041
@@ -35,10 +38,21 @@ def configure_environment() -> Path:
             database=os.environ.get("DB_NAME", "dewarr"),
         ).render_as_string(hide_password=False)
     os.environ.setdefault("BOOK_PUBLIC_URL", os.environ.get("PUBLIC_URL", "http://localhost:8000"))
-    os.environ.setdefault(
-        "BOOK_COOKIE_SECURE", str(os.environ["BOOK_PUBLIC_URL"].startswith("https://")).lower()
-    )
+    try:
+        public_url = configured_origin(os.environ["BOOK_PUBLIC_URL"])
+    except ValueError:
+        raise RuntimeError(
+            "Invalid PUBLIC_URL/BOOK_PUBLIC_URL: use an HTTP(S) origin with a valid host "
+            "and port, without credentials, whitespace, a path, query or fragment"
+        ) from None
+    if "PUBLIC_URL" in os.environ and parse_origin(
+        os.environ["PUBLIC_URL"], configuration=True
+    ) != parse_origin(public_url):
+        LOG.warning("BOOK_PUBLIC_URL overrides a different PUBLIC_URL; remove the stale override")
+    os.environ["BOOK_PUBLIC_URL"] = public_url
+    os.environ.setdefault("BOOK_COOKIE_SECURE", str(parse_origin(public_url)[0] == "https").lower())
     os.environ.setdefault("BOOK_ENV_FILE", "")
+    os.environ.setdefault("BOOK_IMPORT_JOURNAL_ROOT", str(config / "import-journals"))
     os.environ["HOME"] = str(config)
     if not os.environ.get("BOOK_SECRET_KEY"):
         os.environ.setdefault("BOOK_SECRET_KEY_FILE", str(config / "app_key"))
@@ -51,6 +65,10 @@ def prepare_user(config: Path) -> None:
     gid = int(os.environ.get("PGID", "1000"))
     if uid <= 0 or gid <= 0:
         raise RuntimeError("PUID and PGID must be positive, non-root IDs")
+    value = os.environ.get("UMASK", "002")
+    if not re.fullmatch(r"0?[0-7]{3}", value) or int(value, 8) & 0o700:
+        raise RuntimeError("UMASK must be an octal permission mask preserving owner access")
+    os.umask(int(value, 8))
     config.mkdir(parents=True, exist_ok=True)
     if os.geteuid() == 0:
         os.chown(config, uid, gid)
@@ -66,7 +84,6 @@ def prepare_user(config: Path) -> None:
         raise RuntimeError("Match PUID/PGID to --user, or omit --user and let Dewarr set them")
     if not os.access(config, os.W_OK):
         raise RuntimeError("The configured PUID/PGID must be able to write /config")
-    os.umask(0o022)
 
 
 DATABASE_HINTS = (

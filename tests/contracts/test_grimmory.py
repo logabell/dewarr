@@ -678,3 +678,49 @@ async def test_catalog_over_one_thousand_pages_still_downloads():
         _rows, total = await api.page("7", 0)
     assert total == 1001
     assert fixture.calls.count(("GET", "/api/v1/books/page")) == 1001
+
+
+async def test_private_child_staging_refuses_grimmory_watcher_before_writes(tmp_path):
+    fixture = GrimmoryFixture(tmp_path.resolve())
+    async with fixture.client() as adapter:
+        with pytest.raises(ValueError, match="watcher"):
+            await verify_backend(
+                adapter,
+                "7",
+                "/books",
+                fixture.root,
+                "ebook",
+                staging_root=fixture.root / ".book-search-staging",
+            )
+    assert not list(fixture.root.iterdir())
+
+
+@pytest.mark.parametrize("scan_permission", [True, False])
+async def test_grimmory_nested_staging_needs_disabled_watcher_and_scan(tmp_path, scan_permission):
+    fixture = GrimmoryFixture(tmp_path.resolve())
+    fixture.watch = False
+    fixture.admin = scan_permission
+    fixture.manage = False
+    async with fixture.client() as adapter:
+        if scan_permission:
+            result = await verify_backend(
+                adapter,
+                "7",
+                "/books",
+                fixture.root,
+                "ebook",
+                staging_root=fixture.root / ".book-search-staging",
+            )
+            assert result["root_mapping"] and result["scan_capable"]
+            assert not result["watcher_enabled"]
+        else:
+            with pytest.raises(ValueError, match="scan"):
+                await verify_backend(
+                    adapter,
+                    "7",
+                    "/books",
+                    fixture.root,
+                    "ebook",
+                    staging_root=fixture.root / ".book-search-staging",
+                )
+    assert not list(fixture.root.iterdir())

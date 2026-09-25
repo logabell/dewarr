@@ -241,6 +241,8 @@ async def context(db):
             "import_sources",
             "import_destinations",
             "import_staging_root",
+            "import_storage_routes",
+            "import_journal_root",
             "hardcover_url",
             "openlibrary_url",
         },

@@ -1,7 +1,7 @@
 # Storage compatibility: Sonarr/Radarr comparison
 
-Reviewed 2026-09-24. This document distinguishes the implemented NFS compatibility
-fix from proposed changes to Dewarr's storage architecture.
+Reviewed 2026-09-25. Covers the implemented NAS/library mount behavior, retained legacy routes,
+and the boundary between Docker path mapping and filesystem capabilities.
 
 ## What the other applications do
 
@@ -36,9 +36,9 @@ Source: [NFS export identity mapping](https://man7.org/linux/man-pages/man5/expo
 | Numeric ownership | Staging and lock files previously had to match the worker uid. | Fixed: the filesystem authorizes access; lock owners are checked against the staging folder's server-side owner. |
 | Saving a folder | The UI previously required a ready downloader before saving. | Fixed in the folder workflow: save first; verify and activate once a client is ready. |
 | Download filesystem | Verification attempts hardlinks and falls back to copies. | Already supports downloads on a separate filesystem when publication checks pass. |
-| Staging permissions | Staging must remain private; journals are stored alongside staged media. | More restrictive than ordinary media-folder setup, especially on SMB mounts with synthetic modes. |
-| Multiple library mounts | One global staging path requires all libraries to share a compatible filesystem. | Unnecessary restriction at the product level; requires storage and recovery changes. |
-| Mounting only a library | Automatic staging lives beside the library, requiring access to its parent on the same filesystem. | A shared-parent recommendation has become a setup requirement. |
+| Staging permissions | New routes use normal media permissions and protected app journals. | Synthetic SMB modes no longer need to provide private media staging. Legacy journals keep their original privacy contract. |
+| Multiple library mounts | Per-destination staging, with retained historical locations. | Independent shares are supported; each destination tests its own publication route. |
+| Mounting only a library | Use a hidden `.book-search-staging` child when sibling staging cannot share the mount. | Supported for Audiobookshelf and Grimmory with watcher disabled plus scan permission. |
 | Connections | A compatible Audiobookshelf/Grimmory folder supplies the destination's identity; downloader verification also activates imports. | Keep these distinct in the UI: connected, folder saved, file access verified, imports enabled. A working connection does not prove filesystem access. |
 
 ## Implemented NFS behavior
@@ -140,9 +140,9 @@ missing source roots/save subfolders, and readable feedback at 1236px and 390px.
 2. Resolve media staging per destination filesystem. Persist that location in
    each frozen import specification so retries and recovery use the original
    staging area even when another library is configured later.
-3. Support a library-only mount with an application-managed temporary location
-   on that filesystem. Integrate library-server watcher exclusions before putting
-   incomplete media inside a watched root; hidden names alone are not sufficient.
+3. Extend library-only mounts beyond Audiobookshelf once other library servers
+   provide reliable scanner and watcher exclusions. NOR-66 implements the
+   Audiobookshelf path; hidden names alone are not sufficient for every backend.
 4. Use actual operations to determine write, copy, hardlink, rename, and lock
    support. Label hardlinks as an optimization. Report the failing operation and
    path when verification fails, with NFS-specific or SMB-specific guidance only
@@ -163,3 +163,68 @@ permissions, separate ebook/audiobook mounts, downloads on another filesystem,
 library-only mounts, disconnect/reconnect, concurrent workers, and process death
 before and after publication. Existing books must never be overwritten, and
 unknown or replaced files must never be removed during recovery.
+
+
+## NOR-66: library-only Audiobookshelf mounts
+
+Root cause: the folder picker rejected every automatic staging choice whose
+library parent was `/`. Staging selection always fell back to a sibling;
+route probes, publication specifications, and combine specifications also
+rejected all staging/library overlap. This made an ordinary NAS bind mount such
+as `/volume1/CalibreLibrary:/library` impossible to configure.
+
+Automatic selection now uses the exact reserved child `.book-search-staging`
+when the library is a mount root, sits directly below `/`, or its parent cannot
+host staging. Linux mount information distinguishes bind boundaries even when
+`st_dev` is equal. Working staging locations remain in place; existing journal
+and unfinished-import guards still prevent silent relocation. Library selection
+checks journal privacy and rejects symlinks or unexpected files without replacing them
+or changing their permissions. Downloads remain outside library and staging
+roots. Publication and part-combine paths cannot address the reserved staging
+namespace. Atomic publication and recovery retain the frozen journal location.
+
+Audiobookshelf's [watcher](https://github.com/advplyr/audiobookshelf/blob/d22c468215882dda4511bd1d5b7dd82b260d63bd/server/Watcher.js#L65)
+and [scanner file filtering](https://github.com/advplyr/audiobookshelf/blob/d22c468215882dda4511bd1d5b7dd82b260d63bd/server/utils/fileUtils.js#L140)
+explicitly exclude dot-prefixed path components. Grimmory's
+[scanner](https://github.com/grimmory-tools/grimmory/blob/839e02fc9abca9861385540ae752e981154b1e1a/backend/src/main/java/org/booklore/service/library/LibraryFileHelper.java#L179)
+skips hidden directories, but its
+[watch registration](https://github.com/grimmory-tools/grimmory/blob/839e02fc9abca9861385540ae752e981154b1e1a/backend/src/main/java/org/booklore/service/monitoring/LibraryWatchService.java#L235)
+and event processing do not provide equivalent exclusion. In-library staging is
+therefore requires the Grimmory watcher to be disabled and scan permission to be
+available. Other software watching the share must exclude the reserved folder.
+
+Focused checks exercise real local filesystem probes, interrupted hardlink/copy
+publication, read-only journal census, retry, cancellation, API selection and
+activation, full import confirmation, and part combining/separating under both
+staging layouts. Bind mount boundaries are simulated; this is not a live NAS
+or library-server interoperability test. New routes use the independent storage
+implementation described below; legacy routes retain their journal permissions.
+
+## NOR-66: independent media and journal storage
+
+The failure was a path policy, not an invalid NAS setup: the picker rejected `/library`
+and assumed writable sibling staging under `/`. A single global staging directory also
+made an unrelated library share constrain the selected destination.
+
+Migration `0074_destination_storage` adds per-destination routes without moving files.
+Frozen import specifications include the journal root for new routes; legacy fingerprint
+and lock behavior are retained. New journals and locks are in protected app storage,
+while media preparation and the final no-replace publication remain on the library mount.
+Shared `0775`/`0664` media modes follow configurable Docker `UMASK=002`; hardlinked source
+inodes are never chmodded. A `022` mask retains group read-only defaults when desired.
+
+Recovery and backup enumerate configured and retained locations. Backups deduplicate
+shared journal stores and preserve combine receipts as well as ordinary import receipts;
+conflicting receipt identities fail the backup. Restored journals remain in the protected
+restore output for reconciliation; this does not relocate media or silently rewrite frozen
+paths. Keep every referenced journal store and media mount when restoring.
+
+This aligns with the arr-stack distinction between container paths, root folders, remote
+path mappings, and underlying filesystem capabilities. A downloader API connection or a
+path mapping does not mount NAS data. A common parent mount enables hardlinks where
+supported; separate mounts work through copy fallback. Dewarr retains its stronger
+publication ownership, no-overwrite, source preservation, and backend confirmation checks.
+
+Automated checks use real local files with injected mount boundaries and network-style
+identity behavior. They are regression coverage, not certification of every NAS export,
+CIFS option, or library-server release. The setup probe validates the installed stack.

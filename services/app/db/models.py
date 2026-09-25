@@ -23,6 +23,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.domain.catalog_titles import display_base_sql, display_title_sql
+
 
 class Base(DeclarativeBase):
     pass
@@ -231,6 +233,11 @@ class Work(Identity, Base):
     catalog_public: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     catalog_owner_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
     match_key: Mapped[str | None] = mapped_column(String(64), index=True)
+
+
+# Keep the identity predicate index aligned with presentation-title normalization.
+Index("ix_works_display_title", display_title_sql(Work.title))
+Index("ix_works_display_base", display_base_sql(Work.title))
 
 
 class CatalogSeries(Identity, Base):
@@ -727,12 +734,48 @@ class InventoryRun(Identity, Base):
 
 class InventoryObservation(Base):
     __tablename__ = "inventory_observations"
+    __table_args__ = (Index("ix_inventory_observation_membership", "run_id", "item_external_id"),)
     run_id: Mapped[UUID] = mapped_column(
         ForeignKey("inventory_runs.id", ondelete="CASCADE"), primary_key=True
     )
     library_external_id: Mapped[str] = mapped_column(String(200), primary_key=True)
     item_external_id: Mapped[str] = mapped_column(String(200), primary_key=True)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    snapshot_bytes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    source_marker: Mapped[list | None] = mapped_column(JSONB)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    reused: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class InventoryItemState(Base):
+    """Small revision cache; content and ownership remain in the library tables."""
+
+    __tablename__ = "inventory_item_states"
+    integration_id: Mapped[UUID] = mapped_column(
+        ForeignKey("integrations.id", ondelete="CASCADE"), primary_key=True
+    )
+    library_external_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    item_external_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    source_marker: Mapped[list] = mapped_column(JSONB)
+    observed_media: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    scope_fingerprint: Mapped[str] = mapped_column(String(64))
+    credential_generation: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class InventoryAbsence(Base):
+    """Negative decisions stay staged until every absence check succeeds."""
+
+    __tablename__ = "inventory_absences"
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("inventory_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("library_assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(40))
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 Index(
@@ -1174,6 +1217,7 @@ class ImportStorageSettings(Base):
     destinations: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict)
     sources: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict)
     staging_root: Mapped[str | None] = mapped_column(String(1024))
+    storage_routes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
 
 
 class ImportDestination(Identity, Base):

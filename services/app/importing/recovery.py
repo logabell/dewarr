@@ -1,7 +1,6 @@
 """Read publication evidence without opening any file for writing or creating locks."""
 
 import asyncio
-import json
 import os
 import time
 from pathlib import Path
@@ -13,6 +12,7 @@ from app.importing.publication import (
     checked_source,
     conversion_inputs,
     has_publication_marker,
+    journal_fd,
     object_id,
     private_staging,
     published_names,
@@ -21,6 +21,7 @@ from app.importing.publication import (
     specification_fingerprint,
     verify_item,
 )
+from app.importing.storage import configured_storage_locations
 from app.state_bundle import journal_name
 
 MAX_JOURNAL_BYTES = 256 * 1024 * 1024
@@ -55,7 +56,7 @@ def read_publication(entry, roots):
         spec.entry_id != entry["id"]
         or str(spec.source_root) not in roots["import_sources"].values()
         or str(spec.destination_root) not in roots["import_destinations"].values()
-        or str(spec.staging_root) != roots["import_staging_root"]
+        or (spec.staging_root, spec.journal_root) not in configured_storage_locations(roots)
     ):
         raise ScanHeld("Saved publication roots do not match current mounted roots")
     deadline = time.monotonic() + 60
@@ -65,7 +66,7 @@ def read_publication(entry, roots):
         "folder": spec.folder,
     }
     with (
-        private_staging(spec.staging_root) as staging,
+        private_staging(spec.staging_root, spec.journal_root) as staging,
         directory(spec.destination_root) as destination,
     ):
         receipt = read_receipt(staging, str(entry["id"]) + ".json")
@@ -161,11 +162,13 @@ def read_publication(entry, roots):
             raise ScanHeld("Publication journal changed during observation")
         with (
             directory(spec.destination_root) as current_destination,
-            private_staging(spec.staging_root) as current_staging,
+            private_staging(spec.staging_root, spec.journal_root) as current_staging,
         ):
-            if object_id(current_destination) != object_id(destination) or object_id(
-                current_staging
-            ) != object_id(staging):
+            if (
+                object_id(current_destination) != object_id(destination)
+                or object_id(current_staging) != object_id(staging)
+                or object_id(journal_fd(current_staging)) != object_id(journal_fd(staging))
+            ):
                 raise ScanHeld("Publication roots changed during observation")
             if state == "published":
                 # An unchanged open child can outlive a renamed/replaced ancestor.
@@ -215,51 +218,56 @@ def publication_state(entry, roots, *, grimmory: bool):
     return state, message, evidence
 
 
-def journal_census(path):
+def journal_census(path, journal_root=None):
     records = []
     deadline = time.monotonic() + 60
-    total_bytes = 0
-    with private_staging(Path(path)) as root:
-        before = identity(os.fstat(root))
-        count = 0
-        with os.scandir(root) as entries:
-            for entry in entries:
-                if time.monotonic() > deadline:
-                    raise ScanHeld("Journal census exceeded its read deadline")
-                count += 1
-                if count > 30000:
-                    raise ScanHeld("Staging census exceeds 30,000 entries")
-                if entry.name.endswith(".json"):
-                    if not journal_name(entry.name):
-                        raise ScanHeld("Unrecognized journal filename in the staging root")
-                    size = entry.stat(follow_symlinks=False).st_size
-                    total_bytes += size
-                    if total_bytes > MAX_JOURNAL_BYTES:
-                        raise ScanHeld("Journal census exceeds 256 MiB")
-                    receipt = read_receipt(root, entry.name)
-                    if receipt is None and not size:
-                        continue  # An interrupted journal claim holds no publication state.
-                    if (
-                        not isinstance(receipt, dict)
-                        or len(json.dumps(receipt).encode()) > 8 * 1024 * 1024
-                    ):
-                        raise ScanHeld("Invalid publication journal")
-                    records.append(
-                        {
-                            "name": entry.name,
-                            "digest": digest(receipt),
-                            "entry_id": receipt.get("entry_id"),
-                            "state": receipt.get("state"),
-                            "stage_name": receipt.get("stage_name"),
-                        }
-                    )
-                elif entry.name.startswith("item-"):
-                    records.append({"name": entry.name, "kind": "stage"})
-        if before != identity(os.fstat(root)):
-            raise ScanHeld("Staging root changed during census")
-        with private_staging(Path(path)) as current:
-            if object_id(current) != object_id(root):
-                raise ScanHeld("Staging path changed during census")
+    total_bytes = count = 0
+    with private_staging(Path(path), journal_root) as root:
+        control = journal_fd(root)
+        before = {fd: identity(os.fstat(fd)) for fd in {int(root), control}}
+        for fd in before:
+            with os.scandir(fd) as entries:
+                for entry in entries:
+                    if time.monotonic() > deadline:
+                        raise ScanHeld("Journal census exceeded its read deadline")
+                    count += 1
+                    if count > 30000:
+                        raise ScanHeld("Staging census exceeds 30,000 entries")
+                    if fd == control and entry.name.endswith(".json"):
+                        if not journal_name(entry.name):
+                            raise ScanHeld("Unrecognized journal filename in the journal root")
+                        size = entry.stat(follow_symlinks=False).st_size
+                        total_bytes += size
+                        if total_bytes > MAX_JOURNAL_BYTES:
+                            raise ScanHeld("Journal census exceeds 256 MiB")
+                        receipt = read_receipt(control, entry.name)
+                        if receipt is None and not size:
+                            continue
+                        if not isinstance(receipt, dict):
+                            raise ScanHeld("Invalid publication journal")
+                        if journal_root and receipt.get("staging_root") != str(path):
+                            # One protected directory serves multiple independent media mounts.
+                            if not receipt.get("staging_root"):
+                                raise ScanHeld("Journal has no media staging root")
+                            continue
+                        records.append(
+                            {
+                                "name": entry.name,
+                                "digest": digest(receipt),
+                                "entry_id": receipt.get("entry_id"),
+                                "state": receipt.get("state"),
+                                "stage_name": receipt.get("stage_name"),
+                            }
+                        )
+                    elif fd == root and entry.name.startswith("item-"):
+                        records.append({"name": entry.name, "kind": "stage"})
+        if any(value != identity(os.fstat(fd)) for fd, value in before.items()):
+            raise ScanHeld("Staging or journal root changed during census")
+        with private_staging(Path(path), journal_root) as current:
+            if object_id(current) != object_id(root) or object_id(journal_fd(current)) != object_id(
+                control
+            ):
+                raise ScanHeld("Staging or journal path changed during census")
     return records
 
 
@@ -289,10 +297,11 @@ async def observe_files(inputs, writer):
             entity_id=entry["id"],
             evidence=evidence,
         )
-    if roots["import_staging_root"]:
+    locations = configured_storage_locations(roots)
+    for stage, journals in sorted(locations, key=lambda pair: (str(pair[0]), str(pair[1]))):
         await writer.pulse()
         try:
-            records = await asyncio.to_thread(journal_census, roots["import_staging_root"])
+            records = await asyncio.to_thread(journal_census, stage, journals)
         except Exception:
             await writer.add(
                 "files",
@@ -300,7 +309,7 @@ async def observe_files(inputs, writer):
                 "Publication journals",
                 "The current journal root could not be completely observed",
             )
-            return
+            continue
         known = {str(entry["id"]) for entry in inputs["import_entries"]}
         stages = {r.get("stage_name") for r in records if r.get("entry_id")}
         for record in records:
@@ -326,7 +335,7 @@ async def observe_files(inputs, writer):
             "Current journal and stage names were inspected without changing them",
             evidence={"entries": len(records)},
         )
-    elif inputs["import_entries"]:
+    if not locations and inputs["import_entries"]:
         await writer.add(
             "files",
             "blocked",

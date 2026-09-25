@@ -1,29 +1,29 @@
 import { defineConfig } from "@playwright/test";
+import shared from "./playwright.shared";
 
 export default defineConfig({
+  ...shared,
   testDir: "./tests",
+  testIgnore: "**/ui/**",
   projects: [
     { name: "foundation", testMatch: "foundation.spec.ts" },
     {
       name: "browser",
-      testIgnore: "foundation.spec.ts",
+      testIgnore: ["foundation.spec.ts", "**/ui/**"],
       dependencies: ["foundation"],
     },
   ],
   reporter: [["list"], ["junit", { outputFile: "test-results/browser.xml" }]],
-  workers: 1,
-  fullyParallel: false,
   use: {
+    ...shared.use,
     baseURL: "http://127.0.0.1:8001",
-    viewport: { width: 1440, height: 1000 },
-    screenshot: "only-on-failure",
-    trace: "retain-on-failure",
   },
   webServer: {
-    command: "uv run python scripts/e2e_server.py",
+    command: "uv run --no-sync python scripts/e2e_server.py",
     cwd: "../..",
     url: "http://127.0.0.1:8001/api/health/ready",
     reuseExistingServer: false,
     timeout: 30_000,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
   },
 });

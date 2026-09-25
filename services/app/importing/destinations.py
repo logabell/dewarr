@@ -19,15 +19,21 @@ from app.domain.downloaders import TRANSFER_KINDS, mapped_path
 from app.domain.operations import transaction_lock
 from app.importing.backend import verify_backend
 from app.importing.filesystem import InspectionError, describe_os_error, directory
+from app.importing.layout import STAGING_NAME, overlaps, unsafe_staging
 from app.importing.naming import fingerprint
-from app.importing.publication import PublishFile, probe_destination, probe_download_folder
+from app.importing.publication import (
+    PublishFile,
+    filesystem_mounts,
+    prepare_journals,
+    private_staging,
+    probe_destination,
+    probe_download_folder,
+)
 from app.importing.route_evidence import receipts
-from app.importing.storage import import_sources, storage_settings
+from app.importing.storage import import_sources, storage_route, storage_settings
 from app.security import decrypt_secrets
 
 logger = logging.getLogger(__name__)
-
-STAGING_NAME = ".book-search-staging"
 
 
 async def confirm_library_mapping(downloader_id, client_path, worker_root, *, client_factory=None):
@@ -45,6 +51,8 @@ async def destination_configuration(db, destination):
     )
     settings = await storage_settings(db)
     root = settings.import_destinations.get(destination.root_key)
+    route = storage_route(settings, destination.root_key)
+    staging = route.staging_root if route else None
     return {
         "backend": {
             "integration_id": str(integration.id),
@@ -59,7 +67,8 @@ async def destination_configuration(db, destination):
         else None,
         "root_key": destination.root_key,
         "root_path": str(root) if root else None,
-        "staging_path": str(settings.import_staging_root) if settings.import_staging_root else None,
+        "staging_path": str(staging) if staging else None,
+        **({"journal_path": str(route.journal_root)} if route and route.journal_root else {}),
         "library_id": str(destination.library_id),
         "medium": destination.medium,
         "backend_path": destination.backend_path,
@@ -74,13 +83,8 @@ async def destination_configuration(db, destination):
                 str(path)
                 for path in settings.import_destinations.values()
                 if path == root
-                or any(
-                    path.is_relative_to(external) or external.is_relative_to(path)
-                    for external in [
-                        *settings.import_sources.values(),
-                        *([settings.import_staging_root] if settings.import_staging_root else []),
-                    ]
-                )
+                or any(overlaps(path, source) for source in settings.import_sources.values())
+                or (staging is not None and unsafe_staging(path, staging))
             }
         ),
     }
@@ -217,12 +221,26 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         seeding_rename = bool(configuration.get("seeding_rename"))
         for watched in configuration["watched_paths"]:
             watched = Path(watched)
-            for external in (Path(payload["source_path"]), Path(configuration["staging_path"])):
-                if external.is_relative_to(watched) or watched.is_relative_to(external):
-                    raise InspectionError(
-                        "Download and staging roots must be outside all library roots"
-                    )
-        await asyncio.to_thread(prepare_staging, Path(configuration["staging_path"]))
+            if overlaps(Path(payload["source_path"]), watched) or unsafe_staging(
+                watched, Path(configuration["staging_path"])
+            ):
+                raise InspectionError("Download and staging roots overlap a library root")
+        journals = (
+            Path(configuration["journal_path"]) if configuration.get("journal_path") else None
+        )
+        if journals is not None and any(
+            overlaps(journals, Path(path))
+            for path in [
+                payload["source_path"],
+                configuration["staging_path"],
+                configuration["root_path"],
+                *configuration["watched_paths"],
+            ]
+        ):
+            raise InspectionError("Journal storage must be outside media roots")
+        await asyncio.to_thread(prepare_staging, Path(configuration["staging_path"]), journals)
+        if journals is not None:
+            await asyncio.to_thread(prepare_journals, journals)
         if payload.get("setup_downloader"):
             report = await asyncio.to_thread(
                 probe_download_folder,
@@ -230,6 +248,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                 payload["setup_downloader"]["mapping"]["relative_path"],
                 Path(configuration["root_path"]),
                 Path(configuration["staging_path"]),
+                journal_root=journals,
             )
         else:
             report = await asyncio.to_thread(
@@ -239,6 +258,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                 PublishFile.model_validate(payload["file"]),
                 Path(configuration["root_path"]),
                 Path(configuration["staging_path"]),
+                journal_root=journals,
                 **({"source_kind": "file"} if payload.get("source_kind") == "file" else {}),
             )
         copy_fallback = bool(
@@ -277,6 +297,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                     configuration["backend_path"],
                     Path(configuration["root_path"]),
                     configuration["medium"],
+                    staging_root=Path(configuration["staging_path"]),
                 )
 
         uses_copy = (
@@ -401,17 +422,38 @@ def _device(path: Path) -> int:
         return os.fstat(fd).st_dev
 
 
+def _mount_point(path: Path, mounts) -> Path | None:
+    points = [point for point, _, _ in mounts if path.is_relative_to(point)]
+    return max(points, key=lambda point: len(point.parts), default=None)
+
+
 def choose_staging(local: Path, explicit: Path | None, current: Path | None) -> Path:
-    """Keep a working staging folder on the library's filesystem, otherwise use the sibling."""
+    """Preserve working staging; use a hidden child for a library-only mount."""
     if explicit:
         return explicit
+    mounts = filesystem_mounts()
     if current:
         try:
-            if _device(current) == _device(local):
+            if _device(current) == _device(local) and _mount_point(current, mounts) == _mount_point(
+                local, mounts
+            ):
                 return current
         except (OSError, InspectionError):
             pass
-    return local.parent / STAGING_NAME
+    try:
+        # Linux bind mounts can share st_dev but still reject sibling renames.
+        # /proc/self/mountinfo distinguishes those boundaries; ismount covers
+        # non-Linux hosts. Never try to create staging directly under /.
+        nested = (
+            local.parent == Path("/")
+            or os.path.ismount(local)
+            or _mount_point(local, mounts) != _mount_point(local.parent, mounts)
+            or _device(local.parent) != _device(local)
+            or not os.access(local.parent, os.W_OK | os.X_OK)
+        )
+    except (OSError, InspectionError):
+        nested = True  # check_library_route reports missing/unreadable paths.
+    return (local if nested else local.parent) / STAGING_NAME
 
 
 def holds_journals(staging: Path) -> bool:
@@ -423,21 +465,34 @@ def holds_journals(staging: Path) -> bool:
         return False
 
 
-def check_library_route(local: Path, staging: Path, others: list[Path]) -> None:
+def check_library_route(
+    local: Path, staging: Path, others: list[Path], *, journal_root=None
+) -> None:
     """Check a library folder choice against the real mounts before it is saved."""
+    if journal_root is not None and any(overlaps(journal_root, path) for path in (local, staging)):
+        raise InspectionError("Journal storage must be outside media roots")
+    mounts = filesystem_mounts()
     try:
         library = _device(local)
+        if _mount_point(local, mounts) != _mount_point(staging, mounts):
+            raise InspectionError(
+                f"The staging folder {staging} and library {local} use different mounts. "
+                "Choose the library folder again to select staging on its mount, or update "
+                "BOOK_IMPORT_STAGING_ROOT if it is explicitly configured."
+            )
         if staging == local.parent / STAGING_NAME and _device(local.parent) != library:
             raise InspectionError(
-                f"{local} is on a separate filesystem from {local.parent}, so Dewarr has "
-                "nowhere beside it for its staging folder. Mount the parent folder instead "
-                f"(for example /your/media:{local.parent}) and choose {local} again."
+                f"The staging folder {staging} would be on a different filesystem from {local}. "
+                "Choose the library folder again to select staging on its mount."
             )
     except OSError as error:
         raise InspectionError(describe_os_error(error, local)) from error
     try:
-        prepare_staging(staging)
-        staged = _device(staging)
+        prepare_staging(staging, journal_root)
+        if journal_root is not None:
+            prepare_journals(journal_root)
+        with private_staging(staging, journal_root):
+            staged = _device(staging)
     except OSError as error:
         raise InspectionError(describe_os_error(error, staging)) from error
     if staged != library:
@@ -445,25 +500,14 @@ def check_library_route(local: Path, staging: Path, others: list[Path]) -> None:
             f"The staging folder {staging} is on a different filesystem from {local}. "
             "Mount a folder that contains both into Dewarr."
         )
-    for other in others:
-        try:
-            device = _device(other)
-        except (OSError, InspectionError):
-            continue  # That library's own route test reports its missing folder.
-        if device != library:
-            raise InspectionError(
-                f"{local} is on a different filesystem from the library folder {other}. "
-                "Dewarr uses one staging folder for every library, so all library folders "
-                "must be on the same mount."
-            )
 
 
-def prepare_staging(path):
-    """Create only our private sibling staging directory; never follow symlinks."""
+def prepare_staging(path, journal_root=None):
+    """Create only our managed media staging directory; never follow symlinks."""
     if path.name != STAGING_NAME:
         return  # Existing explicitly configured staging keeps its previous contract.
     with directory(path.parent) as parent:
         try:
-            os.mkdir(path.name, mode=0o700, dir_fd=parent)
+            os.mkdir(path.name, mode=0o777 if journal_root is not None else 0o700, dir_fd=parent)
         except FileExistsError:
             pass  # private_staging subsequently verifies ownership, mode and no symlinks.

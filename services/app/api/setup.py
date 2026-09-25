@@ -156,7 +156,7 @@ async def readiness(admin: Admin, db: Database):
         destinations=destinations,
         download_roots=len(settings.import_sources),
         destination_roots=len(settings.import_destinations),
-        staging_configured=settings.import_staging_root is not None,
+        staging_configured=bool(settings.import_staging_root or settings.import_storage_routes),
     )
 
 

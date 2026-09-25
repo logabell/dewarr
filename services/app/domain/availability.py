@@ -3,7 +3,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer, with_expression
 
 from app.db.models import (
     AssetContains,
@@ -41,11 +41,16 @@ async def availability_for(
     db: AsyncSession,
     user: User,
     work_ids: list[UUID],
+    *,
+    identity_only: bool = False,
 ) -> dict[UUID, Availability]:
     result = {work_id: Availability() for work_id in work_ids}
     if not work_ids:
         return result
-    mapping = display_map(user)
+    # Series membership must never inherit title-based presentation grouping.
+    from app.domain.work_graph import canonical_map
+
+    mapping = canonical_map() if identity_only else display_map(user, work_ids)
     roots = dict((await db.execute(select(mapping).where(mapping.c.origin_id.in_(work_ids)))).all())
     by_root = {}
     for origin, root in roots.items():
@@ -54,6 +59,14 @@ async def availability_for(
         availability_rows(user, mapping)
         .with_only_columns(mapping.c.work_id, LibraryAsset, Version.narrators)
         .outerjoin(Version, Version.id == LibraryAsset.version_id)
+        .options(
+            defer(LibraryAsset.files),
+            defer(LibraryAsset.read_issues),
+            with_expression(
+                LibraryAsset.metadata_snapshot,
+                func.jsonb_build_object("narrators", LibraryAsset.metadata_snapshot["narrators"]),
+            ),
+        )
         .where(mapping.c.work_id.in_(by_root))
         .order_by(LibraryAsset.created_at, LibraryAsset.id)
     )

@@ -14,7 +14,7 @@ from psycopg.conninfo import make_conninfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.config import get_settings
+from app.config import ImportStorageRoute, get_settings
 from app.db.models import Integration, RestoreCheckpoint, User
 from app.db.session import database as database_dependency
 from app.main import create_app
@@ -38,7 +38,23 @@ async def test_restore_preserves_evidence_invalidates_sessions_and_fences_effect
     journal.write_text('{"stage_name":"kept-for-review","published":false}')
     media = staging / "original.epub"
     media.write_bytes(b"synthetic media payload remains in place")
-    settings = settings.model_copy(update={"import_staging_root": staging})
+    protected = tmp_path / "journals"
+    protected.mkdir(mode=0o700)
+    extra_journal = protected / ("combine-" + str(uuid4()) + ".json")
+    extra_journal.write_text('{"state":"published"}')
+    settings = settings.model_copy(
+        update={
+            "import_staging_root": staging,
+            "import_storage_routes": {
+                "audio": ImportStorageRoute(
+                    staging_root=tmp_path / "offline-nas", journal_root=protected
+                ),
+                "ebooks": ImportStorageRoute(
+                    staging_root=tmp_path / "another-share", journal_root=protected
+                ),
+            },
+        }
+    )
     async with database() as db:
         db.add(
             Integration(
@@ -68,6 +84,7 @@ async def test_restore_preserves_evidence_invalidates_sessions_and_fences_effect
     manifest = await asyncio.to_thread(backup, settings, bundle)
     assert validate_bundle(bundle) == manifest
     assert (bundle / "journals" / journal.name).read_bytes() == journal.read_bytes()
+    assert (bundle / "journals" / extra_journal.name).read_bytes() == extra_journal.read_bytes()
     assert not (bundle / media.name).exists()
     source_inode = media.stat().st_ino
     target_name = "book_restore_" + uuid4().hex[:12] + "_test"
@@ -129,6 +146,7 @@ async def test_restore_preserves_evidence_invalidates_sessions_and_fences_effect
         assert media.stat().st_ino == source_inode
         assert media.read_bytes() == b"synthetic media payload remains in place"
         assert (output / "journals" / journal.name).read_bytes() == journal.read_bytes()
+        assert (output / "journals" / extra_journal.name).read_bytes() == extra_journal.read_bytes()
         assert (await client.get("/api/auth/me")).status_code == 200  # Source untouched.
         async with database() as db:
             assert await db.scalar(select(RestoreCheckpoint.id)) is None
@@ -169,7 +187,7 @@ async def test_restore_preserves_evidence_invalidates_sessions_and_fences_effect
                 "-c",
                 "import asyncio\n"
                 "from app.main import create_app, lifespan\n"
-                "from app.config import get_settings\n"
+                "from app.config import ImportStorageRoute, get_settings\n"
                 "async def check():\n"
                 " async with lifespan(create_app()):\n"
                 "  assert get_settings().recovery_mode\n"

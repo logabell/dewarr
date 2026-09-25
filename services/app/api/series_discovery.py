@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.adapters.contracts import AdapterError
-from app.api.catalog import WorkView, work_view
+from app.api.catalog import WorkView
 from app.api.dependencies import CurrentUser, Database
+from app.api.series import series_work_view
 from app.db.models import CatalogAccount, CatalogSeries, SeriesGapDismissal, SeriesMembership, Work
 from app.domain.availability import availability_for, availability_rows
-from app.domain.catalog_display import display_map
 from app.domain.pack_coverage import CATALOG_FRESH_FOR
 from app.domain.series_gap_watch import (
     PROVIDER,
@@ -24,6 +24,7 @@ from app.domain.series_gap_watch import (
     unseen_index,
 )
 from app.domain.visibility import visible_work
+from app.domain.work_graph import canonical_map
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 Medium = Literal["any", "ebook", "audio"]
@@ -124,7 +125,7 @@ def gap_candidates(pairs, available, medium, now):
         known_positions = {
             Decimal(record["position"]) for record in records if record["position"] is not None
         }
-        position = min(known_positions) if known_positions else None
+        position = next(iter(known_positions)) if len(known_positions) == 1 else None
         ambiguous = len(known_positions) > 1 or any(
             len(positions[item]) > 1 for item in known_positions
         )
@@ -157,11 +158,7 @@ def projection(series, pairs, available, medium, now, *, book_limit=3, unseen_id
             str(work.id),
         )
 
-    if book_limit is None:
-        candidates.sort(key=gap_order)
-    else:
-        # The short preview would otherwise hide a new sequel behind earlier gaps.
-        candidates.sort(key=lambda value: (value[1].id not in unseen_ids, *gap_order(value)))
+    candidates.sort(key=gap_order)
     shown = candidates if book_limit is None else candidates[:book_limit]
     return SeriesGap(
         external_id=series.external_id,
@@ -179,7 +176,7 @@ def projection(series, pairs, available, medium, now, *, book_limit=3, unseen_id
         unseen=sum(1 for _, work, _ in candidates if work.id in unseen_ids),
         books=[
             SeriesGapBook(
-                work=work_view(work, available[work.id]),
+                work=series_work_view(work, available[work.id], grouped[work.id][1][0]),
                 position=str(position) if position is not None else None,
                 ambiguous_position=ambiguous,
                 unseen=work.id in unseen_ids,
@@ -214,7 +211,7 @@ def eligible_series(user, seed_series, missing_series):
 async def membership_pairs(db, user, series_ids):
     if not series_ids:
         return []
-    mapping = display_map(user)
+    mapping = canonical_map()
     return (
         await db.execute(
             select(SeriesMembership, Work)
@@ -236,7 +233,9 @@ async def projected(db, user, rows, medium, now, book_limit, index):
     grouped = {}
     for member, work in members:
         grouped.setdefault(member.series_id, []).append((member, work))
-    available = await availability_for(db, user, list({work.id for _, work in members}))
+    available = await availability_for(
+        db, user, list({work.id for _, work in members}), identity_only=True
+    )
     items = [
         projection(
             row,
@@ -255,7 +254,9 @@ async def projected(db, user, rows, medium, now, book_limit, index):
 async def series_gap_ids(db, user, series) -> list[UUID] | None:
     """Published works missing from the library, or None when the series is not owned."""
     members = await membership_pairs(db, user, [series.id])
-    available = await availability_for(db, user, list({work.id for _, work in members}))
+    available = await availability_for(
+        db, user, list({work.id for _, work in members}), identity_only=True
+    )
     result = gap_candidates(members, available, "any", datetime.now(UTC))
     if result is None:
         return None
@@ -280,10 +281,10 @@ async def series_gaps(
     full: bool = False,
 ):
     now = datetime.now(UTC)
-    ownership = availability_rows(user, display_map(user)).subquery()
+    ownership = availability_rows(user, canonical_map()).subquery()
     owned = select(ownership.c.work_id).distinct()
     satisfied = owned if medium == "any" else owned.where(ownership.c.medium == medium)
-    mapping = display_map(user)
+    mapping = canonical_map()
     entries = entries_for(user, mapping)
     seed_series = entries.where(mapping.c.work_id.in_(owned))
     missing_series = entries.where(

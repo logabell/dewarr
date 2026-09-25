@@ -518,7 +518,10 @@ def seeding_media_present(spec) -> bool:
 @contextmanager
 def seeding_lock(spec):
     """The same library lock publication uses, held across the qBittorrent rename."""
-    with private_staging(spec.staging_root) as staging, directory(spec.destination_root) as root:
+    with (
+        private_staging(spec.staging_root, spec.journal_root) as staging,
+        directory(spec.destination_root) as root,
+    ):
         with publication_lock(staging, json.dumps(object_id(root), sort_keys=True)):
             yield
 

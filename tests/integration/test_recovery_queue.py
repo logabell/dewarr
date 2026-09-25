@@ -137,6 +137,38 @@ async def test_every_record_addressed_entrypoint_honors_the_subject_fence(
         )
 
 
+async def test_confirmation_batch_checks_every_operation_against_restore_fence(
+    client, admin, database, monkeypatch
+):
+    checkpoint = await pause(database, admin)
+    restored = uuid4()
+    async with database() as db, db.begin():
+        await seal(db, checkpoint)
+        db.add(
+            RecoveryQueueSubject(checkpoint_id=checkpoint, kind="operation", subject_id=restored)
+        )
+        job = await enqueue(
+            db, "organization.confirm-batch", operation_ids=[str(uuid4()), str(restored)]
+        )
+    await close_fixture(database, checkpoint)
+    called = []
+
+    async def forbidden(**kwargs):
+        called.append(kwargs)
+
+    monkeypatch.setattr(get_queue().tasks["organization.confirm-batch"], "func", forbidden)
+    await drain()
+    assert not called
+    async with database() as db:
+        assert (
+            await db.scalar(
+                text("SELECT status::text FROM book_queue.procrastinate_jobs WHERE id=:id"),
+                {"id": job},
+            )
+            == "aborted"
+        )
+
+
 async def test_pause_blocks_fresh_ordinary_work_and_unsealed_history_never_allows_execution(
     client, admin, database
 ):

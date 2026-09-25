@@ -23,18 +23,34 @@ def inputs(spec):
         {
             "import_sources": {"books": str(spec.source_root)},
             "import_destinations": {"ebooks": str(spec.destination_root)},
-            "import_staging_root": str(spec.staging_root),
+            "import_staging_root": str(spec.staging_root) if spec.journal_root is None else None,
+            "import_storage_routes": {
+                "ebooks": {
+                    "staging_root": str(spec.staging_root),
+                    "journal_root": str(spec.journal_root),
+                }
+            }
+            if spec.journal_root
+            else {},
         },
     )
 
 
+@pytest.mark.parametrize("protected", [False, True])
 @pytest.mark.parametrize(
     "point", ["stage-created", "file-staged", "prepared", "published-before-receipt", "complete"]
 )
 def test_recovery_reads_partial_and_published_files_without_changing_any_receipt(
-    specification, point
+    specification, point, protected
 ):
     spec = specification
+    if protected:
+        from app.importing.publication import PublicationSpec
+
+        journals = spec.staging_root.parent / "control"
+        journals.mkdir(mode=0o700)
+        spec.staging_root.chmod(0o777)
+        spec = PublicationSpec.model_validate({**spec.model_dump(), "journal_root": journals})
 
     def crash(phase):
         if phase == point:
@@ -46,7 +62,7 @@ def test_recovery_reads_partial_and_published_files_without_changing_any_receipt
         with pytest.raises(RuntimeError):
             publish_item(spec, checkpoint=crash)
     if point == "published-before-receipt":
-        receipt_path = spec.staging_root / f"{spec.entry_id}.json"
+        receipt_path = (spec.journal_root or spec.staging_root) / f"{spec.entry_id}.json"
         receipt = json.loads(receipt_path.read_text())
         receipt["stage_identity"]["inode"] += 1
         receipt_path.write_text(json.dumps(receipt))

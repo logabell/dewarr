@@ -71,8 +71,12 @@ async def test_group_before_pagination_filters_and_combine_details(
 async def test_grouped_covers_prefer_requested_format_and_fall_back(
     client, admin, database, monkeypatch
 ):
-    from fastapi import HTTPException
+    from datetime import UTC, datetime, timedelta
 
+    from fastapi import HTTPException
+    from sqlalchemy import update
+
+    from app.db.models import ProviderCache
     from app.domain import library_covers
 
     async with database() as db, db.begin():
@@ -102,6 +106,12 @@ async def test_grouped_covers_prefer_requested_format_and_fall_back(
         await client.get(f"/api/catalog/works/{ebook_id}/cover?medium=audio")
     ).content == b"audio"
     fail = True
+    assert (await client.get(f"/api/catalog/works/{ebook_id}/cover")).content == b"ebook"
+    assert calls == ["ebook", "audio"]
+    async with database() as db, db.begin():
+        await db.execute(
+            update(ProviderCache).values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
     assert (await client.get(f"/api/catalog/works/{ebook_id}/cover")).content == b"audio"
     assert calls == ["ebook", "audio", "ebook", "audio"]
 
@@ -188,7 +198,7 @@ async def test_unlinked_hardcover_search_and_preview_inherit_combined_ownership(
         language="eng",
     )
 
-    async def call(db, user_id, provider, action, *args):
+    async def call(db, user_id, provider, action, *args, **kwargs):
         return (
             (
                 SearchPage(provider=provider, items=[book], page=1, has_more=False)
@@ -292,3 +302,42 @@ async def test_only_edition_labels_are_ignored(client, admin, database, audio_ti
         _, audio, _, _ = await copies(db, language="en", audio_language="english")
         audio.title = audio_title
     assert (await client.get("/api/catalog/works")).json()["total"] == total
+
+
+async def test_scoped_grouping_keeps_ambiguity_and_redirect_families(client, admin, database):
+    from app.db.models import User
+    from app.domain.catalog_display import display_map
+
+    async with database() as db, db.begin():
+        titles = ["Journey", "Journey: Home", "Journey: Away", "Harbor", "Harbor (Unabridged)"]
+        works = [Work(title=title, authors=["Writer"], language="en") for title in titles]
+        db.add_all(works)
+        await db.flush()
+        for work in works:
+            await add_owned(db, work)
+        alias = Work(title="Old Harbor Title", authors=["Writer"], redirect_to=works[3].id)
+        db.add(alias)
+        await db.flush()
+        ids = [work.id for work in works] + [alias.id]
+    async with database() as db:
+        user = await db.get(User, UUID(admin["id"]))
+        full = dict((await db.execute(select(display_map(user)))).all())
+        for requested in ([ids[0]], [ids[1]], [ids[3]], [ids[5]], [ids[1], ids[4]]):
+            scoped = dict((await db.execute(select(display_map(user, requested)))).all())
+            expected_roots = {full[key] for key in requested}
+            assert all(scoped[key] == full[key] for key in requested)
+            assert {key: root for key, root in scoped.items() if root in expected_roots} == {
+                key: root for key, root in full.items() if root in expected_roots
+            }
+
+
+@pytest.mark.parametrize("path", ["/api/catalog/works", "/api/library/books"])
+async def test_grouped_page_totals_survive_empty_offsets(client, admin, database, path):
+    async with database() as db, db.begin():
+        await copies(db)
+    first = (await client.get(path, params={"limit": 1})).json()
+    past = (await client.get(path, params={"offset": 500, "limit": 1})).json()
+    empty = (await client.get(path, params={"q": "No such book"})).json()
+    assert first["total"] == past["total"] == 1
+    assert len(first["items"]) == 1 and past["items"] == []
+    assert empty["total"] == 0 and empty["items"] == []

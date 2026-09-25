@@ -3,7 +3,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 import httpx
 
-from app.adapters.contracts import AdapterError, FailureKind
+from app.adapters.contracts import AdapterError, FailureKind, ResponseTooLarge
 
 
 def configured_url(value: str) -> str:
@@ -62,7 +62,10 @@ class JsonEndpoint:
         allow_list=False,
         timeout_seconds=45,
         max_bytes=16 * 1024 * 1024,
+        response_label="Server response",
     ):
+        if callback := getattr(self, "before_request", None):
+            await callback()
         self.response_headers = {}
         try:
             async with (
@@ -103,12 +106,11 @@ class JsonEndpoint:
                 if empty:
                     return None
                 content = bytearray()
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    received = len(content) + len(chunk)
+                    if received > max_bytes:
+                        raise ResponseTooLarge(max_bytes, received, response_label)
                     content.extend(chunk)
-                    if len(content) > max_bytes:
-                        raise AdapterError(
-                            FailureKind.PARSER, "The server response exceeded the page size limit."
-                        )
                 import json as json_module
 
                 try:

@@ -200,6 +200,13 @@ async def detail_view(value, user, db, followed=None, page=1, winners=False, q="
                 "Your loaded books are still available. Try again.",
             ) from error
         user = await current_actor(db, user_id)
+        current, follows = await sources(db, user)
+        latest = current.get(value["id"])
+        if not latest:
+            raise HTTPException(404, "Collection no longer available")
+        if latest["updated_at"] != value["updated_at"]:
+            raise HTTPException(409, "Collection changed while loading; refresh it")
+        followed = follows.get(value["id"])
         books = [CollectionBook.model_validate(b) for b in raw]
     works = await displayed_provider_works(db, user, "goodreads", books)
     availability = await availability_for(db, user, list({w.id for w in works.values()}))

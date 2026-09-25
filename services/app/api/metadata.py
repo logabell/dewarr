@@ -119,15 +119,29 @@ async def current_actor(db, user_id, *, edit=False, admin=False):
     return user
 
 
-async def provider_call(db, user_id, provider, operation, *args, force=False):
+async def provider_call(
+    db, user_id, provider, operation, *args, force=False, background=False, expected_generation=None
+):
     token, generation = None, None
     if provider == "hardcover":
         account = await db.get(CatalogAccount, user_id)
         if not account or not account.enabled:
             raise HTTPException(409, "Connect your Hardcover account in Metadata settings first")
+        if expected_generation is not None and account.generation != expected_generation:
+            raise HTTPException(409, "Catalog credentials changed before refresh")
+        if not force and account.status == FailureKind.AUTHENTICATION.value:
+            raise AdapterError(
+                FailureKind(account.status),
+                "Reconnect or test your Hardcover account before browsing cached data.",
+            )
         token, generation = decrypt_secrets(account.encrypted_token)["token"], account.generation
     scope = f"{user_id}:{generation}" if provider == "hardcover" else "public"
     await db.rollback()
+    from app.domain.catalog_refresh import schedule
+
+    async def refresh():
+        return await schedule(user_id, provider, generation, operation, args)
+
     # No request transaction or connection is retained across provider I/O.
     async with CatalogGateway(
         provider,
@@ -135,6 +149,7 @@ async def provider_call(db, user_id, provider, operation, *args, force=False):
         token,
         force=force,
         cache=operation not in {"list_page", "list_choices", "community_lists", "community_list"},
+        on_stale=refresh if background and not force else None,
     ) as gateway:
         adapter = (
             Hardcover(gateway.request) if provider == "hardcover" else OpenLibrary(gateway.request)
@@ -147,8 +162,19 @@ async def provider_call(db, user_id, provider, operation, *args, force=False):
                 FailureKind.TIMEOUT, "The catalog lookup took too long. Retry it."
             ) from error
         except AdapterError as error:
-            if error.kind == FailureKind.PARSER:
+            if error.kind in {
+                FailureKind.PARSER,
+                FailureKind.AUTHENTICATION,
+                FailureKind.PERMISSION,
+            }:
                 await gateway.invalidate()
+            if provider == "hardcover" and error.kind == FailureKind.AUTHENTICATION:
+                account = await db.get(
+                    CatalogAccount, user_id, populate_existing=True, with_for_update=True
+                )
+                if account and account.generation == generation:
+                    account.status, account.last_error = error.kind.value, str(error)
+                    await db.commit()
             raise
     await current_actor(db, user_id)
     if provider == "hardcover":
@@ -330,7 +356,9 @@ class BookPreview(BaseModel):
 async def preview(provider: Provider, external_id: str, user: CurrentUser, db: Database):
     user_id = user.id
     try:
-        book, stale, warning = await provider_call(db, user_id, provider, "fetch", external_id)
+        book, stale, warning = await provider_call(
+            db, user_id, provider, "fetch", external_id, background=True
+        )
         user = await current_actor(db, user_id)
         matched = await known_works(db, user, book.provider, [book.external_id], [book])
         return BookPreview(
@@ -344,7 +372,7 @@ async def preview(provider: Provider, external_id: str, user: CurrentUser, db: D
 async def reader_details(external_id: str, user: CurrentUser, db: Database):
     try:
         details, stale, warning = await provider_call(
-            db, user.id, "hardcover", "reader_details", external_id
+            db, user.id, "hardcover", "reader_details", external_id, background=True
         )
         return details.model_copy(update={"stale": stale, "warning": warning})
     except AdapterError as error:
@@ -365,7 +393,7 @@ async def author_details(
     user_id = user.id
     try:
         details, stale, warning = await provider_call(
-            db, user_id, "hardcover", "author_details", external_id, page
+            db, user_id, "hardcover", "author_details", external_id, page, background=True
         )
         user = await current_actor(db, user_id)
         return AuthorPreview(

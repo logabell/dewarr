@@ -1,9 +1,11 @@
 import hmac
 import ipaddress
+import logging
 import re
+import threading
+import time
 from datetime import UTC, datetime
 from typing import Annotated
-from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
@@ -12,11 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.models import LoginSession, User
 from app.db.session import database
+from app.origins import format_origin, parse_origin
 from app.recovery import active_restore, restore_pending
 from app.security import csrf_token, token_hash
 
 Database = Annotated[AsyncSession, Depends(database)]
 COOKIE = "book_session"
+LOG = logging.getLogger(__name__)
+_origin_log_times: dict[str, float] = {}
+_origin_log_lock = threading.Lock()
 
 
 def _ip(value: str) -> str | None:
@@ -29,7 +35,10 @@ def _ip(value: str) -> str | None:
 def _same_token(left: str, right: str) -> bool:
     if not left or len(left) != len(right):
         return False
-    return hmac.compare_digest(left, right)
+    try:
+        return hmac.compare_digest(left.encode("ascii"), right.encode("ascii"))
+    except UnicodeEncodeError:
+        return False
 
 
 def _header_values(headers, name: str) -> list[str]:
@@ -58,58 +67,98 @@ def _forwarded_client(request: Request) -> str | None:
     return real or last
 
 
+def _network_client(request: Request, peer: str, networks) -> str:
+    if not networks:
+        return peer
+
+    def trusted(address: str) -> bool:
+        parsed = ipaddress.ip_address(address)
+        return any(parsed in network for network in networks)
+
+    if _ip(peer) is None or not trusted(peer):
+        return peer
+    values = _header_values(request.headers, "x-forwarded-for")
+    if values:
+        # Walk from the actual peer toward the visitor. Stop at the first untrusted
+        # hop; a visitor-controlled prefix must never replace that address.
+        addresses = [_ip(part.strip()) for value in values for part in value.split(",")]
+        if not addresses or any(address is None for address in addresses):
+            return peer
+        for address in reversed(addresses):
+            if not trusted(address):
+                return address
+        return addresses[0]
+    real = _header_values(request.headers, "x-real-ip")
+    return (_ip(real[0].strip()) or peer) if len(real) == 1 else peer
+
+
 def client_host(request: Request) -> str:
     peer = request.client.host if request.client else ""
     if not peer:
         return "local"
-    configured = get_settings().proxy_token
+    settings = get_settings()
+    configured = settings.proxy_token
     token = configured.get_secret_value() if configured is not None else ""
-    supplied = _header_values(request.headers, "x-dewarr-proxy-token")
-    if not _same_token(token, supplied[-1] if supplied else ""):
-        return peer
-    return _forwarded_client(request) or peer
+    if token:
+        # Token mode takes precedence. An invalid token cannot fall back to IP trust.
+        supplied = _header_values(request.headers, "x-dewarr-proxy-token")
+        if not _same_token(token, supplied[-1] if supplied else ""):
+            return peer
+        return _forwarded_client(request) or peer
+    return _network_client(request, peer, settings.proxy_networks)
 
 
-def _origin(value: str) -> tuple[str, str, int] | None:
-    # Compare browser origins, including default ports, without accepting URL paths
-    # or credentials. urlsplit alone silently strips some control characters.
-    if any(ord(char) <= 32 or ord(char) == 127 or char == "\\" for char in value):
-        return None
-    try:
-        parts = urlsplit(value)
-        if (
-            parts.scheme not in {"http", "https"}
-            or not parts.hostname
-            or parts.username is not None
-            or parts.password is not None
-            or parts.path
-            or "?" in value
-            or "#" in value
-        ):
-            return None
-        port = parts.port
-        return (
-            parts.scheme,
-            parts.hostname,
-            port if port is not None else (443 if parts.scheme == "https" else 80),
-        )
-    except ValueError:
-        return None
+# Retain the helper name for existing callers; configuration uses the same parser.
+_origin = parse_origin
+
+
+def _log_origin_rejection(request: Request, reason: str, origins, origin, request_origin, public):
+    # A fixed set of reason keys bounds memory; one event/minute/reason bounds log volume.
+    with _origin_log_lock:
+        now = time.monotonic()
+        previous = _origin_log_times.get(reason)
+        if previous is not None and now - previous < 60:
+            return
+        _origin_log_times[reason] = now
+    LOG.warning(
+        "Origin rejected reason=%s request_id=%s origin_count=%s origin=%s "
+        "request_origin=%s public_origin=%s",
+        reason,
+        getattr(request.state, "request_id", "unavailable"),
+        len(origins),
+        format_origin(origin) if origin else "invalid-or-missing",
+        format_origin(request_origin) if request_origin else "invalid",
+        format_origin(public) if public else "invalid",
+    )
 
 
 def require_origin(request: Request) -> None:
     origins = request.headers.getlist("origin")
     origin = _origin(origins[0]) if len(origins) == 1 else None
-    # Direct LAN access may use a different hostname or published port from PUBLIC_URL.
-    # The configured origin also supports HTTPS proxies whose upstream is HTTP.
-    # Do not derive trusted origins from visitor-supplied forwarding headers.
-    request_origin = _origin(str(request.url.replace(path="", query="", fragment="")))
-    if origin is None or origin not in {request_origin, _origin(get_settings().public_url)}:
-        raise HTTPException(
-            403,
-            "The request origin is not allowed. Set PUBLIC_URL (BOOK_PUBLIC_URL for a native "
-            "installation) to the browser's scheme, hostname and port, then restart Dewarr.",
+    # TLS termination needs only the configured public origin, not forwarded scheme/host.
+    try:
+        request_origin = _origin(str(request.url.replace(path="", query="", fragment="")))
+    except ValueError:
+        request_origin = None
+    public = get_settings().public_origin
+    if origin is not None and origin in {request_origin, public}:
+        return
+    if not origins:
+        reason, action = "missing", "The proxy must preserve the browser's Origin header."
+    elif len(origins) != 1:
+        reason, action = "duplicate", "The proxy must forward exactly one Origin header."
+    elif origin is None:
+        reason, action = "malformed", "The proxy must preserve a valid browser Origin header."
+    else:
+        reason = "mismatch"
+        action = (
+            "Set PUBLIC_URL (BOOK_PUBLIC_URL for a native installation) to the browser's "
+            "scheme, hostname and port. BOOK_PUBLIC_URL overrides PUBLIC_URL. "
+            "Recreate the Docker container after changing environment settings; "
+            "restart a native installation."
         )
+    _log_origin_rejection(request, reason, origins, origin, request_origin, public)
+    raise HTTPException(403, "The request origin is not allowed. " + action)
 
 
 async def current_user(request: Request, db: Database) -> User:

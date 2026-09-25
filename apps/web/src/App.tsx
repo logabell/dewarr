@@ -37,11 +37,6 @@ const SettingsPage = lazy(() => import("./pages/Settings"));
 const GettingStarted = lazy(() => import("./pages/GettingStarted"));
 const DiscoverBook = lazy(() => import("./pages/DiscoverBook"));
 const Discover = lazy(() => import("./pages/Discover"));
-const SeriesGapPage = lazy(() =>
-  import("./components/SeriesContinuation").then((module) => ({
-    default: module.SeriesGapPage,
-  })),
-);
 const CommunityLists = lazy(() => import("./pages/CommunityLists"));
 const BookDetail = lazy(() => import("./pages/BookDetail"));
 const Following = lazy(() => import("./pages/Following"));
@@ -573,9 +568,7 @@ function Shell({ auth }: { auth: Auth }) {
               />
               <Route
                 path="/discover/series"
-                element={
-                  <SeriesGapPage canEdit={auth.user.role !== "viewer"} />
-                }
+                element={<Navigate to="/discover?view=series" replace />}
               />
               <Route
                 path="/discover/collections/:collectionId"

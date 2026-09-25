@@ -8,10 +8,13 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "generate:api": "openapi-typescript ../../docs/openapi.json -o src/api/schema.d.ts && prettier --write src/api/schema.d.ts",
-    "format:check": "prettier --check src vite.config.ts playwright.config.ts tests",
-    "test:unit": "node --test src/randomUUID.test.ts src/pages/namingBuilder.test.ts src/pages/requestStatus.test.ts src/pages/requestFilters.test.ts src/components/releaseNotes.test.ts",
-    "pretest:e2e": "npm run build",
-    "test:e2e": "playwright test"
+    "format:check": "prettier --check src vite.config.ts vite.ui.config.ts playwright.config.ts playwright.shared.ts playwright.ui.config.ts tests",
+    "test:unit": "python3 ../../scripts/check.py web-unit",
+    "test:e2e": "python3 ../../scripts/check.py e2e",
+    "test": "python3 ../../scripts/check.py ui",
+    "test:ui": "python3 ../../scripts/check.py ui",
+    "test:ui:full": "python3 ../../scripts/check.py ui --full",
+    "test:e2e:full": "python3 ../../scripts/check.py e2e --full"
   },
   "dependencies": {
     "@tanstack/react-query": "5.103.1",

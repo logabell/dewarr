@@ -8,7 +8,8 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from app.adapters.contracts import AdapterError, Capabilities, FailureKind
+from app.adapters.batching import read_batches
+from app.adapters.contracts import AdapterError, Capabilities, FailureKind, ResponseTooLarge
 from app.adapters.http import JsonEndpoint
 from app.domain.catalog_language import catalog_language
 
@@ -403,6 +404,8 @@ def parse_item(value: dict) -> ABSItem:
 
 class Audiobookshelf(JsonEndpoint):
     page_size = 100
+    detail_batch_size = 25
+    detail_bytes = 16 * 1024 * 1024
 
     async def import_configuration(self, library_id: str) -> ABSImportConfiguration:
         response = await self.request("GET", f"api/libraries/{external_id(library_id)}")
@@ -487,7 +490,9 @@ class Audiobookshelf(JsonEndpoint):
         return response["serverVersion"]
 
     async def authorize(self) -> tuple[Capabilities, str]:
-        response = await self.request("POST", "api/authorize", json={})
+        response = await self.request(
+            "POST", "api/authorize", json={}, response_label="Audiobookshelf authorization"
+        )
         user = response.get("user")
         if (
             not isinstance(user, dict)
@@ -549,42 +554,108 @@ class Audiobookshelf(JsonEndpoint):
         return result
 
     async def page(self, library_id: str, page: int) -> tuple[list[dict], int]:
+        # Preserve logical page offsets for callers. All wire sizes divide 100,
+        # so decreasing the size never overlaps or skips a previously read range.
+        start = page * self.page_size
+        results, total = [], None
+        size = getattr(self, "_summary_size", self.page_size)
+        while total is None or start + len(results) < min(start + self.page_size, total):
+            offset = start + len(results)
+            try:
+                values, count = await self._summary_page(library_id, offset // size, size)
+            except ResponseTooLarge as error:
+                if size == 1:
+                    raise
+                error.__traceback__ = None
+                size = next(value for value in (100, 50, 25, 5, 1) if value < size)
+                self._summary_size = size
+                continue
+            if total is not None and count != total:
+                raise AdapterError(
+                    FailureKind.UNCERTAIN, "Library contents changed during sync. Try again."
+                )
+            total = count
+            results.extend(values)
+        return results, total
+
+    async def _summary_page(self, library_id, page, size):
         response = await self.request(
             "GET",
             f"api/libraries/{external_id(library_id)}/items",
-            params={
-                "page": page,
-                "limit": self.page_size,
-                "minified": 1,
-                "sort": "addedAt",
-                "desc": 0,
-            },
+            params={"page": page, "limit": size, "minified": 1, "sort": "addedAt", "desc": 0},
+            response_label="Audiobookshelf library summary",
         )
         results, total = response.get("results"), response.get("total")
-        if not isinstance(results, list) or type(total) is not int or total < 0 or total > 100000:
+        if not isinstance(results, list) or type(total) is not int or total < 0:
             raise AdapterError(
                 FailureKind.PARSER, "Audiobookshelf returned invalid pagination data."
             )
-        expected = min(self.page_size, max(0, total - page * self.page_size))
+        expected = min(size, max(0, total - page * size))
         if len(results) != expected:
             raise AdapterError(
                 FailureKind.UNCERTAIN, "Library contents changed during sync. Try again."
             )
+        summaries = []
         for item in results:
             if not isinstance(item, dict):
                 raise AdapterError(
                     FailureKind.PARSER, "Audiobookshelf returned an invalid item list."
                 )
             external_id(item.get("id"))
-        return results, total
+            # Split wire pages must not accumulate a hundred large descriptions
+            # in RAM. Keep a digest of all source evidence and just the fields
+            # needed for candidate discovery and unreadable-item diagnostics.
+            summary = {
+                "id": item["id"],
+                "updatedAt": item.get("updatedAt")
+                if type(item.get("updatedAt")) in (int, float)
+                else None,
+                "isMissing": item.get("isMissing") is True,
+                "isInvalid": item.get("isInvalid") is True,
+                "_summary_hash": hashlib.sha256(
+                    json.dumps(item, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+            }
+            if isinstance(item.get("path"), str) and len(item["path"]) <= 8192:
+                summary["path"] = item["path"]
+            if isinstance(item.get("media"), dict):
+                metadata = item["media"].get("metadata")
+                title = metadata.get("title") if isinstance(metadata, dict) else None
+                summary["media"] = {
+                    "metadata": {"title": title[:600] if isinstance(title, str) else None}
+                }
+            summaries.append(summary)
+        return summaries, total
 
     async def expanded(self, ids: list[str]) -> list[ABSItem]:
+        return [
+            item async for item in read_batches(ids, self._expanded, size=self.detail_batch_size)
+        ]
+
+    async def inventory_items(self, library_id: str, records: list[dict]):
+        """Retain a too-large item's membership without claiming its contents."""
+        summaries = {external_id(row["id"]): row for row in records}
+
+        def oversized(identifier, error):
+            return unreadable_item(
+                {**summaries[identifier], "libraryId": library_id},
+                "item details exceed response byte budget",
+            )
+
+        async for item in read_batches(
+            list(summaries), self._expanded, size=self.detail_batch_size, oversized=oversized
+        ):
+            yield item
+
+    async def _expanded(self, ids: list[str]) -> list[ABSItem]:
         response = await self.request(
             "POST",
             "api/items/batch/get",
             json={
                 "libraryItemIds": [external_id(value) for value in ids],
             },
+            max_bytes=self.detail_bytes,
+            response_label="Audiobookshelf item details",
         )
         values = response.get("libraryItems")
         if not isinstance(values, list) or len(values) != len(ids):

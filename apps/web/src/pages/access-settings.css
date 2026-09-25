@@ -1,0 +1,183 @@
+/* User setup and per-library access share the same compact selection surface. */
+.access-settings-dialog {
+  width: min(680px, calc(100vw - 32px));
+  overscroll-behavior: contain;
+}
+.settings-section-body .access-choices {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.access-choices legend {
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.access-choices .access-hint {
+  margin-bottom: 12px;
+}
+.settings-section-body .access-search {
+  display: block;
+  margin-bottom: 10px;
+}
+.access-choice-list {
+  display: grid;
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.settings-section-body .access-choice {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  max-width: none;
+  min-height: 58px;
+  margin: 0;
+  padding: 12px;
+  cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+  overflow-wrap: anywhere;
+}
+.access-choice + .access-choice {
+  border-top: 1px solid var(--line);
+}
+.access-choice:hover {
+  background: #1c293f;
+}
+.access-choice:has(input:checked) {
+  background: #202c45;
+}
+.access-choice:has(input:disabled) {
+  opacity: 0.65;
+  cursor: default;
+}
+.access-choice:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.access-choice-text {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+.access-choice-text small,
+.library-access-summary small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.access-badge {
+  flex: 0 1 auto;
+  max-width: 38%;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 7px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.user-library-choices {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.access-selection-summary {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.access-attention {
+  color: #f2c979;
+}
+.access-user-libraries {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+.library-access-list {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.library-access-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.library-access-row + .library-access-row {
+  border-top: 1px solid var(--line);
+}
+.library-access-row h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.library-access-summary {
+  min-width: 0;
+  font-size: 13px;
+}
+.library-access-summary small {
+  margin-top: 4px;
+}
+.settings-section-body .access-settings-dialog .access-form-actions {
+  position: sticky;
+  bottom: -22px;
+  z-index: 1;
+  margin-top: 4px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  background: #101827;
+}
+.access-advanced {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.access-advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.access-advanced summary span {
+  margin-left: 6px;
+}
+.access-advanced[open] .permission-grid {
+  margin-top: 14px;
+}
+.access-conflict {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.access-discard h3 {
+  margin-bottom: 8px;
+}
+@media (max-width: 600px) {
+  .library-access-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 16px;
+    padding: 12px;
+  }
+  .library-access-summary {
+    grid-column: 1;
+  }
+  .library-access-row > button {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+  .settings-section-body .access-settings-dialog .form-row {
+    grid-template-columns: 1fr;
+  }
+  .access-badge {
+    max-width: 32%;
+  }
+}

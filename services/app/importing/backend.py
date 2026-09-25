@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.importing.filesystem import beneath, directory
+from app.importing.layout import check_staging_backend, overlaps
 from app.importing.publication import PublicationError, object_id, same_object, sync_directory
 
 MAPPING_VISIBILITY_TIMEOUT = 5.0
@@ -60,11 +61,20 @@ def mapping_marker(root: Path, name: str):
                     pass
 
 
-async def verify_grimmory(adapter, library_id, backend_root, worker_root, medium):
+async def verify_grimmory(
+    adapter, library_id, backend_root, worker_root, medium, staging_root=None
+):
     from app.adapters.grimmory import AUDIO_EXTENSIONS
 
     version = await adapter.server_version()
     configuration = await adapter.import_configuration(library_id)
+    if staging_root is not None:
+        try:
+            check_staging_backend(
+                "grimmory", worker_root, staging_root, watcher_enabled=configuration.watcher_enabled
+            )
+        except ValueError as error:
+            raise PublicationError(str(error)) from error
     capabilities, _ = await adapter.authorize()
     if backend_root not in configuration.folders:
         raise PublicationError("Selected path is not an exact folder root of this Grimmory library")
@@ -75,6 +85,11 @@ async def verify_grimmory(adapter, library_id, backend_root, worker_root, medium
     if medium == "audio" and not configuration.audio_allowed:
         raise PublicationError("Choose a Grimmory library that accepts audiobooks")
     if "scan" not in capabilities.operations and not configuration.watcher_enabled:
+        if staging_root is not None and overlaps(worker_root, staging_root):
+            raise PublicationError(
+                "Allow library scans in the Grimmory connection and keep its folder watcher "
+                "disabled when staging inside this library"
+            )
         raise PublicationError(
             "Enable Grimmory folder watch or provide a library-management connection"
         )
@@ -105,9 +120,13 @@ async def verify_grimmory(adapter, library_id, backend_root, worker_root, medium
     }
 
 
-async def verify_backend(adapter, library_id, backend_root, worker_root, medium):
+async def verify_backend(
+    adapter, library_id, backend_root, worker_root, medium, *, staging_root=None
+):
     if getattr(adapter, "kind", "audiobookshelf") == "grimmory":
-        return await verify_grimmory(adapter, library_id, backend_root, worker_root, medium)
+        return await verify_grimmory(
+            adapter, library_id, backend_root, worker_root, medium, staging_root
+        )
     version = await adapter.server_version()
     configuration = await adapter.import_configuration(library_id)
     capabilities, _ = await adapter.authorize()

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { browseCache, refreshPending } from "../queryPolicies";
 import BookSourceIcon from "./BookSourceIcon";
 import { useQuery } from "@tanstack/react-query";
 import { Star } from "lucide-react";
@@ -11,6 +12,8 @@ type Details = components["schemas"]["ReaderDetails"];
 export function useReaderDetails(externalId?: string) {
   return useQuery({
     queryKey: ["reader-details", externalId],
+    ...browseCache,
+    refetchInterval: refreshPending,
     enabled: !!externalId,
     queryFn: async () =>
       result(

@@ -141,7 +141,7 @@ async def library(
         await db.execute(
             select(Work, recent.c.observed_at)
             .join(recent, recent.c.work_id == Work.id)
-            .where(Work.id.in_(display_ids(user)), visible_work(user))
+            .where(visible_work(user))
             .order_by(recent.c.observed_at.desc(), Work.title, Work.id)
             .offset((page - 1) * limit)
             .limit(limit + 1)
@@ -186,7 +186,14 @@ async def hardcover(
     user_id = user.id
     try:
         batch, result.stale, result.warning = await provider_call(
-            db, user_id, "hardcover", "discovery", shelf, page, datetime.now(UTC).date()
+            db,
+            user_id,
+            "hardcover",
+            "discovery",
+            shelf,
+            page,
+            datetime.now(UTC).date(),
+            background=True,
         )
     except AdapterError as error:
         result.status, result.warning, result.retry_after = (
@@ -223,7 +230,7 @@ async def related(work_id: UUID, user: CurrentUser, db: Database):
     if source and account and account.enabled:
         try:
             batch, result.stale, result.warning = await provider_call(
-                db, user_id, "hardcover", "related", source.external_id
+                db, user_id, "hardcover", "related", source.external_id, background=True
             )
             user = await current_actor(db, user_id)
             # Access can change while the provider request is in flight.

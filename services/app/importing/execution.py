@@ -523,12 +523,20 @@ def observe_cover(spec):
 
 async def find_item(adapter, entry, library_external_id):
     page, expected_total, found = 0, None, []
+    folder = str(
+        PurePosixPath(entry.configuration["destination"]["backend_path"])
+        / entry.specification["folder"]
+    )
     while True:
         rows, total = await adapter.page(library_external_id, page)
         if expected_total is not None and total != expected_total:
             raise PublicationError("Library inventory changed during confirmation; retry detection")
         expected_total = total
-        for item in await adapter.expanded([row["id"] for row in rows]) if rows else []:
+        # Minified ABS rows include the path. Still walk every summary page to
+        # detect duplicate destinations, and retain compatibility with backends
+        # that do not include paths in their summary contract.
+        ids = [row["id"] for row in rows if row.get("path") == folder or "path" not in row]
+        for item in await adapter.expanded(ids) if ids else []:
             if item.library_id != library_external_id:
                 raise PublicationError(f"{_app_name(item)} item moved during confirmation")
             if getattr(item, "unreadable", False):
@@ -766,6 +774,7 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                 entry.configuration["destination"]["backend_path"],
                 spec.destination_root,
                 entry.expected_metadata["medium"],
+                staging_root=spec.staging_root,
             )
             if integration.kind == "grimmory":
                 allowed = set(

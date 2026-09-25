@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -73,6 +74,7 @@ from app.api import (
 )
 from app.config import get_settings
 from app.db.session import get_engine, session_factory
+from app.diagnostics import auth_configuration
 from app.jobs.queue import get_queue
 from app.recovery import active_restore, restore_pending, runtime_lease
 
@@ -81,6 +83,15 @@ from app.recovery import active_restore, restore_pending, runtime_lease
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.encryption_key()
+    configuration = auth_configuration(settings)
+    logging.getLogger(__name__).info(
+        "Authentication configuration public_url=%s cookie_secure=%s proxy_identity_mode=%s",
+        configuration["public_url"],
+        configuration["cookie_secure"],
+        configuration["proxy_identity_mode"],
+    )
+    for warning in configuration["warnings"]:
+        logging.getLogger(__name__).warning("%s", warning)
     try:
         async with runtime_lease():
             async with session_factory()() as db:
@@ -111,8 +122,9 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def response_headers(request: Request, call_next):
+        request.state.request_id = str(uuid4())
         response = await call_next(request)
-        response.headers["X-Request-ID"] = str(uuid4())
+        response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"

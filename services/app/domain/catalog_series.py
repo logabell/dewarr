@@ -138,7 +138,7 @@ async def fetch_page(owner_id, generation, token, external_id, cursor):
     try:
         async with asyncio.timeout(45):
             async with CatalogGateway(
-                "hardcover", f"{owner_id}:{generation}", token, cache=False
+                "hardcover", f"{owner_id}:{generation}", token, cache=False, request_interval=3.0
             ) as gateway:
                 return await page(Hardcover(gateway.request).query, external_id, cursor)
     except TimeoutError:

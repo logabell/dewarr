@@ -158,7 +158,8 @@ async def test_loading_lists_verifies_saved_connection(client, admin, database, 
     response = await client.get("/api/metadata/hardcover-lists")
     assert response.status_code == 409, response.text
     account = (await client.get("/api/metadata/account")).json()
-    assert account["status"] == "untested"
+    assert account["status"] == "authentication"
+    assert account["last_error"] == "Invalid token"
     assert account["last_success_at"] is None
 
 

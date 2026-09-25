@@ -4,16 +4,19 @@ import hmac
 import json as json_module
 import math
 import re
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
 from app.adapters.contracts import AdapterError, FailureKind, MutationError
 from app.adapters.http import JsonEndpoint
 from app.config import get_settings
 from app.db.models import ProviderBudget, ProviderCache
 from app.db.session import session_factory
+from app.domain.cache_entries import read_through
+from app.domain.catalog_cache_policy import lifetime
 from app.domain.operations import transaction_lock
 
 REQUEST_INTERVAL = 1.1
@@ -45,7 +48,18 @@ def retry_delay(headers, now):
 class CatalogGateway:
     """Persisted HTTP cache and credential-wide budget; never hold a transaction over I/O."""
 
-    def __init__(self, provider, scope, token=None, *, force=False, transport=None, cache=True):
+    def __init__(
+        self,
+        provider,
+        scope,
+        token=None,
+        *,
+        force=False,
+        transport=None,
+        cache=True,
+        on_stale=None,
+        request_interval=REQUEST_INTERVAL,
+    ):
         settings = get_settings()
         endpoint = settings.hardcover_url if provider == "hardcover" else settings.openlibrary_url
         self.http = JsonEndpoint(endpoint, token, transport=transport)
@@ -55,8 +69,11 @@ class CatalogGateway:
         ).hexdigest()
         self.budget_key = f"{provider}:{digest}"
         self.stale, self.warning, self.used_keys = False, None, []
+        self.observed_values = {}
         self.endpoint = endpoint
         self.cache = cache
+        self.on_stale = on_stale
+        self.request_interval = max(REQUEST_INTERVAL, request_interval)
 
     async def __aenter__(self):
         await self.http.__aenter__()
@@ -81,7 +98,7 @@ class CatalogGateway:
                     "This provider is cooling down. Try again later.",
                     retry_after=math.ceil(wait),
                 )
-            budget.next_request_at = due + timedelta(seconds=REQUEST_INTERVAL)
+            budget.next_request_at = due + timedelta(seconds=self.request_interval)
         if wait > 0:
             await asyncio.sleep(wait)
 
@@ -99,14 +116,8 @@ class CatalogGateway:
         material = [self.provider, self.endpoint, self.scope, method, path, params, json]
         key = hashlib.sha256(json_module.dumps(material, sort_keys=True).encode()).hexdigest()
         self.used_keys.append(key)
-        now = datetime.now(UTC)
-        async with session_factory()() as db:
-            cached = await db.get(ProviderCache, key) if self.cache else None
-            cached_value = cached.value if cached else None
-            cached_at = cached.fetched_at if cached else None
-            if cached and cached.expires_at > now and not self.force:
-                return cached_value
-        try:
+
+        async def load():
             await self.reserve()
             try:
                 response = await self.http.request(method, path, params=params, json=json)
@@ -119,53 +130,49 @@ class CatalogGateway:
                     error.retry_after = max(error.retry_after or 0, math.ceil(delay))
                 raise
             await self.cooldown(retry_delay(self.http.response_headers, datetime.now(UTC)))
-        except AdapterError as error:
-            if (
-                cached_value
-                and cached_at > now - timedelta(days=7)
-                and error.kind
-                in {
-                    FailureKind.TIMEOUT,
-                    FailureKind.ROUTE,
-                    FailureKind.UNAVAILABLE,
-                    FailureKind.RATE_LIMIT,
-                }
-            ):
-                self.stale = True
-                self.warning = "Provider unavailable; showing previously cached catalog data."
-                return cached_value
-            raise
+            return response
+
         if not self.cache:
-            return response
-        data = response.get("data")
-        search = data.get("search") if isinstance(data, dict) else None
-        if (
-            response.get("errors")
-            or response.get("error")
-            or (isinstance(search, dict) and search.get("error"))
-            or ("data" in response and not isinstance(data, dict))
-        ):
-            return response
-        is_search = path == "search.json" or (json and "CatalogSearch" in json.get("query", ""))
-        async with session_factory()() as db, db.begin():
-            await transaction_lock(db, "cache:" + key)
-            record = await db.get(ProviderCache, key)
-            if not record:
-                record = ProviderCache(key=key)
-                db.add(record)
-            record.value, record.fetched_at = response, now
-            record.expires_at = now + timedelta(seconds=300 if is_search else 3600)
-            expired = (
-                select(ProviderCache.key)
-                .where(ProviderCache.expires_at < now - timedelta(days=7))
-                .limit(100)
+            return await load()
+
+        def cacheable(response):
+            data = response.get("data")
+            search = data.get("search") if isinstance(data, dict) else None
+            return not (
+                response.get("errors")
+                or response.get("error")
+                or (isinstance(search, dict) and search.get("error"))
+                or ("data" in response and not isinstance(data, dict))
             )
-            await db.execute(delete(ProviderCache).where(ProviderCache.key.in_(expired)))
-        return response
+
+        value, stale = await read_through(
+            key,
+            load,
+            fresh_for=lifetime(self.provider, path, json),
+            force=self.force,
+            on_stale=self.on_stale,
+            cacheable=cacheable,
+        )
+        # Adapters may reject or mutate a response after another request refreshes it.
+        # Retain the returned payload so invalidation cannot erase different, newer data.
+        self.observed_values[key] = deepcopy(value)
+        if stale:
+            self.stale = True
+            self.warning = (
+                "Showing cached catalog data while a background refresh is pending."
+                if self.on_stale
+                else "Provider unavailable; showing previously cached catalog data."
+            )
+        return value
 
     async def invalidate(self):
         async with session_factory()() as db, db.begin():
-            await db.execute(delete(ProviderCache).where(ProviderCache.key.in_(self.used_keys)))
+            for key, value in sorted(self.observed_values.items()):
+                await db.execute(
+                    delete(ProviderCache).where(
+                        ProviderCache.key == key, ProviderCache.value == value
+                    )
+                )
 
     async def mutate(self, document, variables):
         """One uncached mutation attempt; callers persist intent before invoking it."""

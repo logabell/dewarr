@@ -103,7 +103,10 @@ def cancel_renamed(root, staging, name, receipt, spec):
 
 def cancel_files(spec, *, guard=nullcontext, checkpoint=lambda _: None):
     name = str(spec.entry_id) + ".json"
-    with private_staging(spec.staging_root) as staging, directory(spec.destination_root) as root:
+    with (
+        private_staging(spec.staging_root, spec.journal_root) as staging,
+        directory(spec.destination_root) as root,
+    ):
         with (
             entry_lock(staging, spec.entry_id),
             publication_lock(staging, json.dumps(object_id(root), sort_keys=True)),

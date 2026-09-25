@@ -25,42 +25,98 @@ async def publish_book(operation_id: str) -> None:
     await execute(UUID(operation_id))
 
 
+@tasks.task(
+    name="catalog.refresh",
+    queue="catalog-cache",
+    retry=CatalogRetryStrategy(max_attempts=3, wait=60),
+)
+async def refresh_catalog(operation_id: str) -> None:
+    from app.domain.catalog_refresh import run
+
+    await run(UUID(operation_id))
+
+
+@tasks.task(name="organization.confirm-batch", queue="confirmation", retry=3)
+async def confirm_batch(operation_ids: list[str]) -> None:
+    from app.importing.confirmation import execute_batch
+
+    await execute_batch(operation_ids)
+
+
 @tasks.periodic(cron="* * * * *")
-@tasks.task(name="organization.confirm", queue="imports", retry=3)
+@tasks.task(name="organization.confirm", queue="system", retry=3)
 async def schedule_import_confirmation(timestamp: int) -> None:
     from sqlalchemy import text
 
-    from app.db.models import ImportEntry
+    from app.db.models import ImportDestination, ImportEntry, Library
     from app.jobs.queue import enqueue
 
     if get_settings().recovery_mode:
         return
-    async with session_factory()() as db, db.begin():
-        entries = (
-            await db.scalars(
-                select(ImportEntry)
-                .where(
-                    ImportEntry.state.in_(["awaiting-library", "cancelling", "queued"]),
-                    ImportEntry.next_check_at <= datetime.now(UTC),
+    # A busy entry must not consume the candidate window ahead of eligible work.
+    # Bound each transaction and each tick while draining more than one page.
+    for _ in range(5):
+        async with session_factory()() as db, db.begin():
+            entries = list(
+                await db.scalars(
+                    select(ImportEntry)
+                    .join(Operation, Operation.id == ImportEntry.operation_id)
+                    .where(
+                        ImportEntry.state.in_(["awaiting-library", "cancelling", "queued"]),
+                        ImportEntry.next_check_at <= datetime.now(UTC),
+                        text(
+                            "NOT EXISTS (SELECT 1 FROM book_queue.procrastinate_jobs j "
+                            "WHERE j.id = operations.job_id AND j.status IN ('todo', 'doing'))"
+                        ),
+                    )
+                    .order_by(ImportEntry.next_check_at, ImportEntry.id)
+                    .limit(20)
+                    .with_for_update(skip_locked=True, of=ImportEntry)
                 )
-                .order_by(ImportEntry.next_check_at, ImportEntry.id)
-                .limit(20)
-                .with_for_update(skip_locked=True)
             )
-        ).all()
-        for entry in entries:
-            operation = await db.get(Operation, entry.operation_id)
-            status = await db.scalar(
-                text("SELECT status::text FROM book_queue.procrastinate_jobs WHERE id=:id"),
-                {"id": operation.job_id},
+            routes = dict(
+                (
+                    await db.execute(
+                        select(ImportDestination.id, Library.id)
+                        .join(Library, Library.id == ImportDestination.library_id)
+                        .join(Integration, Integration.id == Library.integration_id)
+                        .where(
+                            ImportDestination.id.in_([entry.destination_id for entry in entries]),
+                            Integration.kind == "audiobookshelf",
+                        )
+                    )
+                ).all()
             )
-            if status in {"todo", "doing"}:
-                continue
-            operation.status = "queued"
-            operation.job_id = await enqueue(
-                db, "organization.publish", operation_id=str(operation.id)
-            )
-            entry.next_check_at = datetime.now(UTC) + timedelta(minutes=1)
+            groups = {}
+            for entry in entries:
+                if (
+                    entry.state == "awaiting-library"
+                    and entry.published_at
+                    and entry.destination_id in routes
+                ):
+                    groups.setdefault(routes[entry.destination_id], []).append(entry)
+            jobs = {}
+            for library_id, group in groups.items():
+                if len(group) > 1:
+                    job_id = await enqueue(
+                        db,
+                        "organization.confirm-batch",
+                        operation_ids=[str(entry.operation_id) for entry in group],
+                        job_lock=f"abs-confirmation:{library_id}",
+                    )
+                    jobs.update((entry.id, job_id) for entry in group)
+            for entry in entries:
+                operation = await db.get(Operation, entry.operation_id)
+                operation.status = "queued"
+                operation.job_id = jobs.get(entry.id) or await enqueue(
+                    db,
+                    "organization.publish",
+                    operation_id=str(operation.id),
+                    job_queue="confirmation" if entry.state == "awaiting-library" else None,
+                )
+                entry.next_check_at = datetime.now(UTC) + timedelta(minutes=1)
+        if len(entries) < 20:
+            break
 
 
 @tasks.task(

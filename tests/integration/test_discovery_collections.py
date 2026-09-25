@@ -318,3 +318,23 @@ async def test_growing_source_count_does_not_stop_at_original_snapshot_total(
     last = (await client.get(url + "&page=6")).json()
     assert last["items"][0]["external_id"] == "201" and not last["has_more"]
     assert calls == [1, 2, 3]
+
+
+async def test_expired_count_does_not_hide_new_pages(client, admin, database, long_collection):
+    from datetime import timedelta
+    from uuid import UUID
+
+    from app.db.models import ProviderCache
+    from app.domain.discovery_pages import collection_key
+
+    sample, calls = long_collection
+    url = f"/api/discovery/collections/{sample['id']}?full=true"
+    await client.get(url + "&page=1")
+    async with database() as db, db.begin():
+        count = await db.get(ProviderCache, collection_key(UUID(admin["id"]), sample, "count"))
+        count.value = {"count": 1}
+        count.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    response = await client.get(url + "&page=6")
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["external_id"] == "201"
+    assert calls == [1, 3]

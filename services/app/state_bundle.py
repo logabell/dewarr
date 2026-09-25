@@ -24,7 +24,7 @@ from app.config import Settings, get_settings
 from app.db.models import Base
 from app.recovery import MAINTENANCE_LOCK
 
-SCHEMA = "0068_configuration_deletion"
+SCHEMA = "0074_destination_storage"
 CONFIG_FIELDS = {
     "public_url",
     "cookie_secure",
@@ -36,6 +36,8 @@ CONFIG_FIELDS = {
     "import_sources",
     "import_destinations",
     "import_staging_root",
+    "import_journal_root",
+    "import_storage_routes",
 }
 MAX_JOURNALS = 10000
 MAX_JOURNAL_BYTES = 4 * 1024 * 1024
@@ -82,7 +84,10 @@ def file_digest(path: Path) -> FileDigest:
 
 def journal_name(name: str) -> bool:
     try:
-        return name.endswith(".json") and str(UUID(name[:-5])) == name[:-5]
+        return (
+            name.endswith(".json")
+            and str(UUID(name.removeprefix("combine-")[:-5])) == name.removeprefix("combine-")[:-5]
+        )
     except ValueError:
         return False
 
@@ -221,15 +226,16 @@ def backup(settings: Settings, root: Path) -> Manifest:
         schema = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
         if schema != SCHEMA:
             raise BundleError("Migrate to this command's schema before taking a supported backup")
-        from app.importing.storage import apply_storage
+        from app.importing.storage import apply_storage, storage_locations
 
         mounted = connection.execute(
-            "SELECT destinations, staging_root, sources FROM import_storage_settings WHERE id = 1"
+            "SELECT destinations, staging_root, sources, storage_routes "
+            "FROM import_storage_settings WHERE id = 1"
         ).fetchone()
         if mounted:
-            settings = apply_storage(settings, mounted[0], mounted[1], mounted[2])
+            settings = apply_storage(settings, mounted[0], mounted[1], mounted[2], mounted[3])
         if (
-            settings.import_staging_root is None
+            not storage_locations(settings)
             and connection.execute("SELECT EXISTS(SELECT 1 FROM import_entries)").fetchone()[0]
         ):
             raise BundleError("Import history exists; configure its journal root before backup")
@@ -252,13 +258,13 @@ def backup(settings: Settings, root: Path) -> Manifest:
         files = {
             name: file_digest(root / name) for name in ("database.dump", "app_key", "settings.json")
         }
-        staging = settings.import_staging_root
-        if staging is not None:
+        total = count = 0
+        journal_roots = {journals or stage for stage, journals in storage_locations(settings)}
+        for staging in sorted(journal_roots):
             if staging.is_symlink() or not staging.is_dir():
                 raise BundleError(
                     "The configured journal root must be an available regular directory"
                 )
-            total = count = 0
             for path in staging.iterdir():
                 if not path.name.endswith(".json"):
                     # Staged media and temporary publication files are separate evidence.
@@ -266,6 +272,11 @@ def backup(settings: Settings, root: Path) -> Manifest:
                 if not journal_name(path.name):
                     raise BundleError("The journal root contains an unrecognized JSON entry")
                 digest = file_digest(path)
+                name = "journals/" + path.name
+                if name in files:
+                    if files[name] != digest:
+                        raise BundleError("Conflicting journals share the same import identity")
+                    continue
                 total += digest.size
                 count += 1
                 if (

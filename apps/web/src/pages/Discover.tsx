@@ -1,3 +1,4 @@
+import { browseCache, refreshPending } from "../queryPolicies";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "../components/InfiniteScroll";
 import { HardcoverCollections } from "./CommunityLists";
@@ -40,6 +41,7 @@ import ReleaseCalendar, { UpcomingShelf } from "./ReleaseCalendar";
 
 const views = [
   ["home", "For you"],
+  ["series", "Your series"],
   ["browse", "Browse"],
   ["calendar", "Calendar"],
   ["collections", "Collections"],
@@ -76,6 +78,8 @@ export default function Discover({ canEdit = true }: { canEdit?: boolean }) {
         <ReleaseCalendar canEdit={canEdit} />
       ) : view === "yours" ? (
         <YourLists canEdit={canEdit} />
+      ) : view === "series" ? (
+        <SeriesContinuation canEdit={canEdit} />
       ) : (
         <CollectionIndex awards={view === "awards"} />
       )}
@@ -218,12 +222,6 @@ function Home({ canEdit }: { canEdit: boolean }) {
         content: <CollectionRow canEdit={canEdit} collection={collection} />,
       });
   }
-  const seriesRow = {
-    id: "series",
-    title: "Missing from your series",
-    content: <SeriesContinuation hideEmpty />,
-  };
-  if (account.data?.suggest_series_gaps) rows.push(seriesRow);
   rows.push({
     id: "library",
     title: "Recent library additions",
@@ -241,7 +239,6 @@ function Home({ canEdit }: { canEdit: boolean }) {
       title: "Upcoming releases",
       content: <UpcomingShelf canEdit={canEdit} />,
     });
-  if (!account.data?.suggest_series_gaps) rows.push(seriesRow);
   for (const c of sources.collections.data || []) {
     if (layout.data?.order?.includes(c.id) && !rows.some((r) => r.id === c.id))
       rows.push({
@@ -794,6 +791,8 @@ function ProviderShelf({
 }) {
   const query = usePagedQuery({
     queryKey: ["discovery", shelf, full],
+    ...browseCache,
+    refetchInterval: refreshPending,
     queryFn: async (page, signal) =>
       result(
         await api.GET("/api/discovery/hardcover/{shelf}", {

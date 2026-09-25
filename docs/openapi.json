@@ -3254,6 +3254,22 @@
               "default": "ebook",
               "title": "Medium"
             }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
           }
         ],
         "responses": {
@@ -8803,17 +8819,39 @@
         ],
         "summary": "Libraries",
         "operationId": "libraries_api_library_libraries_get",
+        "parameters": [
+          {
+            "name": "include_disabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Disabled"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/LibraryView"
                   },
-                  "type": "array",
                   "title": "Response Libraries Api Library Libraries Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -24948,6 +24986,22 @@
             "type": "array",
             "maxItems": 1000,
             "title": "User Ids"
+          },
+          "expected_user_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected User Ids"
           }
         },
         "type": "object",
@@ -28289,7 +28343,7 @@
           "matcher_version": {
             "type": "integer",
             "title": "Matcher Version",
-            "default": 2
+            "default": 3
           }
         },
         "additionalProperties": false,
@@ -30518,6 +30572,50 @@
             },
             "type": "array",
             "title": "Expected Permissions"
+          },
+          "expected_role_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Role Id"
+          },
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids"
+          },
+          "expected_library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Library Ids"
           }
         },
         "additionalProperties": false,
@@ -39294,6 +39392,34 @@
               }
             ],
             "title": "Permissions"
+          },
+          "role_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Id"
+          },
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids"
           }
         },
         "type": "object",
@@ -39321,6 +39447,11 @@
           "role": {
             "type": "string",
             "title": "Role"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "default": true
           },
           "can_automate": {
             "type": "boolean",
@@ -39352,6 +39483,21 @@
             "type": "string",
             "title": "Onboarding Status",
             "default": "pending"
+          },
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids"
           }
         },
         "type": "object",

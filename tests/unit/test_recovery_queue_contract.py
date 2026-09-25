@@ -19,7 +19,12 @@ def test_worker_fence_covers_all_registered_record_arguments():
         if name in RECOVERY_TASKS or name.startswith(("procrastinate.", "builtin:")):
             continue
         parameters = set(inspect.signature(task.func).parameters)
-        if name in RESTORE_HELD_TASK_ARGUMENTS:
+        if task.pass_context:
+            # Injected by Procrastinate, not a serialized job reference.
+            parameters.remove(next(iter(inspect.signature(task.func).parameters)))
+        if name == "organization.confirm-batch":
+            assert parameters == {"operation_ids"}
+        elif name in RESTORE_HELD_TASK_ARGUMENTS:
             assert parameters == RESTORE_HELD_TASK_ARGUMENTS[name], name
         else:
             assert parameters <= allowed, name

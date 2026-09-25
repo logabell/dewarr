@@ -89,8 +89,10 @@ def overlaps(path: Path, other: Path) -> bool:
 
 def library_conflict(path: Path, settings) -> bool:
     others = list(settings.import_destinations.values())
-    if settings.import_staging_root:
-        others.append(settings.import_staging_root)
+    from app.importing.storage import storage_locations
+
+    others.extend(path for pair in storage_locations(settings) for path in pair if path is not None)
+    others.append(settings.import_journal_root)
     return any(overlaps(path, other) for other in others)
 
 

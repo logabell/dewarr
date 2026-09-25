@@ -124,6 +124,48 @@ def release_compatible(release, rule, version):
     # standalone coverage must be verified against downloaded bytes before import.
 
 
+async def reservation_for_release(db, intent, target, reservation, release):
+    """Split a planned group when only another request rejects the chosen release.
+
+    Call under the work acquisition lock. Shared reservations are an optimization,
+    not additional requirements accepted by this reader. Never relax another
+    request or change a reservation whose files have already been selected.
+    """
+    own_rule = RequestSpec.model_validate(intent.specification).rule(
+        reservation.requirements["medium"]
+    )
+    if reservation.state != "planned" or own_rule == reservation.requirements:
+        return reservation
+    shared_version = (
+        await db.get(Version, UUID(reservation.requirements["version_id"]))
+        if reservation.requirements["version_id"]
+        else None
+    )
+    try:
+        release_compatible(release, reservation.requirements, shared_version)
+    except HTTPException:
+        own_version = (
+            await db.get(Version, UUID(own_rule["version_id"])) if own_rule["version_id"] else None
+        )
+        try:
+            release_compatible(release, own_rule, own_version)
+        except HTTPException:
+            return reservation
+    else:
+        return reservation
+    separate = AcquisitionReservation(
+        work_id=reservation.work_id,
+        destination_id=reservation.destination_id,
+        scope=reservation.scope,
+        requirements=own_rule,
+    )
+    db.add(separate)
+    await db.flush()
+    target.reservation_id = separate.id
+    await release_unused(db, intent.work_id)
+    return separate
+
+
 def version_evidence(version):
     return (
         {
@@ -228,6 +270,8 @@ async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_sele
         target.reservation_id = reservation.id
         await db.flush()
         await release_unused(db, intent.work_id)
+    if not automatic_evidence and not recovery_selection_id:
+        reservation = await reservation_for_release(db, intent, target, reservation, release)
     rule = reservation.requirements
     if recovery_selection_id:
         from app.domain.download_recovery import frozen_context

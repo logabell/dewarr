@@ -8339,6 +8339,8 @@ export interface components {
     GrantInput: {
       /** User Ids */
       user_ids: string[];
+      /** Expected User Ids */
+      expected_user_ids?: string[] | null;
     };
     /** GroupMatch */
     GroupMatch: {
@@ -9571,7 +9573,7 @@ export interface components {
       limit: number;
       /**
        * Matcher Version
-       * @default 2
+       * @default 3
        */
       matcher_version: number;
     };
@@ -10479,6 +10481,12 @@ export interface components {
       role_id?: string | null;
       /** Expected Permissions */
       expected_permissions: string[];
+      /** Expected Role Id */
+      expected_role_id?: string | null;
+      /** Library Ids */
+      library_ids?: string[] | null;
+      /** Expected Library Ids */
+      expected_library_ids?: string[] | null;
     };
     /** PersonalListPreview */
     PersonalListPreview: {
@@ -13746,6 +13754,10 @@ export interface components {
       role: "admin" | "member" | "viewer" | "requester" | "approver";
       /** Permissions */
       permissions?: string[] | null;
+      /** Role Id */
+      role_id?: string | null;
+      /** Library Ids */
+      library_ids?: string[] | null;
     };
     /** UserView */
     UserView: {
@@ -13757,6 +13769,11 @@ export interface components {
       display_name: string;
       /** Role */
       role: string;
+      /**
+       * Active
+       * @default true
+       */
+      active: boolean;
       /** Can Automate */
       can_automate: boolean;
       /** Permissions */
@@ -13770,6 +13787,8 @@ export interface components {
        * @default pending
        */
       onboarding_status: string;
+      /** Library Ids */
+      library_ids?: string[] | null;
     };
     /** ValidationError */
     ValidationError: {
@@ -16540,7 +16559,9 @@ export interface operations {
       query?: {
         medium?: "ebook" | "audio";
       };
-      header?: never;
+      header?: {
+        "if-none-match"?: string | null;
+      };
       path: {
         work_id: string;
       };
@@ -19854,7 +19875,9 @@ export interface operations {
   };
   libraries_api_library_libraries_get: {
     parameters: {
-      query?: never;
+      query?: {
+        include_disabled?: boolean;
+      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -19868,6 +19891,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["LibraryView"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

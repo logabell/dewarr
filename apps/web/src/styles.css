@@ -217,8 +217,7 @@ button.discovery-book:hover {
 }
 .series-gap-cover {
   flex-shrink: 0;
-  width: 58px;
-  height: 87px;
+  width: 76px;
   display: grid;
   place-items: center;
   border-radius: 4px;
@@ -241,6 +240,17 @@ button.discovery-book:hover {
   font-weight: 650;
   line-height: 1.4;
   margin-block: 4px;
+}
+.series-gap-book-detail > .series-gap-note {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.series-gap-card header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.series-gap-actions + .series-gap-note {
+  margin-top: 14px;
 }
 .series-gap-book-detail > p,
 .series-gap-note {

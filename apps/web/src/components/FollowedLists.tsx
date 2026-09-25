@@ -1,3 +1,4 @@
+import { browseCache } from "../queryPolicies";
 import ShelfViewAll from "./ShelfViewAll";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "./InfiniteScroll";
@@ -93,6 +94,7 @@ export function PersonalRow({
   const cache = useQueryClient();
   const books = usePagedQuery({
     queryKey: ["discovery-personal", list.id],
+    ...browseCache,
     queryFn: async (page, signal) =>
       result(
         await api.GET("/api/lists/{list_id}", {
@@ -131,6 +133,7 @@ export function PersonalRow({
       if (shelf.current) shelf.current.scrollLeft = 0;
       void cache.invalidateQueries({
         queryKey: ["discovery-personal", list.id],
+        ...browseCache,
       });
       void cache.invalidateQueries({ queryKey: ["lists"] });
     }

@@ -84,6 +84,21 @@ class SeriesView(BaseModel):
     audio: int = 0
 
 
+def series_work_view(work, availability, snapshot):
+    """Display the observed member, retaining local identity and library status."""
+    view = work_view(work, availability)
+    book = snapshot.get("book") or {}
+    # Saved observations already contain this metadata; no per-book API hydration.
+    return view.model_copy(
+        update={
+            "title": book.get("title") or view.title,
+            "authors": book.get("authors") or view.authors,
+            "cover_url": book.get("cover_url") or view.cover_url,
+            "publication_year": book.get("publication_year") or view.publication_year,
+        }
+    )
+
+
 @router.post("/hardcover/{external_id}/refresh", response_model=OperationView, status_code=202)
 async def refresh(
     external_id: str,
@@ -92,7 +107,9 @@ async def refresh(
     idempotency_key: str = Header(min_length=8, max_length=200),
 ):
     try:
-        operation = await catalog_series.start(db, user, external_id, idempotency_key)
+        operation = await catalog_series.start(
+            db, user, external_id, idempotency_key, reuse_active=True
+        )
     except AdapterError as error:
         raise adapter_http_error(error) from error
     await db.commit()
@@ -150,12 +167,13 @@ async def detail(
         return (
             pos is None,
             Decimal(pos) if pos is not None else Decimal(0),
-            work.title.casefold(),
+            (entry.snapshot.get("book", {}).get("title") or work.title).casefold(),
             entry.external_id,
         )
 
     entries = sorted(entries, key=order)
     by_position = {}
+    by_work = {}
     for entry, work in entries:
         if (
             entry.snapshot["position"] is not None
@@ -163,8 +181,11 @@ async def detail(
             and not entry.snapshot["partial"]
             and not entry.snapshot["canonical_id"]
         ):
-            by_position.setdefault(entry.snapshot["position"], set()).add(work.id)
-    available = await availability_for(db, user, list({work.id for _, work in entries}))
+            by_position.setdefault(Decimal(entry.snapshot["position"]), set()).add(work.id)
+            by_work.setdefault(work.id, set()).add(Decimal(entry.snapshot["position"]))
+    available = await availability_for(
+        db, user, list({work.id for _, work in entries}), identity_only=True
+    )
     page = entries[offset : offset + limit]
     followed_ids = (
         set(
@@ -199,7 +220,13 @@ async def detail(
                 compilation=data["compilation"],
                 partial=data["partial"],
                 merged_record=bool(data["canonical_id"]),
-                ambiguous_position=len(by_position.get(data["position"], set())) > 1,
+                ambiguous_position=len(
+                    by_position.get(
+                        Decimal(data["position"]) if data["position"] is not None else None, set()
+                    )
+                )
+                > 1
+                or len(by_work.get(work.id, set())) > 1,
                 release_date=data["release_date"],
                 followed=work.id in followed_ids,
                 publication="unreleased"
@@ -207,7 +234,7 @@ async def detail(
                 else "published"
                 if released
                 else "unknown",
-                work=work_view(work, available[work.id]),
+                work=series_work_view(work, available[work.id], data),
             )
         )
     return SeriesView(

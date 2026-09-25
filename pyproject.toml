@@ -50,12 +50,20 @@ packages = ["services/app"]
 "docs/notices/OpenSSL-3-LICENSE.txt" = "app/notices/OpenSSL-3-LICENSE.txt"
 
 [tool.pytest.ini_options]
-addopts = "--import-mode=importlib"
-testpaths = ["tests"]
+addopts = "--import-mode=importlib --strict-markers"
+# Routine checks favor API/worker journeys. `pytest tests` explicitly runs all tests.
+testpaths = [
+  "tests/integration/test_auth.py",
+  "tests/integration/test_queue.py",
+  "tests/integration/test_download_fulfillment.py",
+  "tests/unit/test_security.py",
+]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-faulthandler_timeout = 300
+timeout = 120
+timeout_method = "thread"
+faulthandler_timeout = 60
 markers = ["integration: requires isolated PostgreSQL"]
 
 [tool.ruff]

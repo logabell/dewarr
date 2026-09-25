@@ -247,7 +247,7 @@ class Hardcover:
         keys = [int(identifier("hardcover", value)) for value in external_ids]
         if not keys or len(keys) > 10:
             raise parse_failure()
-        data = await self.query(HC_BOOKS, {"ids": keys})
+        data = await self.query(HC_BOOKS, {"ids": sorted(keys)})
         try:
             books = {}
             for record in data["books"]:

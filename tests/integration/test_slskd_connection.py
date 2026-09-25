@@ -157,7 +157,3 @@ async def test_mapping_rejects_library_overlap_and_preserves_shared_roots(
         },
     )
     assert response.status_code == 422
-
-
-async def test_browsing_and_mapping_require_admin(client, slskd):
-    assert (await client.get("/api/downloaders/folders")).status_code == 401

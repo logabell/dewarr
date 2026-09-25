@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import delete, func, select, update
 
+from app.adapters.catalog_types import BookData
 from app.db.models import (
     AcquisitionIntent,
     AssetContains,
@@ -46,7 +47,16 @@ async def add_series(db, owner, members, external_id="9", **values):
                 series_id=series.id,
                 work_id=work.id,
                 external_id=str(index),
-                snapshot=record(index, **{k: v for k, v in fields.items() if k != "present"}),
+                snapshot={
+                    **record(index),
+                    "book": BookData(
+                        provider="hardcover",
+                        external_id=str(index),
+                        title=work.title,
+                        authors=work.authors,
+                    ).model_dump(mode="json"),
+                    **{k: v for k, v in fields.items() if k != "present"},
+                },
                 present=fields.get("present", True),
             )
         )
@@ -289,3 +299,60 @@ async def test_multiple_large_series_use_batched_reads_and_bounded_cards(client,
         assert all(item["missing"] == 250 and len(item["books"]) == 3 for item in page["items"])
     finally:
         event.remove(engine, "before_cursor_execute", record_query)
+
+
+async def test_title_lookalikes_do_not_seed_series_or_satisfy_missing_books(
+    client, admin, database
+):
+    async with database() as db, db.begin():
+        owned = await add_book(db, "Harbor")
+        lookalike = await add_book(db, "Harbor: A Different Voyage")
+        gap = await add_book(db, "Far Shore")
+        await add_owned(db, owned)
+        await add_series(db, admin["id"], [(lookalike, {}), (gap, {})])
+        await add_series(db, admin["id"], [(owned, {}), (lookalike, {})], external_id="10")
+        gap_id = str(lookalike.id)
+    shelf = await get_shelf(client)
+    assert [s["external_id"] for s in shelf["items"]] == ["10"]
+    assert shelf["items"][0]["owned"] == 1
+    assert shelf["items"][0]["books"][0]["work"]["id"] == gap_id
+    detail = (await client.get("/api/catalog/series/hardcover/9")).json()
+    assert detail["owned"] == 0
+    assert all(not entry["work"]["availability"]["owned"] for entry in detail["items"])
+
+
+async def test_saved_member_metadata_and_numeric_order_are_used_without_hydration(
+    client, admin, database, monkeypatch
+):
+    from app.domain.catalog_network import CatalogGateway
+
+    async def no_provider_calls(*args, **kwargs):
+        raise AssertionError("Browsing saved series must not call Hardcover")
+
+    monkeypatch.setattr(CatalogGateway, "request", no_provider_calls)
+    async with database() as db, db.begin():
+        owned = await add_book(db, "Owned")
+        await add_owned(db, owned)
+        members = [(owned, {})]
+        for number in (10, 2, 1.5):
+            work = await add_book(db, f"Outdated title {number}")
+            book = BookData(
+                provider="hardcover",
+                external_id=str(len(members) + 10),
+                title=f"Voyage {number}",
+                authors=["Verified Writer"],
+                cover_url=f"https://example.com/cover-{number}.jpg",
+                publication_year=2020,
+            ).model_dump(mode="json")
+            members.append((work, {"book": book, "position": str(number)}))
+        await add_series(db, admin["id"], members)
+    for page in (1, 2):
+        shelf = await get_shelf(client, page=page)
+        if page == 1:
+            books = shelf["items"][0]["books"]
+            assert [b["position"] for b in books] == ["1.5", "2", "10"]
+            assert [b["work"]["title"] for b in books] == ["Voyage 1.5", "Voyage 2", "Voyage 10"]
+            assert books[0]["work"]["cover_url"] == "https://example.com/cover-1.5.jpg"
+            assert books[0]["work"]["authors"] == ["Verified Writer"]
+    detail = (await client.get("/api/catalog/series/hardcover/9")).json()
+    assert detail["items"][1]["work"] == books[0]["work"]

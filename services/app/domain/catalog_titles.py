@@ -4,7 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from sqlalchemy import func, literal_column
+from sqlalchemy import func, literal, literal_column
 
 # A repeated trailing chain makes the order of edition labels irrelevant. The
 # same expression runs in Python and PostgreSQL; never strip arbitrary brackets.
@@ -46,9 +46,17 @@ def display_text(value):
     return " ".join(value.split())
 
 
+def _rule(value):
+    # Fixed normalization rules must remain constants in prepared/generic plans
+    # so PostgreSQL can match expression indexes. User values stay bound.
+    return literal(value, literal_execute=True)
+
+
 def display_text_sql(value):
-    value = func.translate(func.lower(func.normalize(value, literal_column("NFKC"))), "‘’", "''")
-    return func.trim(func.regexp_replace(value, r"\s+", " ", "g"))
+    value = func.translate(
+        func.lower(func.normalize(value, literal_column("NFKC"))), _rule("‘’"), _rule("''")
+    )
+    return func.trim(func.regexp_replace(value, _rule(r"\s+"), _rule(" "), _rule("g")))
 
 
 def stripped_title(value):
@@ -73,7 +81,12 @@ def titles_agree(expected, actual):
 
 def display_title_sql(value):
     value = display_text_sql(value)
-    return func.trim(func.regexp_replace(value, DISPLAY_SUFFIX, "", "g"))
+    return func.trim(func.regexp_replace(value, _rule(DISPLAY_SUFFIX), _rule(""), _rule("g")))
+
+
+def display_base_sql(value):
+    """Candidate family for presentation grouping, including subtitle conflicts."""
+    return func.trim(func.split_part(display_title_sql(value), _rule(":"), _rule(1)))
 
 
 # Recording labels describe how a book was recorded, not a different book. A dramatized

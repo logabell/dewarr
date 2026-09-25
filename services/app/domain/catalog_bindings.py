@@ -11,7 +11,13 @@ async def visible_provider_works(db, user, identities):
     identities = set(identities)
     if not identities:
         return {}
-    mapping = display_map(user)
+    mapping = display_map(
+        user,
+        select(WorkMetadataSource.work_id).where(
+            tuple_(WorkMetadataSource.provider, WorkMetadataSource.external_id).in_(identities),
+            WorkMetadataSource.accepted.is_(True),
+        ),
+    )
     candidates = {}
     for provider, external_id, root in await db.execute(
         select(WorkMetadataSource.provider, WorkMetadataSource.external_id, mapping.c.work_id)
@@ -76,8 +82,10 @@ async def displayed_provider_works(db, user, provider, books):
     ]
     if not pending:
         return matched
-    mapping = display_map(user)
     title = display_title_sql(Work.title)
+    mapping = display_map(
+        user, select(Work.id).where(title.in_({display_title(book.title) for book in pending}))
+    )
     rows = list(
         await db.execute(
             select(Work, mapping.c.work_id)

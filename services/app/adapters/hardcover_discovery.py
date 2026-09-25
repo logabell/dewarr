@@ -118,7 +118,8 @@ def book(row, *, release_date=None, genres=None, date_basis="unknown"):
 async def load_ids(query, selected, *, has_more=False):
     if not selected:
         return DiscoveryBatch(items=[], has_more=has_more)
-    rows = (await query(HC_DISCOVERY_BOOKS, {"ids": selected}))["books"]
+    # Ranking belongs to the shelf; reordering the same books should reuse details.
+    rows = (await query(HC_DISCOVERY_BOOKS, {"ids": sorted(selected)}))["books"]
     if not isinstance(rows, list) or len(rows) > len(selected):
         raise parse_failure()
     books = {value.external_id: value for value in map(book, rows)}

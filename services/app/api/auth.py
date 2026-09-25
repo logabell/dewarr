@@ -1,4 +1,5 @@
 import asyncio
+import math
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -8,12 +9,13 @@ from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import case, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from app.api.dependencies import COOKIE, CurrentUser, Database, client_host, require_origin
 from app.config import get_settings
-from app.db.models import AuditEvent, LoginSession, PermissionRole, RateLimit, User
+from app.db.models import AuditEvent, LibraryGrant, LoginSession, PermissionRole, RateLimit, User
+from app.domain import library_access
 from app.domain.permissions import (
     ADMIN,
     AUTOMATE,
@@ -62,6 +64,8 @@ class UserInput(Credentials):
     display_name: str = Field(min_length=1, max_length=120)
     role: Literal["admin", "member", "viewer", "requester", "approver"] = "member"
     permissions: list[str] | None = None
+    role_id: UUID | None = None
+    library_ids: list[UUID] | None = Field(default=None, max_length=1000)
 
 
 class UserView(BaseModel):
@@ -70,11 +74,13 @@ class UserView(BaseModel):
     username: str
     display_name: str
     role: str
+    active: bool = True
     can_automate: bool
     permissions: list[str]
     access_label: str
     permission_role_id: str | None = None
     onboarding_status: str = "pending"
+    library_ids: list[UUID] | None = None
 
 
 class AuthView(BaseModel):
@@ -96,17 +102,19 @@ async def named_user_view(db: Database, user: User) -> UserView:
     return user_view(user, role_name)
 
 
-def user_view(user: User, role_name: str | None = None) -> UserView:
+def user_view(user: User, role_name: str | None = None, *, library_ids=None) -> UserView:
     return UserView(
         id=str(user.id),
         username=user.username,
         display_name=user.display_name,
         role=user.role,
+        active=user.active,
         can_automate=user.can_automate,
         permissions=names_from_bits(effective_permissions(user)),
         access_label=access_label(user, role_name),
         permission_role_id=str(user.permission_role_id) if user.permission_role_id else None,
         onboarding_status=(user.onboarding or {}).get("status", "pending"),
+        library_ids=library_ids,
     )
 
 
@@ -147,21 +155,31 @@ async def guard_admin_loss(db: Database, updates: list[tuple[User, int]]) -> Non
 
 async def enforce_auth_budget(db: Database, key: str) -> None:
     now = datetime.now(UTC)
-    # Persist failures independently of the later authentication transaction.
-    await db.execute(
+    # One atomic upsert counts concurrent attempts without a separate locking read.
+    # Commit independently so failed authentication still consumes its budget.
+    resets_at = now + timedelta(minutes=10)
+    expired = RateLimit.resets_at <= now
+    result = await db.execute(
         insert(RateLimit)
-        .values(key=key, count=0, resets_at=now + timedelta(minutes=10))
-        .on_conflict_do_nothing(index_elements=[RateLimit.key])
+        .values(key=key, count=1, resets_at=resets_at)
+        .on_conflict_do_update(
+            index_elements=[RateLimit.key],
+            set_={
+                "count": case((expired, 1), else_=RateLimit.count + 1),
+                "resets_at": case((expired, resets_at), else_=RateLimit.resets_at),
+            },
+        )
+        .returning(RateLimit.count, RateLimit.resets_at)
     )
-    rate = await db.scalar(select(RateLimit).where(RateLimit.key == key).with_for_update())
-    assert rate
-    if rate.resets_at <= now:
-        rate.count, rate.resets_at = 0, now + timedelta(minutes=10)
-    rate.count += 1
-    blocked = rate.count > 15
+    count, until = result.one()
     await db.commit()
-    if blocked:
-        raise HTTPException(429, "Too many sign-in attempts. Try again in ten minutes")
+    if count > 15:
+        retry_after = max(1, math.ceil((until - datetime.now(UTC)).total_seconds()))
+        raise HTTPException(
+            429,
+            "Too many sign-in attempts. Try again when the sign-in limit resets",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 async def start_session(user: User, db: Database) -> str:
@@ -306,8 +324,18 @@ async def logout(request: Request, response: Response, user: CurrentUser, db: Da
 async def users(actor: CurrentUser, db: Database):
     require_user_manager(actor)
     roles = {role.id: role.name for role in (await db.scalars(select(PermissionRole))).all()}
+    grants: dict[UUID, list[UUID]] = {}
+    if actor.role == "admin":
+        for user_id, library_id in await db.execute(
+            select(LibraryGrant.user_id, LibraryGrant.library_id).order_by(LibraryGrant.library_id)
+        ):
+            grants.setdefault(user_id, []).append(library_id)
     return [
-        user_view(user, roles.get(user.permission_role_id))
+        user_view(
+            user,
+            roles.get(user.permission_role_id),
+            library_ids=grants.get(user.id, []) if actor.role == "admin" else None,
+        )
         for user in (await db.scalars(select(User).order_by(User.username))).all()
     ]
 
@@ -320,12 +348,23 @@ async def create_user(body: UserInput, actor: CurrentUser, db: Database):
         if body.permissions is not None
         else preset_bits(body.role)
     )
-    guard_grant_scope(actor, permissions)
     actor_id = actor.id
     await db.rollback()
     encoded = await asyncio.to_thread(hash_password, body.password)
     # Serialize account creation to turn a duplicate into a stable API conflict.
     await db.execute(text("SELECT pg_advisory_xact_lock(720002)"))
+    actor = await db.get(User, actor_id, populate_existing=True)
+    if not actor or not actor.active:
+        raise HTTPException(403, "Account management access changed")
+    require_user_manager(actor)
+    role = await db.get(PermissionRole, body.role_id) if body.role_id else None
+    if body.role_id and not role:
+        raise HTTPException(404, "Role not found")
+    if role:
+        permissions = int(role.permissions)
+    guard_grant_scope(actor, permissions)
+    if body.library_ids is not None and actor.role != "admin":
+        raise HTTPException(403, "Only administrators can change library access")
     if await db.scalar(select(User.id).where(User.username == body.username)):
         raise HTTPException(409, "That username is already in use")
     user = User(
@@ -334,12 +373,17 @@ async def create_user(body: UserInput, actor: CurrentUser, db: Database):
         password_hash=encoded,
         role="member",
     )
-    sync_user_permissions(user, permissions)
+    sync_user_permissions(user, permissions, role.id if role else None)
     db.add(user)
     await db.flush()
+    libraries = None
+    if body.library_ids is not None:
+        libraries = await library_access.replace_user_libraries(
+            db, actor, user, body.library_ids, []
+        )
     db.add(AuditEvent(actor_id=actor_id, action="user.created", entity_id=user.id))
     await db.commit()
-    return user_view(user)
+    return user_view(user, role.name if role else None, library_ids=libraries)
 
 
 class AutomationPermissionInput(BaseModel):
@@ -431,6 +475,9 @@ class PermissionInput(BaseModel):
     permissions: list[str]
     role_id: UUID | None = None
     expected_permissions: list[str]
+    expected_role_id: UUID | None = None
+    library_ids: list[UUID] | None = Field(default=None, max_length=1000)
+    expected_library_ids: list[UUID] | None = Field(default=None, max_length=1000)
 
 
 def role_view(role: PermissionRole) -> RoleView:
@@ -532,6 +579,8 @@ async def update_permissions(
     user_id: UUID, body: PermissionInput, actor: CurrentUser, db: Database
 ):
     require_user_manager(actor)
+    if body.library_ids is not None:
+        await library_access.lock_access(db)
     rows = {
         user.id: user
         for user in await db.scalars(
@@ -551,6 +600,13 @@ async def update_permissions(
     guard_admin_target(actor, user)
     if set(body.expected_permissions) != set(names_from_bits(effective_permissions(user))):
         raise HTTPException(409, "These permissions changed; reload the account")
+    if (
+        "expected_role_id" in body.model_fields_set
+        and body.expected_role_id != user.permission_role_id
+    ):
+        raise HTTPException(
+            409, "The assigned role changed. Reload the saved settings to review it."
+        )
     role = None
     if body.role_id:
         role = await db.get(PermissionRole, body.role_id)
@@ -561,7 +617,19 @@ async def update_permissions(
         permissions = bits_from_names(body.permissions)
     guard_grant_scope(actor, permissions, current=effective_permissions(user))
     await guard_admin_loss(db, [(user, permissions)])
-    sync_user_permissions(user, permissions, role.id if role else None)
+    libraries = None
+    if body.library_ids is not None:
+        libraries = await library_access.replace_user_libraries(
+            db, actor, user, body.library_ids, body.expected_library_ids
+        )
+    # Disabled users expose no effective permissions. A library-only edit must
+    # not turn their saved role/permissions into the empty effective set.
+    if (
+        user.active
+        or body.permissions != body.expected_permissions
+        or body.role_id != user.permission_role_id
+    ):
+        sync_user_permissions(user, permissions, role.id if role else None)
     db.add(
         AuditEvent(
             actor_id=actor.id,
@@ -574,4 +642,4 @@ async def update_permissions(
         )
     )
     await db.commit()
-    return user_view(user, role.name if role else None)
+    return user_view(user, role.name if role else None, library_ids=libraries)

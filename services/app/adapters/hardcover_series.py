@@ -144,16 +144,20 @@ def advance(stage, page):
         stage = {**stage, "items": [*stage["items"], *page.items], "cursor": page.cursor}
         if len(stage["items"]) > page.info["count"]:
             raise invalid()
-        if not page.items:
-            if len(stage["items"]) != page.info["count"]:
-                raise invalid()
+        if not page.items and len(stage["items"]) != page.info["count"]:
+            raise invalid()
+        # The aggregate count is read in the same query as every page. Once all
+        # entries are collected, verify immediately instead of fetching an empty
+        # terminator page. The second pass still detects same-size replacements.
+        if len(stage["items"]) == page.info["count"]:
             stage.update(phase="verify", cursor=0)
         return stage, False
     offset = stage["verified"]
     if page.items != stage["items"][offset : offset + len(page.items)]:
         raise invalid()
-    if not page.items:
-        if offset != len(stage["items"]):
-            raise invalid()
+    verified = offset + len(page.items)
+    if not page.items and verified != len(stage["items"]):
+        raise invalid()
+    if verified == len(stage["items"]):
         return stage, True
-    return {**stage, "verified": offset + len(page.items), "cursor": page.cursor}, False
+    return {**stage, "verified": verified, "cursor": page.cursor}, False

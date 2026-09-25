@@ -1,7 +1,7 @@
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
@@ -108,16 +108,32 @@ async def works(
                 )
             )
         )
-    rows = (
-        await db.scalars(
-            select(Work)
-            .where(*conditions)
+    # Count grouped identities once, keeping large metadata outside the window.
+    page = (
+        select(Work.id, func.count().over().label("total"))
+        .where(*conditions)
+        .order_by(Work.title, Work.id)
+        .offset(offset)
+        .limit(limit)
+        .subquery()
+    )
+    records = (
+        await db.execute(
+            select(Work, page.c.total)
+            .join(page, page.c.id == Work.id)
             .order_by(Work.title, Work.id)
-            .offset(offset)
-            .limit(limit)
         )
     ).all()
-    total = await db.scalar(select(func.count()).select_from(Work).where(*conditions))
+    rows = [work for work, _ in records]
+    total = (
+        records[0][1]
+        if records
+        else (
+            await db.scalar(select(func.count()).select_from(Work).where(*conditions))
+            if offset
+            else 0
+        )
+    )
     availability = await availability_for(db, user, [work.id for work in rows])
     return WorkPage(
         items=[work_view(work, availability[work.id]) for work in rows],
@@ -166,10 +182,11 @@ async def cover(
     user: CurrentUser,
     db: Database,
     medium: Literal["ebook", "audio"] = "ebook",
+    if_none_match: str | None = Header(default=None),
 ):
     from app.domain.library_covers import library_cover
 
-    return await library_cover(db, user, work_id, medium)
+    return await library_cover(db, user, work_id, medium, if_none_match)
 
 
 @router.get("/cover-image", response_class=Response)

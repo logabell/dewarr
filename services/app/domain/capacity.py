@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 
 from app.db.models import (
     AutomaticImport,
@@ -151,26 +151,30 @@ def download_cost(frozen, observation):
 
 
 async def reserved_bytes(db, *, excluding_attempt=None, excluding_entry=None):
-    result = defaultdict(int)
-    for row in await db.scalars(
-        select(DownloadCapacity).where(
-            or_(
-                DownloadCapacity.resources != {},
-                DownloadCapacity.import_resources != {},
-            )
-        )
-    ):
-        if row.attempt_id == excluding_attempt:
-            continue
-        for values in (row.resources, row.import_resources):
-            for key, amount in values.items():
-                result[key] += amount
-    for row in await db.scalars(select(ImportCapacity).where(ImportCapacity.resources != {})):
-        if row.entry_id == excluding_entry:
-            continue
-        for key, amount in row.resources.items():
-            result[key] += amount
-    return result
+    # Aggregate inside PostgreSQL: memory and transfer scale with mount count,
+    # not with every active transfer and import reservation.
+    rows = await db.execute(
+        text("""
+            SELECT resource.key, sum(resource.value::numeric) AS amount
+            FROM (
+                SELECT resources FROM download_capacity
+                WHERE (CAST(:attempt AS uuid) IS NULL OR attempt_id != CAST(:attempt AS uuid))
+                UNION ALL
+                SELECT import_resources FROM download_capacity
+                WHERE (CAST(:attempt AS uuid) IS NULL OR attempt_id != CAST(:attempt AS uuid))
+                UNION ALL
+                SELECT resources FROM import_capacity
+                WHERE (CAST(:entry AS uuid) IS NULL OR entry_id != CAST(:entry AS uuid))
+            ) AS claims
+            CROSS JOIN LATERAL jsonb_each_text(claims.resources) AS resource
+            GROUP BY resource.key
+        """),
+        {
+            "attempt": str(excluding_attempt) if excluding_attempt else None,
+            "entry": str(excluding_entry) if excluding_entry else None,
+        },
+    )
+    return defaultdict(int, {key: int(amount) for key, amount in rows})
 
 
 def verify_space(observation, required, reserved, limits):

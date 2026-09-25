@@ -1,11 +1,28 @@
+import ipaddress
 import os
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.origins import configured_origin, parse_origin
+
+
+class ImportStorageRoute(BaseModel):
+    staging_root: Path
+    journal_root: Path | None = None  # None preserves the legacy co-located journal protocol.
+
+    @field_validator("staging_root", "journal_root")
+    @classmethod
+    def absolute_path(cls, path):
+        if path is not None and (
+            not path.is_absolute() or path.anchor != "/" or path == Path("/") or ".." in path.parts
+        ):
+            raise ValueError("Use an absolute storage directory below /")
+        return path
 
 
 class Settings(BaseSettings):
@@ -28,9 +45,14 @@ class Settings(BaseSettings):
     plex_api_origin: str = "https://plex.tv"
     plex_auth_origin: str = "https://app.plex.tv"
     proxy_token: SecretStr | None = None
+    trusted_proxy_ips: list[str] = []
     import_sources: dict[str, Path] = {}
     import_destinations: dict[str, Path] = {}
     import_staging_root: Path | None = None
+    import_journal_root: Path = Field(
+        default_factory=lambda: Path(".local/import-journals").absolute()
+    )
+    import_storage_routes: dict[str, ImportStorageRoute] = {}
 
     @field_validator("import_sources", "import_destinations")
     @classmethod
@@ -49,7 +71,7 @@ class Settings(BaseSettings):
                 raise ValueError("Download roots must be absolute directories below /")
         return sources
 
-    @field_validator("import_staging_root")
+    @field_validator("import_staging_root", "import_journal_root")
     @classmethod
     def validate_staging_root(cls, path):
         if path is not None and (
@@ -70,12 +92,23 @@ class Settings(BaseSettings):
     @field_validator("public_url", "plex_api_origin", "plex_auth_origin")
     @classmethod
     def validate_url(cls, value: str) -> str:
-        parts = urlsplit(value)
-        if parts.scheme not in {"http", "https"} or not parts.netloc or parts.username:
-            raise ValueError("Use an HTTP(S) origin without credentials")
-        if parts.path not in {"", "/"} or parts.query or parts.fragment:
-            raise ValueError("Use an origin without a path, query or fragment")
-        return value.rstrip("/")
+        return configured_origin(value)
+
+    @field_validator("trusted_proxy_ips")
+    @classmethod
+    def validate_trusted_proxy_ips(cls, values: list[str]) -> list[str]:
+        networks = [ipaddress.ip_network(value) for value in values]
+        if any(network.prefixlen == 0 for network in networks):
+            raise ValueError("Trust specific proxy addresses or networks, not every address")
+        return [str(network) for network in networks]
+
+    @cached_property
+    def public_origin(self):
+        return parse_origin(self.public_url)
+
+    @cached_property
+    def proxy_networks(self):
+        return tuple(ipaddress.ip_network(value) for value in self.trusted_proxy_ips)
 
     @model_validator(mode="after")
     def load_secrets(self) -> "Settings":

@@ -2,7 +2,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select
@@ -32,8 +32,27 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-async def ready_route(client, admin, destination_route, monkeypatch):  # noqa: F811
+async def ready_route(client, admin, destination_route, monkeypatch, request):  # noqa: F811
     route = destination_route
+    if getattr(request, "param", "sibling") in {"nested", "protected"}:
+        stage = route["target"] / ".book-search-staging"
+        stage.mkdir(mode=0o700)
+        monkeypatch.setattr(get_settings(), "import_staging_root", stage)
+        if request.param == "protected":
+            from app.config import ImportStorageRoute
+
+            monkeypatch.setattr(
+                get_settings(),
+                "import_storage_routes",
+                {
+                    "ebooks": ImportStorageRoute(
+                        staging_root=stage, journal_root=get_settings().import_journal_root
+                    )
+                },
+            )
+            stage.chmod(0o777)
+        route["stage"] = stage
+        route["destination"] = (await client.get("/api/organization/destinations")).json()[0]
     await start_probe(client, route)
     await get_queue().run_worker_async(wait=False, concurrency=1)
     backend = ScanningBackend(route["target"])
@@ -59,6 +78,7 @@ async def start(client, route, key="import-fixture"):
     )
 
 
+@pytest.mark.parametrize("ready_route", ["sibling", "nested", "protected"], indirect=True)
 async def test_full_publication_preserves_source_and_confirms_exact_version(
     client, admin, database, ready_route
 ):
@@ -244,6 +264,77 @@ async def test_periodic_confirmation_requeues_once_without_republishing(
     async with database() as db:
         assert (await db.get(ImportEntry, entry_id)).state == "confirmed"
     assert next(ready_route["target"].rglob("*.epub")).stat().st_ino == inode
+
+
+async def test_waiting_imports_share_discovery_and_one_scan(
+    client, admin, database, ready_route, monkeypatch
+):
+    import copy
+
+    import httpx
+
+    backend = ready_route["scan_backend"]
+    backend.detect = False
+    result = (await start(client, ready_route)).json()
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    original_id = UUID(result["entries"][0]["id"])
+    async with database() as db, db.begin():
+        original = await db.get(ImportEntry, original_id)
+        assert original.state == "awaiting-library" and original.published_at
+        original.next_check_at = datetime.now(UTC) - timedelta(seconds=1)
+        # Two durable confirmations referring to already-published evidence.
+        values = {
+            column.name: copy.deepcopy(getattr(original, column.name))
+            for column in ImportEntry.__table__.columns
+            if column.name not in {"id", "created_at", "group_id", "operation_id", "reserved"}
+        }
+        duplicate = ImportEntry(id=uuid4(), group_id=uuid4(), reserved=False, **values)
+        operation = Operation(
+            owner_id=UUID(admin["id"]),
+            kind="organization.publish",
+            idempotency_key="second-confirmation",
+            payload={"entry_id": str(duplicate.id)},
+        )
+        db.add(operation)
+        await db.flush()
+        duplicate.operation_id = operation.id
+        duplicate.specification = {**duplicate.specification, "entry_id": str(duplicate.id)}
+        db.add(duplicate)
+    calls, original_handle = [], backend.handle
+
+    async def handle(request):
+        calls.append(request.url.path)
+        if request.url.path == f"/api/libraries/{backend.library_id}/items":
+            return httpx.Response(
+                200,
+                json={
+                    "total": len(backend.items),
+                    "results": [
+                        {"id": key, "path": item["path"]} for key, item in backend.items.items()
+                    ],
+                },
+            )
+        return await original_handle(request)
+
+    monkeypatch.setattr(backend, "handle", handle)
+    backend.detect = True
+    await schedule_import_confirmation(0)
+    async with database() as db:
+        operations = [
+            await db.get(Operation, identifier)
+            for identifier in (UUID(result["entries"][0]["operation_id"]), operation.id)
+        ]
+        assert operations[0].job_id == operations[1].job_id
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    async with database() as db:
+        assert (await db.get(ImportEntry, original_id)).state == "confirmed"
+        assert (await db.get(ImportEntry, duplicate.id)).state == "confirmed"
+    assert sum(path.endswith("/scan") for path in calls) == 1
+    assert sum(path.endswith("/items") for path in calls) == 2
+    assert (
+        sum(path.startswith("/api/items/") and not path.endswith("batch/get") for path in calls)
+        == 2
+    )
 
 
 async def test_explicit_retry_accepts_rotated_credentials_for_same_frozen_route(

@@ -108,8 +108,7 @@ def test_two_pass_observation_detects_same_size_replacement_and_incomplete_pages
     rows = [{"entry_id": "1"}, {"entry_id": "2"}]
     stage, done = advance(None, SeriesPage(info, rows, 2))
     assert not done
-    stage, done = advance(stage, SeriesPage(info, [], 2))
-    assert not done and stage["phase"] == "verify" and stage["cursor"] == 0
+    assert stage["phase"] == "verify" and stage["cursor"] == 0
     for changed in [[], [{"entry_id": "3"}, {"entry_id": "4"}]]:
         with pytest.raises(AdapterError):
             advance(deepcopy(stage), SeriesPage(info, changed, 4))
@@ -120,8 +119,7 @@ def test_two_pass_observation_detects_same_size_replacement_and_incomplete_pages
     stage, done = advance(stage, SeriesPage(info, rows[:1], 1))
     assert not done
     stage, done = advance(stage, SeriesPage(info, rows[1:], 2))
-    assert not done
-    assert advance(stage, SeriesPage(info, [], 2))[1]
+    assert done
 
 
 def test_empty_series_requires_an_independent_empty_verification():
@@ -129,3 +127,12 @@ def test_empty_series_requires_an_independent_empty_verification():
     stage, complete = advance(None, empty)
     assert not complete
     assert advance(stage, empty)[1]
+
+
+def test_small_series_uses_two_requests_without_empty_terminators():
+    info = {"count": 2, "name": "Series"}
+    rows = [{"entry_id": "1"}, {"entry_id": "2"}]
+    observed = SeriesPage(info, rows, 2)
+    stage, complete = advance(None, observed)
+    assert not complete and stage["cursor"] == 0
+    assert advance(stage, observed)[1]

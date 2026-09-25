@@ -6,9 +6,10 @@ reader's "Save match" action. Anything else keeps its candidates for review.
 
 import hashlib
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, select, tuple_
 
 from app.adapters.contracts import AdapterError, FailureKind
 from app.config import get_settings
@@ -60,7 +61,12 @@ async def schedule_library_match(db, owner_id, integration_id, run_id):
     )
     db.add(operation)
     await db.flush()
-    operation.job_id = await enqueue(db, "library.match", operation_id=str(operation.id))
+    operation.job_id = await enqueue(
+        db,
+        "library.match",
+        operation_id=str(operation.id),
+        job_lock=f"library-match:{operation.id}",
+    )
     return operation
 
 
@@ -68,7 +74,7 @@ def evidence_hash(identity):
     return hashlib.sha256(identity[1].encode()).hexdigest()
 
 
-async def candidates(db, integration_id):
+async def candidates(db, integration_id, cursor=None):
     """Provisional library books with no Hardcover decision, oldest first."""
     decided = exists(
         select(WorkMetadataSource.id).where(
@@ -89,14 +95,19 @@ async def candidates(db, integration_id):
     return list(
         (
             await db.execute(
-                select(Work.id, Work.metadata_fields)
+                select(Work.id, Work.metadata_fields, Work.created_at)
                 .where(
                     Work.id.in_(held),
                     Work.provisional.is_(True),
                     Work.redirect_to.is_(None),
                     ~decided,
+                    tuple_(Work.created_at, Work.id)
+                    > (datetime.fromisoformat(cursor[0]), UUID(cursor[1]))
+                    if cursor
+                    else True,
                 )
                 .order_by(Work.created_at, Work.id)
+                .limit(BATCH + 1)
             )
         ).all()
     )
@@ -133,22 +144,26 @@ async def match_library(operation_id):
             await db.commit()
             return
         operation.status, operation.message = "running", "Matching library books to Hardcover"
-        rows = await candidates(db, integration_id)
+        cursor = operation.payload.get("cursor")
+        previous = dict(operation.payload)
+        rows = await candidates(db, integration_id, cursor)
         await db.commit()
 
         matched = checked = 0
         paused = False
         series = {}
-        for work_id, fields in rows:
-            if checked >= BATCH:
-                break
+        retry_after = 0
+        for work_id, fields, created_at in rows[:BATCH]:
+            next_cursor = [created_at.isoformat(), str(work_id)]
             user = await db.get(User, owner_id, populate_existing=True)
             identity = await reader_lookup_identity(db, user, work_id)
             if not identity:
+                cursor = next_cursor
                 continue
             fingerprint = evidence_hash(identity)
             if (fields or {}).get("auto_match", {}).get("evidence") == fingerprint:
                 # Already tried with exactly this evidence. A resync with new details retries.
+                cursor = next_cursor
                 continue
             checked += 1
 
@@ -163,15 +178,20 @@ async def match_library(operation_id):
                 await db.rollback()
                 if error.kind in {FailureKind.RATE_LIMIT, FailureKind.UNAVAILABLE}:
                     paused = True
+                    retry_after = error.retry_after or 60
+                    checked -= 1
                     break
                 result = None
             except HTTPException:
                 # The Hardcover connection changed during the pass.
                 await db.rollback()
                 paused = True
+                retry_after = 60
+                checked -= 1
                 break
             saved = await record(db, owner_id, work_id, identity, fingerprint, result)
             matched += saved
+            cursor = next_cursor
             if saved and settings.write_library_series:
                 entry = next(
                     (item for item in result.book.series if item.name and not item.compilation),
@@ -185,23 +205,32 @@ async def match_library(operation_id):
 
         written, warning = await write_series(db, owner_id, integration_id, series)
         operation = await db.get(Operation, operation_id, with_for_update=True)
-        operation.status = "completed"
+        more = paused or len(rows) > BATCH
+        operation.status = "queued" if more else "completed"
+        matched += previous.get("matched", 0)
+        checked += previous.get("checked", 0)
+        written += previous.get("series_written", 0)
         operation.message = (
             f"Matched {matched} of {checked} library books to Hardcover"
             + (f"; added the series to {written} Audiobookshelf items" if written else "")
-            + (
-                "; Hardcover asked us to wait, the rest will be checked after the next sync"
-                if paused
-                else ""
-            )
+            + ("; Hardcover asked us to wait; matching will resume automatically" if paused else "")
             + (f"; {warning}" if warning else "")
         )
         operation.payload = {
             **operation.payload,
+            "cursor": cursor,
             "matched": matched,
             "checked": checked,
             "series_written": written,
         }
+        if more:
+            operation.job_id = await enqueue(
+                db,
+                "library.match",
+                operation_id=str(operation.id),
+                job_lock=f"library-match:{operation.id}",
+                schedule_in={"seconds": max(1, retry_after)},
+            )
         await db.commit()
     finally:
         await db.close()

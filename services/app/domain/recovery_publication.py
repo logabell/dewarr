@@ -305,7 +305,13 @@ async def fresh_publications(identifier, token, payload):
             entry = await db.get(ImportEntry, UUID(item["entry_id"]))
             roots = (await storage_settings(db)).model_dump(
                 mode="json",
-                include={"import_sources", "import_destinations", "import_staging_root"},
+                include={
+                    "import_sources",
+                    "import_destinations",
+                    "import_staging_root",
+                    "import_storage_routes",
+                    "import_journal_root",
+                },
             )
             saved = {"id": entry.id, "state": entry.state, "specification": entry.specification}
             if item["outcome"] == "confirmed":

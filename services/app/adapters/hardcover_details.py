@@ -10,13 +10,14 @@ from app.adapters.contracts import AdapterError, FailureKind
 
 HC_DETAILS = """query ReaderBookDetails($id: Int!) {
  books(where: {id: {_eq: $id}}, limit: 1) {
-  id slug rating ratings_count pages audio_seconds release_date
+  id slug pages audio_seconds release_date
   contributions(limit: 20) {
    contribution author { id name slug bio cached_image }
   }
  }
 }"""
 HC_REVIEWS = """query ReaderBookReviews($id: Int!) {
+ books(where: {id: {_eq: $id}}, limit: 1) { id rating ratings_count }
  user_books(where: {book_id: {_eq: $id}, has_review: {_eq: true},
  privacy_setting_id: {_eq: 1}}, order_by: [{likes_count: desc}, {id: desc}], limit: 10) {
   id rating review_raw review_has_spoilers reviewed_at user { username }
@@ -91,7 +92,19 @@ async def details(query, external_id):
     except (ValueError, TypeError, KeyError, AttributeError, IndexError, ValidationError) as error:
         raise parse_failure() from error
     try:
-        reviews = (await query(HC_REVIEWS, {"id": key}))["user_books"]
+        activity = await query(HC_REVIEWS, {"id": key})
+        ratings = activity.get("books")
+        if ratings is not None:
+            if not isinstance(ratings, list) or len(ratings) != 1 or ratings[0].get("id") != key:
+                raise parse_failure()
+            # Community activity has a shorter TTL than descriptive metadata.
+            current = ReaderDetails(
+                external_id=external_id,
+                rating=ratings[0].get("rating"),
+                ratings_count=ratings[0].get("ratings_count") or 0,
+            )
+            result.rating, result.ratings_count = current.rating, current.ratings_count
+        reviews = activity["user_books"]
         if not isinstance(reviews, list) or len(reviews) > 10:
             raise parse_failure()
         for review in reviews:
@@ -108,7 +121,18 @@ async def details(query, external_id):
                     reviewed_at=review.get("reviewed_at"),
                 )
             )
-    except (AdapterError, ValueError, TypeError, KeyError, AttributeError, ValidationError):
+    except (
+        AdapterError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        ValidationError,
+    ) as error:
+        if isinstance(error, AdapterError) and error.kind == FailureKind.AUTHENTICATION:
+            # Credentials apply to the whole account, including cached book details.
+            # Let the caller mark the account disconnected and suppress further requests.
+            raise
         result.reviews_warning = (
             "Reviews are unavailable right now. You can read them on Hardcover."
         )

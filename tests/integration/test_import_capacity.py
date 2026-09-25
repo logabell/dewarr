@@ -76,6 +76,61 @@ async def test_low_space_waits_and_periodic_scheduler_resumes_same_import(
         assert not (await db.get(ImportCapacity, entry.id)).resources
 
 
+async def test_confirmation_scheduler_skips_live_jobs_before_selecting_a_page(
+    client, database, capacity_route
+):
+    from app.db.models import Operation
+    from app.jobs.queue import enqueue
+
+    run = (await start(client, capacity_route)).json()
+    due = datetime.now(UTC) - timedelta(minutes=5)
+    async with database() as db, db.begin():
+        original = await db.get(ImportEntry, UUID(run["entries"][0]["id"]))
+        owner_id = (await db.get(Operation, original.operation_id)).owner_id
+        live_ids = []
+        for n in range(22):
+            operation = Operation(
+                owner_id=owner_id,
+                kind="organization.publish",
+                idempotency_key=f"scheduler-busy-{n}",
+            )
+            db.add(operation)
+            await db.flush()
+            entry = ImportEntry(
+                run_id=original.run_id,
+                group_id=uuid4(),
+                version_id=original.version_id,
+                destination_id=original.destination_id,
+                operation_id=operation.id,
+                state="awaiting-library",
+                message="Waiting for detection",
+                next_check_at=due + timedelta(seconds=n),
+            )
+            db.add(entry)
+            await db.flush()
+            operation.payload = {"entry_id": str(entry.id)}
+            if n < 21:
+                operation.job_id = await enqueue(
+                    db, "organization.publish", operation_id=str(operation.id)
+                )
+                live_ids.append(operation.job_id)
+            else:
+                waiting_id = operation.id
+    await schedule_import_confirmation(0)
+    async with database() as db:
+        from sqlalchemy import text
+
+        waiting = await db.get(Operation, waiting_id)
+        assert waiting.job_id and waiting.job_id not in live_ids
+        assert (
+            await db.scalar(
+                text("SELECT queue_name FROM book_queue.procrastinate_jobs WHERE id=:id"),
+                {"id": waiting.job_id},
+            )
+            == "confirmation"
+        )
+
+
 async def test_free_space_floor_is_rechecked_after_staging_without_losing_prepared_files(
     client, database, capacity_route, monkeypatch
 ):

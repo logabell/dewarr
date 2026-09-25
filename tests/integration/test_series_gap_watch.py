@@ -326,8 +326,8 @@ async def test_loaded_catalog_is_baselined_before_the_next_refresh(client, admin
         await record_sightings(db, user, await db.get(CatalogSeries, series_id))
         later_id = later.id
     preview = await get_shelf(client)
-    assert preview["items"][0]["books"][0]["unseen"] is True
-    assert preview["items"][0]["books"][0]["work"]["id"] == str(later_id)
+    assert preview["items"][0]["unseen"] == 1
+    assert preview["items"][0]["books"][0]["work"]["title"] == "Gap 0"
     complete = await get_shelf(client, full="true")
     assert complete["items"][0]["books"][-1]["work"]["id"] == str(later_id)
     assert complete["items"][0]["books"][0]["work"]["title"] == "Gap 0"

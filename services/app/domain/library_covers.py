@@ -1,18 +1,24 @@
 """Serve library artwork without disclosing backend credentials or filesystem paths."""
 
 import asyncio
+import base64
+import hashlib
+import json
+from datetime import timedelta
 from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
+from sqlalchemy.orm import defer, with_expression
 
 from app.adapters.audiobookshelf import external_id
 from app.adapters.contracts import AdapterError
 from app.adapters.grimmory import Grimmory
 from app.adapters.http import configured_url
-from app.db.models import Integration, LibraryAsset, Version
+from app.db.models import Integration, InventoryItemState, Library, LibraryAsset, User, Version
 from app.domain.availability import availability_rows
+from app.domain.cache_entries import read_through
 from app.domain.catalog_display import display_map
 from app.domain.primary_editions import asset_narrators, edition_order, primary_choices
 from app.security import decrypt_secrets
@@ -55,24 +61,47 @@ async def fetch_cover(
             }:
                 raise HTTPException(404, "Cover unavailable")
             content = bytearray()
-            async for chunk in response.aiter_bytes():
-                content.extend(chunk)
-                if len(content) > 8 * 1024 * 1024:
+            async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                if len(content) + len(chunk) > 8 * 1024 * 1024:
                     raise HTTPException(404, "Cover unavailable")
+                content.extend(chunk)
             return bytes(content), kind
     except (httpx.HTTPError, TimeoutError, AdapterError, ValueError) as error:
         raise HTTPException(404, "Cover unavailable") from error
 
 
-async def library_cover(db, user, work_id: UUID, medium: str):
-    mapping = display_map(user)
+async def cover_candidates(db, user, work_id: UUID, medium: str):
+    mapping = display_map(user, [work_id])
     root = select(mapping.c.work_id).where(mapping.c.origin_id == work_id).scalar_subquery()
     root_id = await db.scalar(select(mapping.c.work_id).where(mapping.c.origin_id == work_id))
     choices = await primary_choices(db, user, mapping, [root_id] if root_id else [])
     rows = await db.execute(
         availability_rows(user, mapping)
-        .with_only_columns(LibraryAsset, Integration, Version.narrators)
+        .with_only_columns(
+            LibraryAsset, Integration, Version.narrators, InventoryItemState.source_marker
+        )
         .outerjoin(Version, Version.id == LibraryAsset.version_id)
+        .outerjoin(
+            InventoryItemState,
+            and_(
+                InventoryItemState.integration_id == Integration.id,
+                InventoryItemState.library_external_id == Library.external_id,
+                InventoryItemState.item_external_id == LibraryAsset.external_id,
+            ),
+        )
+        .options(
+            defer(LibraryAsset.files),
+            with_expression(
+                LibraryAsset.metadata_snapshot,
+                func.jsonb_build_object(
+                    "cover_path",
+                    LibraryAsset.metadata_snapshot["cover_path"],
+                    "narrators",
+                    LibraryAsset.metadata_snapshot["narrators"],
+                ),
+            ),
+        )
+        .execution_options(populate_existing=True)
         .where(
             mapping.c.work_id == root,
             Integration.kind.in_(["audiobookshelf", "grimmory"]),
@@ -88,26 +117,84 @@ async def library_cover(db, user, work_id: UUID, medium: str):
             ),
         ),
     )
-    for asset, integration, _ in rows:
-        if not asset.metadata_snapshot.get("cover_path"):
+    candidates = []
+    for asset, integration, _, revision in rows:
+        path = asset.metadata_snapshot.get("cover_path")
+        if not path:
             continue
-        try:
-            secrets = decrypt_secrets(integration.encrypted_secrets)
-            data, kind = await fetch_cover(
+        material = [
+            "library-cover-v1",
+            str(integration.id),
+            integration.credential_generation,
+            integration.base_url,
+            asset.external_id,
+            path,
+            revision,
+        ]
+        key = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+        candidates.append(
+            (
+                key,
                 integration.base_url,
-                secrets.get("token", ""),
+                integration.kind,
+                integration.encrypted_secrets,
                 asset.external_id,
-                kind=integration.kind,
-                secrets=secrets,
+            )
+        )
+    return candidates
+
+
+async def library_cover(db, user, work_id: UUID, medium: str, if_none_match=None):
+    user_id = user.id
+    candidates = await cover_candidates(db, user, work_id, medium)
+    await db.rollback()
+    for key, url, backend, encrypted, external in candidates:
+
+        async def load(url=url, encrypted=encrypted, external=external, backend=backend, key=key):
+            secrets = decrypt_secrets(encrypted)
+            data, kind = await fetch_cover(
+                url, secrets.get("token", ""), external, kind=backend, secrets=secrets
+            )
+            return {
+                "body": base64.b64encode(data).decode("ascii"),
+                "type": kind,
+                "etag": '"' + hashlib.sha256(key.encode() + data).hexdigest() + '"',
+            }
+
+        try:
+            cached, _ = await read_through(
+                key, load, fresh_for=timedelta(days=1), allow_stale=False
             )
         except HTTPException:
             continue
+        except AdapterError as error:
+            raise HTTPException(
+                503, str(error), headers={"Retry-After": str(error.retry_after or 1)}
+            ) from error
+        # Re-evaluate grants, integration generation and selected artwork after I/O.
+        user = await db.get(User, user_id, populate_existing=True)
+        if not user or not user.active:
+            raise HTTPException(404, "Cover unavailable")
+        current = await cover_candidates(db, user, work_id, medium)
+        await db.rollback()
+        if key not in {candidate[0] for candidate in current}:
+            raise HTTPException(404, "Cover unavailable")
+        etag = cached.get("etag")
+        if not etag:
+            etag = (
+                '"'
+                + hashlib.sha256(key.encode() + base64.b64decode(cached["body"])).hexdigest()
+                + '"'
+            )
+        headers = {
+            "Cache-Control": "private, no-cache",
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+        }
+        tags = {tag.strip().removeprefix("W/") for tag in (if_none_match or "").split(",")}
+        if etag in tags or "*" in tags:
+            return Response(status_code=304, headers=headers)
         return Response(
-            data,
-            media_type=kind,
-            headers={
-                "Cache-Control": "private, no-store",
-                "X-Content-Type-Options": "nosniff",
-            },
+            base64.b64decode(cached["body"]), media_type=cached["type"], headers=headers
         )
     raise HTTPException(404, "Cover unavailable")

@@ -20,7 +20,7 @@ cleanup() {
 trap cleanup EXIT
 docker run --detach --name dewarr-smoke --network host \
   -e BOOK_DATABASE_URL=postgresql+psycopg://book:book-test-only@127.0.0.1:5432/container_test \
-  -e BOOK_PUBLIC_URL=http://127.0.0.1:8000 -e BOOK_COOKIE_SECURE=false \
+  -e PUBLIC_URL=https://books.example.com \
   "$IMAGE"
 
 python3 - <<'PY'
@@ -41,3 +41,5 @@ while True:
 with urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5) as response:
     assert b'<html' in response.read(), 'Application did not serve the bundled frontend'
 PY
+
+python3 scripts/smoke_proxy_auth.py

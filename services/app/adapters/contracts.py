@@ -36,6 +36,19 @@ class MutationError(AdapterError):
         self.may_have_applied = may_have_applied
 
 
+class ResponseTooLarge(AdapterError):
+    """A decoded response exceeded its work budget, not a library-count ceiling."""
+
+    def __init__(self, limit: int, received: int, label: str = "Server response"):
+        super().__init__(
+            FailureKind.PARSER,
+            f"{label} exceeded the response byte budget ({limit} bytes; "
+            f"received at least {received} bytes).",
+        )
+        self.limit = limit
+        self.received = received
+
+
 class Capabilities(BaseModel):
     version: str | None = None
     operations: set[str] = Field(default_factory=set)

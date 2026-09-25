@@ -7,7 +7,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.adapters.goodreads_discovery import fetch_collection_page
 from app.db.models import ProviderCache
-from app.domain.operations import transaction_lock
+from app.db.session import session_factory
+from app.domain.cache_entries import read_through
 
 KIND = "goodreads-list-page-v1"
 
@@ -23,13 +24,9 @@ def collection_key(user_id, collection, suffix):
 async def source_page(db, user_id, collection, page):
     version = collection["updated_at"]
     key = collection_key(user_id, collection, page)
-    # Coalesce overlapping scroll/download requests across API workers.
-    await transaction_lock(db, f"discovery-page:{key}")
-    cached = await db.get(ProviderCache, key)
-    now = datetime.now(UTC)
-    if cached and cached.expires_at > now:
-        value = cached.value
-    else:
+    await db.rollback()
+
+    async def load():
         result = await fetch_collection_page(collection["source_url"], page)
         value = {
             **result,
@@ -39,7 +36,6 @@ async def source_page(db, user_id, collection, page):
             "version": version,
         }
         values = {
-            key: value,
             collection_key(user_id, collection, "count"): {"count": value["count"]},
             **{
                 cache_key("book", user_id, book["external_id"]): {
@@ -48,6 +44,7 @@ async def source_page(db, user_id, collection, page):
                 for book in value["books"]
             },
         }
+        now = datetime.now(UTC)
         statement = insert(ProviderCache).values(
             [
                 {
@@ -59,18 +56,21 @@ async def source_page(db, user_id, collection, page):
                 for item_key, item in values.items()
             ]
         )
-        # A book may belong to several accessible lists; retain all source references.
-        await db.execute(
-            statement.on_conflict_do_update(
-                index_elements=[ProviderCache.key],
-                set_={
-                    "value": ProviderCache.value.op("||")(statement.excluded.value),
-                    "fetched_at": statement.excluded.fetched_at,
-                    "expires_at": statement.excluded.expires_at,
-                },
+        async with session_factory()() as cache_db, cache_db.begin():
+            # Retain every accessible source reference for books on several lists.
+            await cache_db.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[ProviderCache.key],
+                    set_={
+                        "value": ProviderCache.value.op("||")(statement.excluded.value),
+                        "fetched_at": statement.excluded.fetched_at,
+                        "expires_at": statement.excluded.expires_at,
+                    },
+                )
             )
-        )
-    await db.commit()
+        return value
+
+    value, _ = await read_through(key, load, fresh_for=timedelta(days=1), allow_stale=False)
     return value
 
 
@@ -78,6 +78,8 @@ async def collection_page(db, user_id, collection, page):
     """Project 100-book source pages into the app's 40-book batches (at most two reads)."""
     start, stop = (page - 1) * 40, page * 40
     known = await db.get(ProviderCache, collection_key(user_id, collection, "count"))
+    if known and known.expires_at <= datetime.now(UTC):
+        known = None
     total = known.value["count"] if known else collection["count"]
     if known and start >= total:
         return [], total

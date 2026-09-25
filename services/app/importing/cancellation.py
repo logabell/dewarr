@@ -9,7 +9,7 @@ from app.db.session import session_factory
 from app.importing.cancel_files import cancel_files
 from app.importing.execution import RenameGuard, Superseded
 from app.importing.publication import PublicationBusy, PublicationError, PublicationSpec
-from app.importing.storage import storage_settings
+from app.importing.storage import frozen_storage_matches, storage_settings
 from app.jobs.queue import enqueue
 
 
@@ -36,7 +36,7 @@ class CancellationGuard(RenameGuard):
             if (
                 not destination
                 or settings.import_destinations.get(destination.root_key) != spec.destination_root
-                or settings.import_staging_root != spec.staging_root
+                or not frozen_storage_matches(settings, destination.root_key, spec)
             ):
                 raise PublicationError(
                     "Restore the frozen library and staging paths before cancelling"

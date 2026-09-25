@@ -1,5 +1,6 @@
 import DeleteConfiguration from "../components/DeleteConfiguration";
 import Destinations from "./Destinations";
+import LibraryAccess from "./LibraryAccess";
 import SettingHelp from "../components/SettingHelp";
 import ConnectionStatus from "../components/ConnectionStatus";
 import {
@@ -37,11 +38,6 @@ export default function Connections({
   const connections = useQuery({
     queryKey: ["connections"],
     queryFn: async () => result(await api.GET("/api/integrations")),
-    refetchInterval: 10000,
-  });
-  const libraries = useQuery({
-    queryKey: ["libraries"],
-    queryFn: async () => result(await api.GET("/api/library/libraries")),
     refetchInterval: 10000,
   });
   const command = useMutation({
@@ -94,7 +90,7 @@ export default function Connections({
           onChoose={setEditing}
         />
       </div>
-      <Notice error={connections.error || libraries.error || command.error} />
+      <Notice error={connections.error || command.error} />
       {message && (
         <p className="notice" role="status">
           {message} <Link to="/settings#logs">View logs</Link>
@@ -198,6 +194,7 @@ export default function Connections({
       )}
       {!connectionOnly && (
         <>
+          <LibraryAccess connections={connections.data ?? []} />
           <section
             className="settings-block library-destinations"
             aria-label="Library folders"

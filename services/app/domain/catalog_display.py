@@ -9,15 +9,41 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by
 
 from app.db.models import LibraryAsset, Work, WorkMetadataSource
 from app.domain.catalog_language import catalog_language_sql
-from app.domain.catalog_titles import DISTINCT_SUBTITLE, display_text_sql, display_title_sql
+from app.domain.catalog_titles import (
+    DISTINCT_SUBTITLE,
+    display_base_sql,
+    display_text_sql,
+    display_title_sql,
+)
 from app.domain.visibility import visible_origin_work, visible_work
 from app.domain.work_graph import canonical_map
 
 
-def display_map(user):
+def display_map(user, work_ids=None):
     from app.domain.availability import availability_rows
 
     canonical = canonical_map()
+    # A detail/page projection needs only these title families. Include every
+    # subtitle/author/language candidate so ambiguity rules remain unchanged.
+    selected = None
+    if work_ids is not None:
+        from sqlalchemy.orm import aliased
+
+        seed = aliased(Work)
+        titles = (
+            select(display_base_sql(seed.title))
+            .join(canonical, canonical.c.work_id == seed.id)
+            .where(canonical.c.origin_id.in_(work_ids))
+        )
+        selected = (
+            select(Work.id)
+            .where(Work.redirect_to.is_(None), display_base_sql(Work.title).in_(titles))
+            .cte()
+        )
+    candidate = Work.id.in_(select(selected.c.id)) if selected is not None else True
+    holding_candidate = (
+        canonical.c.work_id.in_(select(selected.c.id)) if selected is not None else True
+    )
     holdings = (
         availability_rows(user, canonical)
         .with_only_columns(
@@ -25,6 +51,7 @@ def display_map(user):
             func.bool_or(LibraryAsset.medium == "ebook").label("ebook"),
             func.bool_or(LibraryAsset.medium == "audio").label("audio"),
         )
+        .where(holding_candidate)
         .group_by(canonical.c.work_id)
         .subquery()
     )
@@ -65,6 +92,7 @@ def display_map(user):
             WorkMetadataSource.provider == "hardcover",
             WorkMetadataSource.accepted.is_(True),
             visible_origin_work(user, source_work),
+            holding_candidate,
         )
         .group_by(canonical.c.work_id)
         .subquery()
@@ -86,7 +114,7 @@ def display_map(user):
         )
         .outerjoin(holdings, holdings.c.work_id == Work.id)
         .outerjoin(sources, sources.c.work_id == Work.id)
-        .where(Work.redirect_to.is_(None), visible_work(user))
+        .where(Work.redirect_to.is_(None), visible_work(user), candidate)
         .cte()
     )
     base = func.trim(func.split_part(roots.c.title_key, ":", 1))
@@ -191,6 +219,6 @@ def display_ids(user):
 
 
 def display_family(user, work_id):
-    mapping = display_map(user)
+    mapping = display_map(user, [work_id])
     root = select(mapping.c.work_id).where(mapping.c.origin_id == work_id).scalar_subquery()
     return select(mapping.c.origin_id).where(mapping.c.work_id == root)

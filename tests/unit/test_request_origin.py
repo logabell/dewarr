@@ -1,10 +1,9 @@
-from types import SimpleNamespace
-
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.api.dependencies import require_origin
+from app.config import Settings
 
 
 def request_for(url: str, origin: str | None, extra_headers=()) -> Request:
@@ -43,7 +42,7 @@ def test_accepts_same_origin_or_configured_public_origin(
     monkeypatch, public_url, request_url, origin
 ):
     monkeypatch.setattr(
-        "app.api.dependencies.get_settings", lambda: SimpleNamespace(public_url=public_url)
+        "app.api.dependencies.get_settings", lambda: Settings(_env_file=None, public_url=public_url)
     )
     require_origin(request_for(request_url, origin))
 
@@ -77,7 +76,7 @@ def test_accepts_same_origin_or_configured_public_origin(
 def test_rejects_cross_site_missing_and_malformed_origins(monkeypatch, origin):
     monkeypatch.setattr(
         "app.api.dependencies.get_settings",
-        lambda: SimpleNamespace(public_url="https://books.example"),
+        lambda: Settings(_env_file=None, public_url="https://books.example"),
     )
     with pytest.raises(HTTPException) as error:
         require_origin(request_for("http://nas.local:8000", origin))
@@ -87,7 +86,7 @@ def test_rejects_cross_site_missing_and_malformed_origins(monkeypatch, origin):
 def test_rejects_duplicate_origin_headers(monkeypatch):
     monkeypatch.setattr(
         "app.api.dependencies.get_settings",
-        lambda: SimpleNamespace(public_url="http://nas.local:8000"),
+        lambda: Settings(_env_file=None, public_url="http://nas.local:8000"),
     )
     with pytest.raises(HTTPException) as error:
         require_origin(
@@ -103,7 +102,7 @@ def test_rejects_duplicate_origin_headers(monkeypatch):
 def test_untrusted_forwarded_headers_cannot_allow_an_origin(monkeypatch):
     monkeypatch.setattr(
         "app.api.dependencies.get_settings",
-        lambda: SimpleNamespace(public_url="https://books.example"),
+        lambda: Settings(_env_file=None, public_url="https://books.example"),
     )
     with pytest.raises(HTTPException) as error:
         require_origin(
@@ -119,3 +118,52 @@ def test_untrusted_forwarded_headers_cannot_allow_an_origin(monkeypatch):
             )
         )
     assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "origin,extra,reason",
+    [
+        (None, [], "missing"),
+        ("https://books.example", [(b"origin", b"https://books.example")], "duplicate"),
+        ("https://user:private-password@books.example", [], "malformed"),
+        ("https://other.example", [], "mismatch"),
+    ],
+)
+def test_origin_diagnostics_are_bounded_and_do_not_log_raw_headers(
+    monkeypatch, caplog, origin, extra, reason
+):
+    from app.api import dependencies
+
+    monkeypatch.setattr(dependencies, "_origin_log_times", {})
+    monkeypatch.setattr(
+        dependencies,
+        "get_settings",
+        lambda: Settings(_env_file=None, public_url="https://books.example"),
+    )
+    req = request_for("http://dewarr:8000", origin, extra)
+    req.state.request_id = "test-request-id"
+    for _ in range(2):
+        with pytest.raises(HTTPException):
+            require_origin(req)
+    assert caplog.text.count("Origin rejected") == 1
+    assert f"reason={reason}" in caplog.text
+    assert "request_id=test-request-id" in caplog.text
+    assert "private-password" not in caplog.text
+
+
+def test_configured_proxy_does_not_authorize_forwarded_origin(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.get_settings",
+        lambda: Settings(
+            _env_file=None, public_url="https://books.example", trusted_proxy_ips=["127.0.0.1"]
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        require_origin(
+            request_for(
+                "http://dewarr:8000",
+                "https://evil.example",
+                [(b"x-forwarded-host", b"evil.example"), (b"x-forwarded-proto", b"https")],
+            )
+        )
+    assert "Recreate the Docker container" in error.value.detail

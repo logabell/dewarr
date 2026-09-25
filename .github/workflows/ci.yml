@@ -195,7 +195,11 @@ jobs:
       - run: pg_dump --version && pg_restore --version
       - run: npm --prefix apps/web ci
       - run: cd apps/web && npx playwright install --with-deps chromium
-      - run: npm --prefix apps/web run test:e2e
+      - run: npm --prefix apps/web run build
+      - name: Mocked browser journeys (no backend)
+        run: python3 scripts/check.py ui --full --skip-build --timeout 600
+      - name: Full end-to-end journeys
+        run: python3 scripts/check.py e2e --full --skip-build --timeout 600
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -257,6 +257,14 @@ async def test_auth_failure_does_not_reuse_cached_private_provider_data(
             update(ProviderCache).values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
         )
     provider["failure"] = failure
+    pending = (await client.get("/api/discovery/hardcover/trending")).json()
+    assert pending["stale"] and pending["items"]
+    from app.db.models import Operation
+    from app.domain.catalog_refresh import run
+
+    async with database() as db:
+        job = await db.scalar(select(Operation).where(Operation.kind == "catalog.refresh"))
+    await run(job.id)
     result = (await client.get("/api/discovery/hardcover/trending")).json()
     assert result["status"] == "unavailable" and not result["items"]
     assert not result["stale"]

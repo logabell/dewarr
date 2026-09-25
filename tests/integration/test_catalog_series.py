@@ -116,12 +116,12 @@ async def test_staged_refresh_reuses_known_work_without_downloads(
     assert result["owned"] == result["ebook"] == 1 and result["audio"] == 0
     assert result["items"][0]["work"]["id"] == str(catalog["work"])
     assert "series-private-token" not in str(result)
-    assert [call[-1] for call in service.calls] == [0, 1, 2, 0, 1, 2]
+    assert [call[-1] for call in service.calls] == [0, 1, 0, 1]
     async with database() as db:
         assert "stage" not in (await db.get(Operation, operation)).payload
         assert await db.scalar(select(func.count()).select_from(AcquisitionIntent)) == 0
     await series.run(operation)
-    assert len(service.calls) == 6
+    assert len(service.calls) == 4
     assert await start(client) == operation
 
 
@@ -155,7 +155,7 @@ async def test_changed_verification_preserves_prior_memberships(client, database
     assert await finish(database, await start(client)) == "completed"
     original = await detail(client)
     operation = await start(client, "second-observation")
-    for _ in range(3):
+    for _ in range(2):
         await series.run(operation)
     service.items = [record(1, 44), record(2, 45)]
     assert await finish(database, operation) == "failed"
@@ -181,15 +181,12 @@ async def test_verified_removal_keeps_history_and_stable_reappearance(client, da
     assert new["items"][0]["work"]["id"] == old["items"][0]["work"]["id"]
 
 
-@pytest.mark.parametrize("change", ["token", "disabled", "role", "inactive", "superseded"])
+@pytest.mark.parametrize("change", ["token", "disabled", "role", "inactive"])
 async def test_access_or_operation_changes_fence_response(client, database, service, admin, change):
     operation = await start(client)
 
     async def callback():
         service.callback = None
-        if change == "superseded":
-            await start(client, "replacement-observation")
-            return
         async with database() as db, db.begin():
             account = await db.get(CatalogAccount, UUID(admin["id"]))
             user = await db.get(User, UUID(admin["id"]))
@@ -249,7 +246,7 @@ async def test_atomic_publication_failure_keeps_observation_unpublished(
     client, database, service, monkeypatch
 ):
     operation = await start(client)
-    for _ in range(5):
+    for _ in range(3):
         await series.run(operation)
     # Final publication uses the same transaction as catalog resolution.
     original = series.catalog_match
@@ -431,3 +428,12 @@ async def test_same_named_series_are_separate_and_terminal_job_is_actionable(
     interrupted = await detail(client)
     assert interrupted["status"] == "interrupted" and interrupted["items"] == one["items"]
     assert await finish(database, await start(client, "new-observation-command")) == "completed"
+
+
+async def test_refresh_clicks_with_different_keys_reuse_active_observation(
+    client, database, service
+):
+    first = await start(client, "first-refresh-click")
+    assert await start(client, "second-refresh-click") == first
+    assert await finish(database, first) == "completed"
+    assert len(service.calls) == 4

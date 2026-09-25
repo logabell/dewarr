@@ -171,9 +171,12 @@ class FolderABS:
 
 
 @pytest.fixture
-async def shelf(client, admin, database, tmp_path, monkeypatch):
+async def shelf(client, admin, database, tmp_path, monkeypatch, request):
     base = tmp_path.resolve()
     root, staging, downloads = base / "library", base / "staging", base / "downloads"
+    if getattr(request, "param", "sibling") == "nested":
+        root.mkdir()
+        staging = root / ".book-search-staging"
     staging.mkdir(mode=0o700)
     downloads.mkdir()
     for index in (1, 2, 3):
@@ -269,6 +272,7 @@ async def status(client, work_id):
     return response.json()
 
 
+@pytest.mark.parametrize("shelf", ["sibling", "nested"], indirect=True)
 async def test_a_complete_part_set_becomes_one_book_and_separates_again(
     client, admin, database, shelf
 ):

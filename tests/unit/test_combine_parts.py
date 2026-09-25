@@ -97,9 +97,14 @@ def test_parts_become_disc_folders_of_hard_links(tmp_path):
         cleanup_parts(spec)
 
 
-def test_cleanup_and_separate_round_trip(tmp_path):
+@pytest.mark.parametrize("protected", [False, True])
+def test_cleanup_and_separate_round_trip(tmp_path, protected):
     root, staging = library(tmp_path)
-    spec = build_spec(context(root, staging))
+    journals = tmp_path / "control" if protected else None
+    if journals:
+        journals.mkdir(mode=0o700)
+        staging.chmod(0o777)
+    spec = build_spec(context(root, staging, journals=journals))
     originals = {
         index: inode(root / "Writer" / f"Dark Age (Part {index} of 3)" / f"{index:02}.mp3")
         for index in (1, 2, 3)
@@ -133,10 +138,15 @@ def test_cleanup_and_separate_round_trip(tmp_path):
     assert not (staging / f"combine-archive-{spec.combine_id.hex}").exists()
 
 
+@pytest.mark.parametrize("protected", [False, True])
 @pytest.mark.parametrize("step", ["staged", "published-before-receipt"])
-def test_an_interrupted_publish_resumes(tmp_path, step):
+def test_an_interrupted_publish_resumes(tmp_path, step, protected):
     root, staging = library(tmp_path)
-    spec = build_spec(context(root, staging))
+    journals = tmp_path / "control" if protected else None
+    if journals:
+        journals.mkdir(mode=0o700)
+        staging.chmod(0o777)
+    spec = build_spec(context(root, staging, journals=journals))
 
     def crash(name):
         if name == step:

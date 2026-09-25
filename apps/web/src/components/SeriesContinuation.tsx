@@ -1,6 +1,6 @@
+import InfiniteScroll from "./InfiniteScroll";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import BookLink from "./BookLink";
-import InfiniteScroll from "./InfiniteScroll";
 import BookCover from "./BookCover";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -45,28 +45,21 @@ function emptyCopy(shelf: SeriesGapShelf, medium: Medium) {
     title: `No missing ${mediumLabel[medium]} yet.`,
     detail:
       "Dewarr is checking series linked to books you own. Missing books appear here after each catalog loads.",
-    to: "/discover/series",
-    label: "See series gaps →",
+    to: "/settings#catalog",
+    label: "Manage series suggestions →",
   };
 }
 
 export default function SeriesContinuation({
-  hideEmpty = false,
-  variant = "shelf",
   canEdit = false,
 }: {
-  hideEmpty?: boolean;
-  variant?: "shelf" | "page";
   canEdit?: boolean;
-} = {}) {
+}) {
   const client = useQueryClient();
   const [medium, setMedium] = useState<Medium>("any");
-  const marked = useRef(false);
+  const marked = useRef(new Set<string>());
   const query = usePagedQuery({
-    queryKey:
-      variant === "page"
-        ? ["series-gaps", medium]
-        : ["discovery", "series", medium],
+    queryKey: ["series-gaps", medium],
     queryFn: async (page, signal) =>
       result(
         await api.GET("/api/discovery/series", {
@@ -75,15 +68,14 @@ export default function SeriesContinuation({
             query: {
               medium,
               page,
-              limit: variant === "page" ? 8 : 4,
-              full: variant === "page",
+              limit: 6,
+              full: false,
             },
           },
         }),
       ),
-    refetchInterval: variant === "page" ? false : 60_000,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 60_000,
+    gcTime: 300_000,
     retry: false,
     next: (last, pages) =>
       last.has_more && pages.length < 100 ? pages.length + 1 : undefined,
@@ -101,43 +93,32 @@ export default function SeriesContinuation({
     },
   });
   useEffect(() => {
-    if (variant !== "page" || !query.data || marked.current) return;
-    marked.current = true;
-    void (async () => {
-      try {
-        result(await api.POST("/api/discovery/series/seen", { body: {} }));
-        await client.invalidateQueries({ queryKey: ["discovery", "series"] });
-      } catch {
-        marked.current = false;
-      }
-    })();
-  }, [variant, query.data, client]);
+    for (const series of query.data?.items || []) {
+      if (
+        !series.unseen ||
+        series.unseen > series.books.filter((book) => book.unseen).length ||
+        marked.current.has(series.external_id)
+      )
+        continue;
+      marked.current.add(series.external_id);
+      void api
+        .POST("/api/discovery/series/seen", {
+          body: { external_id: series.external_id },
+        })
+        .then(result)
+        .catch(() => marked.current.delete(series.external_id));
+    }
+  }, [query.data]);
   const items = query.data?.items || [];
   const unseen = query.data?.unseen || 0;
-  if (
-    hideEmpty &&
-    medium === "any" &&
-    query.data &&
-    !items.length &&
-    !query.data.suggestions_enabled
-  )
-    return null;
-  const Heading = variant === "page" ? "h1" : "h2";
   return (
     <section
       className="discovery-section"
       aria-labelledby="series-continuation-title"
     >
-      <div className="page-heading discovery-heading series-gap-heading">
+      <div className="explore-view-heading series-gap-heading">
         <div>
-          {variant === "page" && (
-            <Link className="back-link" to="/discover">
-              ← Discover
-            </Link>
-          )}
-          <Heading id="series-continuation-title">
-            Missing from your series
-          </Heading>
+          <h2 id="series-continuation-title">Missing from your series</h2>
           <p className="muted">
             Published books from Hardcover series linked to books you own.
             {unseen > 0
@@ -178,7 +159,6 @@ export default function SeriesContinuation({
                   series={series}
                   medium={medium}
                   canEdit={canEdit}
-                  showActions={variant === "page"}
                   onIgnore={(externalId) => dismiss.mutate(externalId)}
                   ignoring={dismiss.isPending}
                 />
@@ -189,13 +169,12 @@ export default function SeriesContinuation({
           )}
         </>
       )}
-      {variant === "shelf" && items.length > 0 && (
-        <Link className="back-link" to="/discover/series">
-          See all missing books
-          {unseen > 0 ? ` · ${unseen} new` : ""} →
-        </Link>
-      )}
       <InfiniteScroll query={query} />
+      <p className="explore-footnote">
+        Series order and covers from your saved Hardcover catalogs.
+        Compilations, partial books and merged records are excluded. Uncertain
+        order is marked for review.
+      </p>
     </section>
   );
 }
@@ -217,14 +196,12 @@ function SeriesCard({
   series,
   medium,
   canEdit,
-  showActions,
   onIgnore,
   ignoring,
 }: {
   series: SeriesGap;
   medium: Medium;
   canEdit: boolean;
-  showActions: boolean;
   onIgnore: (externalId: string) => void;
   ignoring: boolean;
 }) {
@@ -262,11 +239,16 @@ function SeriesCard({
               to={`/books/${work.id}`}
             >
               <div className="series-gap-cover">
-                <BookCover title={work.title} work={work} medium={medium} />
+                <BookCover
+                  title={work.title}
+                  work={work}
+                  medium={medium}
+                  actions={canEdit}
+                />
               </div>
               <div className="series-gap-book-detail">
                 <span className="series-gap-note">
-                  {position ? `Position ${position}` : "Order unknown"}
+                  {position !== null ? `Book ${position}` : "Order unknown"}
                   {ambiguous_position && " · Order needs review"}
                   {unseen && " · New"}
                 </span>
@@ -312,26 +294,8 @@ function SeriesCard({
             These are excluded from the missing count.
           </p>
         )}
-        {showActions ? (
-          <div className="series-gap-actions">
-            {canEdit && (
-              <Link
-                to={`/series/hardcover/${encodeURIComponent(series.external_id)}?tab=requests&gaps=1&medium=${medium}`}
-              >
-                Request missing books
-              </Link>
-            )}
-            <button
-              type="button"
-              disabled={ignoring}
-              onClick={() => onIgnore(series.external_id)}
-            >
-              Ignore this series
-            </button>
-          </div>
-        ) : (
+        <div className="series-gap-actions">
           <Link
-            className="back-link"
             to={`/series/hardcover/${encodeURIComponent(series.external_id)}`}
           >
             View series
@@ -340,16 +304,25 @@ function SeriesCard({
               : ""}{" "}
             →
           </Link>
-        )}
+          {canEdit && (
+            <Link
+              to={`/series/hardcover/${encodeURIComponent(series.external_id)}?tab=requests&gaps=1&medium=${medium}`}
+            >
+              Request missing books
+            </Link>
+          )}
+          <button
+            type="button"
+            disabled={ignoring}
+            onClick={() => onIgnore(series.external_id)}
+          >
+            Ignore this series
+          </button>
+        </div>
+        <p className="series-gap-note">
+          Updated {new Date(series.fetched_at).toLocaleDateString()}
+        </p>
       </footer>
     </article>
-  );
-}
-
-export function SeriesGapPage({ canEdit }: { canEdit: boolean }) {
-  return (
-    <div className="explore">
-      <SeriesContinuation variant="page" canEdit={canEdit} />
-    </div>
   );
 }

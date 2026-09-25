@@ -33,7 +33,7 @@ from app.db.models import (
 from app.db.session import session_factory
 from app.domain import automatic_dispatch, pack_coverage
 from app.domain.acquisition import evaluate
-from app.domain.acquisition_selection import SelectionInput, prepare
+from app.domain.acquisition_selection import SelectionInput, prepare, reservation_for_release
 from app.domain.automatic_eligibility import (
     AUDIO,
     EBOOKS,
@@ -311,6 +311,13 @@ async def context(db, user_id, body, *, recovery_selection_id=None):
     if not anchor:
         raise HTTPException(
             409, "Match this title to a catalog provider before automatic selection"
+        )
+    if body.result_id and not recovery_selection_id:
+        chosen = await db.get(SourceResult, body.result_id)
+        if not chosen or chosen.operation_id != search.id or chosen.owner_id != user_id:
+            raise HTTPException(404, "Source release not found")
+        reservation = await reservation_for_release(
+            db, intent, target, reservation, release_value(chosen)
         )
     rule = dict(reservation.requirements)
     version = await db.get(Version, UUID(rule["version_id"])) if rule["version_id"] else None

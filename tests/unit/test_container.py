@@ -54,19 +54,21 @@ def test_existing_book_settings_take_precedence(environment, monkeypatch):
     assert os.environ["BOOK_SECRET_KEY_FILE"] == "/run/secrets/app_key"
 
 
-def test_dropping_root_keeps_compose_groups_but_never_the_root_group(monkeypatch, tmp_path):
+@pytest.mark.parametrize("mask", ["002", "022", "0002"])
+def test_dropping_root_keeps_compose_groups_but_never_the_root_group(monkeypatch, tmp_path, mask):
     dropped = {}
+    monkeypatch.setenv("UMASK", mask)
     monkeypatch.setenv("PUID", "1000")
     monkeypatch.setenv("PGID", "1000")
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(os, "getgroups", lambda: [0, 1001, 44])
     monkeypatch.setattr(os, "chown", lambda *args: None)
-    monkeypatch.setattr(os, "umask", lambda mask: None)
+    monkeypatch.setattr(os, "umask", lambda mask: dropped.update(mask=mask))
     monkeypatch.setattr(os, "setgroups", lambda groups: dropped.update(groups=groups))
     monkeypatch.setattr(os, "setgid", lambda gid: dropped.update(gid=gid))
     monkeypatch.setattr(os, "setuid", lambda uid: dropped.update(uid=uid))
     container.prepare_user(tmp_path)
-    assert dropped == {"groups": [44, 1000, 1001], "gid": 1000, "uid": 1000}
+    assert dropped == {"groups": [44, 1000, 1001], "gid": 1000, "uid": 1000, "mask": int(mask, 8)}
 
 
 DATABASE_URL = "postgresql://dewarr:s3cret@dewarr-postgres:5432/dewarr"
@@ -240,3 +242,36 @@ def test_stop_event_gracefully_terminates_both_services(tmp_path):
         thread.join(timeout=6)
     assert (tmp_path / "api-stopped").exists()
     assert (tmp_path / "worker-stopped").exists()
+
+
+@pytest.mark.parametrize("url", ["HTTPS://books.example.com", "Https://BOOKS.example.com:443/"])
+def test_https_scheme_case_keeps_cookies_secure(environment, monkeypatch, url):
+    monkeypatch.setenv("PUBLIC_URL", url)
+    configure_environment()
+    assert os.environ["BOOK_PUBLIC_URL"] == "https://books.example.com"
+    assert os.environ["BOOK_COOKIE_SECURE"] == "true"
+
+
+def test_explicit_cookie_override_and_public_url_precedence(environment, monkeypatch, caplog):
+    monkeypatch.setenv("PUBLIC_URL", "http://old.example")
+    monkeypatch.setenv("BOOK_PUBLIC_URL", "HTTPS://books.example.com")
+    monkeypatch.setenv("BOOK_COOKIE_SECURE", "false")
+    configure_environment()
+    assert os.environ["BOOK_PUBLIC_URL"] == "https://books.example.com"
+    assert os.environ["BOOK_COOKIE_SECURE"] == "false"
+    assert "overrides a different PUBLIC_URL" in caplog.text
+
+
+def test_invalid_public_url_fails_with_configuration_hint(environment, monkeypatch):
+    monkeypatch.setenv("PUBLIC_URL", "https://user:private-password@books.example")
+    with pytest.raises(RuntimeError, match="Invalid PUBLIC_URL/BOOK_PUBLIC_URL") as error:
+        configure_environment()
+    assert "private-password" not in str(error.value)
+
+
+@pytest.mark.parametrize("mask", ["888", "777", "foo", "-002", "2"])
+def test_invalid_umask_fails_before_changing_storage(monkeypatch, tmp_path, mask):
+    monkeypatch.setenv("UMASK", mask)
+    with pytest.raises(RuntimeError, match="UMASK"):
+        container.prepare_user(tmp_path / "untouched")
+    assert not (tmp_path / "untouched").exists()

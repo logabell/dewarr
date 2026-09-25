@@ -1,4 +1,5 @@
 import { usePagedQuery } from "../hooks/usePagedQuery";
+import { browseCache, refreshPending } from "../queryPolicies";
 import InfiniteScroll from "../components/InfiniteScroll";
 import BookLink from "../components/BookLink";
 import { useEffect, useRef, useState } from "react";
@@ -34,6 +35,8 @@ function AuthorContent({
   const heading = useRef<HTMLHeadingElement>(null);
   const query = usePagedQuery({
     queryKey: ["author", externalId],
+    ...browseCache,
+    refetchInterval: refreshPending,
     queryFn: async (page, signal) => {
       const data = result(
         await api.GET("/api/metadata/authors/hardcover/{external_id}", {

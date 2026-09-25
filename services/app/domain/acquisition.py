@@ -267,7 +267,11 @@ async def validate_request(db, user, work_id, spec, reason=None, *, check_versio
                 visible_library(user),
             )
         ):
-            raise HTTPException(404, "Destination library is not accessible")
+            raise HTTPException(
+                404,
+                "Destination library is not accessible. Ask an administrator to check "
+                "your library access in Settings → Libraries.",
+            )
         version_id = getattr(spec, medium + "_version_id")
         if not version_id:
             continue
@@ -545,6 +549,10 @@ async def reserve(db, user, intent, spec, slot, *, only_medium=None):
                         AcquisitionReservation.state == state,
                     )
                     .order_by(
+                        # Keep a release-specific split on its own accepted scope
+                        # during worker rechecks instead of immediately rejoining
+                        # an older, stricter planned reservation.
+                        (AcquisitionReservation.requirements == rule).desc(),
                         (AcquisitionReservation.state == "selected").desc(),
                         AcquisitionReservation.created_at,
                         AcquisitionReservation.id,

@@ -63,10 +63,15 @@ async def test_saved_folder_remembers_import_preference_until_activation(
     assert not toggled.json()["enabled"] and not toggled.json()["ready"]
 
 
+@pytest.mark.parametrize("library_mount", [False, True])
 async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
-    client, admin, database, empty_route, monkeypatch
+    client, admin, database, empty_route, monkeypatch, library_mount
 ):
     route = empty_route
+    if library_mount:
+        monkeypatch.setattr(
+            destinations, "filesystem_mounts", lambda: [(route["target"], "ext4", set())]
+        )
     monkeypatch.setattr(library_folders, "Audiobookshelf", route["backend"].client)
     monkeypatch.setattr(get_settings(), "import_destinations", {})
     monkeypatch.setattr(get_settings(), "import_staging_root", None)
@@ -101,7 +106,10 @@ async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
     await get_queue().run_worker_async(wait=False, concurrency=1)
     verified = (await client.get("/api/organization/destinations")).json()[0]
     assert verified["publication_available"], verified
-    assert (route["target"].parent / ".book-search-staging").is_dir()
+    staging = (
+        route["target"] if library_mount else route["target"].parent
+    ) / ".book-search-staging"
+    assert staging.is_dir()
     response = await client.post(
         f"/api/organization/library-folders/{chosen['id']}/activate",
         json={"expected_revision": chosen["revision"]},
@@ -121,6 +129,12 @@ async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
     # Another valid media destination must not invalidate the first verified route.
     audio_target = route["target"].parent / "audiobooks"
     audio_target.mkdir()
+    if library_mount:
+        monkeypatch.setattr(
+            destinations,
+            "filesystem_mounts",
+            lambda: [(route["target"], "nfs4", set()), (audio_target, "cifs", set())],
+        )
     response = await client.put(
         "/api/organization/library-folders/audio",
         json={"library_id": library_id, "backend_path": "/books", "local_path": str(audio_target)},
@@ -128,6 +142,13 @@ async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
     assert response.status_code == 200, response.text
     saved = (await client.get("/api/organization/destinations")).json()
     assert next(d for d in saved if d["id"] == chosen["id"])["publication_available"]
+    mounted = await storage_settings_for_test(database)
+    first = mounted.import_storage_routes["ebooks"]
+    second = mounted.import_storage_routes["library-audio"]
+    assert first.journal_root == second.journal_root == get_settings().import_journal_root
+    if library_mount:
+        assert first.staging_root.parent == route["target"]
+        assert second.staging_root.parent == audio_target
 
 
 async def test_picker_lists_older_abs_library_and_explains_failures(
@@ -181,7 +202,15 @@ async def save_staging(database, path):
 
 async def saved_staging(database):
     async with database() as db:
-        return (await db.get(ImportStorageSettings, 1)).staging_root
+        storage = await db.get(ImportStorageSettings, 1)
+        return next(
+            (
+                route["staging_root"]
+                for key, route in storage.storage_routes.items()
+                if not key.startswith("retired-")
+            ),
+            storage.staging_root,
+        )
 
 
 def separate_filesystem(monkeypatch, *paths):
@@ -205,10 +234,10 @@ async def test_repick_replaces_staging_saved_by_an_earlier_failed_choice(
         "backend_path": "/books",
         "local_path": str(route["target"]),
     }
-    separate = separate_filesystem(monkeypatch, route["target"])
+    separate = separate_filesystem(monkeypatch, route["target"], route["target"].parent)
     response = await client.put("/api/organization/library-folders/audio", json=body)
     assert response.status_code == 422
-    assert "Mount the parent folder instead" in response.json()["detail"]
+    assert "different filesystem" in response.json()["detail"]
     assert await saved_staging(database) == "/missing-mount/.book-search-staging"
     separate.clear()
     missing = {**body, "local_path": str(route["target"].parent / "not-mounted")}
@@ -259,10 +288,14 @@ async def test_staging_stays_while_unfinished_imports_use_it(
     receipt = route["stage"] / "earlier-import.json"
     receipt.write_text("{}")
     response = await choose()
-    assert response.status_code == 409
-    assert "holds records of earlier imports" in response.json()["detail"]
-    receipt.unlink()
-    response = await choose()
+    assert response.status_code == 200, response.text
+    assert receipt.read_text() == "{}"
+    settings = await storage_settings_for_test(database)
+    assert any(
+        str(pair.staging_root) == str(route["stage"])
+        for key, pair in settings.import_storage_routes.items()
+        if key.startswith("retired-")
+    )
     assert response.status_code == 200, response.text
     assert await saved_staging(database) == str(route["target"].parent / ".book-search-staging")
 
@@ -298,3 +331,44 @@ async def test_library_folder_browser_is_read_only_and_confined(
 
 async def test_library_folder_browser_requires_admin(client):
     assert (await client.get("/api/organization/library-folders/browse")).status_code == 401
+
+
+async def test_picker_refuses_nested_staging_for_grimmory(
+    client, admin, database, empty_route, monkeypatch
+):
+    from app.db.models import Integration
+
+    route = empty_route
+    monkeypatch.setattr(get_settings(), "import_staging_root", None)
+    monkeypatch.setattr(
+        destinations, "filesystem_mounts", lambda: [(route["target"], "ext4", set())]
+    )
+    async with database() as db, db.begin():
+        library = await db.get(Library, UUID(route["destination"]["library_id"]))
+        (await db.get(Integration, library.integration_id)).kind = "grimmory"
+
+    # Folder discovery is independent of the real worker mount/write guard.
+    monkeypatch.setattr(
+        library_folders,
+        "library_client",
+        lambda _: route["backend"].client("http://fixture", "private-import-token"),
+    )
+    current = (await client.get("/api/organization/destinations")).json()[0]
+    response = await client.put(
+        "/api/organization/library-folders/ebook",
+        json={
+            "library_id": current["library_id"],
+            "backend_path": "/books",
+            "local_path": str(route["target"]),
+            "destination_id": current["id"],
+            "expected_revision": current["revision"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "Grimmory" in response.json()["detail"]
+    assert not (route["target"] / ".book-search-staging").exists()
+
+
+async def storage_settings_for_test(database):
+    async with database() as db:
+        return await storage_settings(db)

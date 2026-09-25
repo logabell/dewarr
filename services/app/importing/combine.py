@@ -41,12 +41,14 @@ from app.db.models import (
 from app.db.session import session_factory
 from app.domain.catalog_titles import parse_title_labels
 from app.importing.filesystem import beneath, directory, enumerate_files, identity, relative_parts
+from app.importing.layout import library_relative, overlaps, unsafe_staging
 from app.importing.naming import AUDIO, StrictModel, collision_key, fingerprint
 from app.importing.publication import (
     HARDLINKS_UNSUPPORTED,
     PublicationError,
     conflicting_name,
     destination_parent,
+    journal_fd,
     no_replace,
     object_id,
     private_staging,
@@ -106,6 +108,7 @@ class CombineSpec(StrictModel):
     combine_id: UUID
     destination_root: Path
     staging_root: Path
+    journal_root: Path | None = None
     backend_path: str
     folder: str
     parts: list[CombinePart] = Field(min_length=2, max_length=20)
@@ -119,20 +122,33 @@ class CombineSpec(StrictModel):
         for root in (self.destination_root, self.staging_root):
             if not root.is_absolute() or str(root) == "/" or ".." in root.parts:
                 raise ValueError("Use absolute non-root paths")
-        if self.destination_root.is_relative_to(
-            self.staging_root
-        ) or self.staging_root.is_relative_to(self.destination_root):
+        if unsafe_staging(self.destination_root, self.staging_root):
             raise ValueError("Library and staging roots must not overlap")
+        if self.journal_root is not None:
+            if (
+                self.journal_root.anchor != "/"
+                or str(self.journal_root) == "/"
+                or ".." in self.journal_root.parts
+            ):
+                raise ValueError("Use an absolute non-root journal path")
+            if any(
+                overlaps(self.journal_root, root)
+                for root in (self.destination_root, self.staging_root)
+            ):
+                raise ValueError("Journal storage must be separate from media roots")
         relative_parts(self.folder)
+        library_relative(self.folder)
         discs = {f"Disc {part.index}" for part in self.parts}
         for file in [*self.files, *self.archived, *([self.cover] if self.cover else [])]:
             relative_parts(file.source)
+            library_relative(file.source)
             relative_parts(file.target)
         for file in [*self.files, *self.archived]:
             if file.target.split("/")[0] not in discs:
                 raise ValueError("Every part file belongs in its disc folder")
         for part in self.parts:
             relative_parts(part.source)
+            library_relative(part.source)
             book = PurePosixPath(self.folder)
             source = PurePosixPath(part.source)
             if book == source or book.is_relative_to(source) or source.is_relative_to(book):
@@ -161,7 +177,10 @@ class CombineSpec(StrictModel):
 
 
 def spec_hash(spec):
-    return fingerprint(spec.model_dump(mode="json"))
+    payload = spec.model_dump(mode="json")
+    if spec.journal_root is None:
+        payload.pop("journal_root")
+    return fingerprint(payload)
 
 
 def receipt_name(spec):
@@ -205,7 +224,7 @@ def opened_parent(root, relative, *, create=False):
         for part in parts[:-1]:
             if create:
                 try:
-                    os.mkdir(part, mode=0o755, dir_fd=fd)
+                    os.mkdir(part, mode=0o777, dir_fd=fd)
                     sync_directory(fd)
                 except FileExistsError:
                     pass
@@ -249,7 +268,7 @@ def write_new(root, relative, content: bytes):
                     return
             raise CombineError(f"{relative} is already taken")
         fd = os.open(
-            name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=parent
+            name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=parent
         )
         try:
             write_all(fd, content)
@@ -389,6 +408,7 @@ def build_spec(context):
         combine_id=context["combine_id"],
         destination_root=root,
         staging_root=context["staging"],
+        journal_root=context.get("journals"),
         backend_path=context["backend_path"],
         folder=context["folder"],
         parts=sorted(parts, key=lambda part: part.index),
@@ -403,7 +423,7 @@ def build_spec(context):
 def journal(spec):
     """Lock the library and open this combine's receipt in private staging."""
     with (
-        private_staging(spec.staging_root) as staging,
+        private_staging(spec.staging_root, spec.journal_root) as staging,
         directory(spec.destination_root) as destination,
     ):
         if same_object(staging, object_id(destination)):
@@ -466,7 +486,7 @@ def publish_combined(spec, *, checkpoint=lambda _: None):
             return receipt
         # A stage left by an interrupted attempt holds only links and generated metadata.
         remove_tree(staging, stage_name(spec))
-        os.mkdir(stage_name(spec), mode=0o755, dir_fd=staging)
+        os.mkdir(stage_name(spec), mode=0o777, dir_fd=staging)
         with beneath(staging, stage_name(spec), folder=True) as stage:
             receipt["stage_identity"] = object_id(stage)
             write_receipt(staging, receipt_name(spec), receipt)
@@ -512,10 +532,10 @@ def discard(spec):
             pass
         remove_tree(staging, stage_name(spec))
         try:
-            os.unlink(receipt_name(spec), dir_fd=staging)
+            os.unlink(receipt_name(spec), dir_fd=journal_fd(staging))
         except FileNotFoundError:
             pass
-        sync_directory(staging)
+        sync_directory(journal_fd(staging))
 
 
 def mark(spec, state):
@@ -634,7 +654,7 @@ def restore_parts(spec):
                         continue
                     temporary = f"separate-{spec.combine_id.hex}-{part.index}"
                     remove_tree(staging, temporary)
-                    os.mkdir(temporary, mode=0o755, dir_fd=staging)
+                    os.mkdir(temporary, mode=0o777, dir_fd=staging)
                     with beneath(staging, temporary, folder=True) as stage:
                         for origin, file in members:
                             relative = str(PurePosixPath(file.source).relative_to(part.source))
@@ -950,6 +970,9 @@ async def evaluate(db, library_id, version_id, rows):
         "context": {
             "root": Path(configuration["root_path"]),
             "staging": Path(configuration["staging_path"]),
+            "journals": Path(configuration["journal_path"])
+            if configuration.get("journal_path")
+            else None,
             "backend_path": destination.backend_path,
             "folder": folder,
             "sidecars": sidecars,

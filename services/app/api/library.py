@@ -25,6 +25,7 @@ from app.domain.availability import availability_for
 from app.domain.catalog_display import display_family, display_map
 from app.domain.catalog_titles import title_narrators
 from app.domain.corrections import asset_state, correct_asset, revision
+from app.domain.library_access import lock_access
 from app.domain.visibility import visible_library, visible_work
 from app.domain.work_graph import canonical_map
 
@@ -43,6 +44,7 @@ class LibraryView(BaseModel):
 
 class GrantInput(BaseModel):
     user_ids: list[UUID] = Field(max_length=1000)
+    expected_user_ids: list[UUID] | None = Field(default=None, max_length=1000)
 
 
 class AssetFileView(BaseModel):
@@ -118,14 +120,17 @@ class ContentsInput(BaseModel):
 
 
 @router.get("/libraries", response_model=list[LibraryView])
-async def libraries(user: CurrentUser, db: Database):
+async def libraries(user: CurrentUser, db: Database, include_disabled: bool = False):
+    if include_disabled and user.role != "admin":
+        raise HTTPException(403, "Only administrators can manage unavailable libraries")
     records = (
-        await db.scalars(
-            select(Library)
+        await db.execute(
+            select(Library, Integration.enabled)
             .join(Integration)
             .where(
                 visible_library(user),
-                Integration.enabled.is_(True),
+                True if include_disabled else Integration.enabled.is_(True),
+                Integration.deleted_at.is_(None),
             )
             .order_by(Library.name)
         )
@@ -134,7 +139,7 @@ async def libraries(user: CurrentUser, db: Database):
         (
             await db.execute(
                 select(LibraryGrant.library_id, LibraryGrant.user_id).where(
-                    LibraryGrant.library_id.in_([record.id for record in records]),
+                    LibraryGrant.library_id.in_([record.id for record, _ in records]),
                 )
             )
         ).all()
@@ -146,23 +151,32 @@ async def libraries(user: CurrentUser, db: Database):
             id=record.id,
             name=record.name,
             integration_id=record.integration_id,
-            accessible=record.accessible,
+            accessible=record.accessible and enabled,
             last_complete_sync=record.last_complete_sync,
             granted_user_ids=[user_id for library_id, user_id in grants if library_id == record.id],
         )
-        for record in records
+        for record, enabled in records
     ]
 
 
 @router.put("/libraries/{library_id}/grants", status_code=204)
 async def replace_grants(library_id: UUID, body: GrantInput, admin: Admin, db: Database):
+    await lock_access(db)
     library = await db.get(Library, library_id, with_for_update=True)
     if not library:
         raise HTTPException(404, "Library not found")
+    current = set(
+        await db.scalars(select(LibraryGrant.user_id).where(LibraryGrant.library_id == library_id))
+    )
+    if body.expected_user_ids is not None and set(body.expected_user_ids) != current:
+        raise HTTPException(409, "Library access changed. Reload the saved settings to review it.")
     users = set(
         (
             await db.scalars(
-                select(User.id).where(User.id.in_(body.user_ids), User.active.is_(True))
+                select(User.id).where(
+                    User.id.in_(body.user_ids),
+                    or_(User.active.is_(True), User.id.in_(current)),
+                )
             )
         ).all()
     )
@@ -261,18 +275,32 @@ async def library_books(
         .group_by(mapping.c.work_id)
         .subquery()
     )
-    query = select(Work).join(matching, matching.c.work_id == Work.id)
-    total = await db.scalar(select(func.count()).select_from(matching))
-    rows = list(
-        await db.scalars(
-            query.order_by(
-                *([matching.c.observed_at.desc()] if sort == "recent" else []),
-                Work.title,
-                Work.id,
-            )
-            .offset(offset)
-            .limit(limit)
+    page = (
+        select(Work.id, matching.c.observed_at, func.count().over().label("total"))
+        .join(matching, matching.c.work_id == Work.id)
+        .order_by(
+            *([matching.c.observed_at.desc()] if sort == "recent" else []),
+            Work.title,
+            Work.id,
         )
+        .offset(offset)
+        .limit(limit)
+        .subquery()
+    )
+    records = (
+        await db.execute(
+            select(Work, page.c.total)
+            .join(page, page.c.id == Work.id)
+            .order_by(
+                *([page.c.observed_at.desc()] if sort == "recent" else []), Work.title, Work.id
+            )
+        )
+    ).all()
+    rows = [work for work, _ in records]
+    total = (
+        records[0][1]
+        if records
+        else (await db.scalar(select(func.count()).select_from(matching)) if offset else 0)
     )
     availability = await availability_for(db, user, [work.id for work in rows])
     return WorkPage(

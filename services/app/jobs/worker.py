@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import signal
 
 from app.config import get_settings
 from app.db.session import get_engine, session_factory
@@ -63,6 +64,7 @@ async def recover_stalled_jobs() -> None:
                 "library.sync",
                 "library.schedule",
                 "metadata.enrich",
+                "catalog.refresh",
                 "library.match",
                 "library.combine",
                 "metadata.resolve-import",
@@ -79,6 +81,7 @@ async def recover_stalled_jobs() -> None:
                 "organization.probe",
                 "organization.publish",
                 "organization.confirm",
+                "organization.confirm-batch",
             ):
                 stalled = await queue.job_manager.get_stalled_jobs(
                     task_name=task_name,
@@ -129,15 +132,56 @@ async def run_worker() -> None:
     queue = get_queue()
     async with queue.open_async():
         recovery = asyncio.create_task(recover_stalled_jobs())
+        loop, main_task = asyncio.get_running_loop(), asyncio.current_task()
+        loop.add_signal_handler(signal.SIGTERM, main_task.cancel)
         try:
-            await queue.run_worker_async(
-                concurrency=4,
-                update_heartbeat_interval=10,
-                stalled_worker_timeout=60,
-            )
+            await run_pools(queue)
         finally:
+            loop.remove_signal_handler(signal.SIGTERM)
             recovery.cancel()
             await asyncio.gather(recovery, return_exceptions=True)
+
+
+async def run_pools(queue):
+    control = {"system", "notifications"}
+    files = {"imports", "inspection"}
+    inventory = {"inventory"}
+    confirmation = {"confirmation"}
+    catalog_cache = {"catalog-cache"}
+    remaining = (
+        {task.queue for task in queue.tasks.values()}
+        - control
+        - files
+        - inventory
+        - confirmation
+        - catalog_cache
+        - {"recovery"}
+    )
+    # One slot per work class. Confirmation may hash large files, so it
+    # must not share the slot responsible for scheduling and health.
+    async with asyncio.TaskGroup() as workers:
+        for index, queues in enumerate(
+            (control, files, inventory, confirmation, remaining, catalog_cache)
+        ):
+            workers.create_task(
+                queue.run_worker_async(
+                    queues=sorted(queues),
+                    concurrency=1,
+                    name=(
+                        "control",
+                        "files",
+                        "inventory",
+                        "confirmation",
+                        "background",
+                        "catalog-cache",
+                    )[index],
+                    install_signal_handlers=False,
+                    listen_notify=index == 0,
+                    fetch_job_polling_interval=1,
+                    update_heartbeat_interval=10,
+                    stalled_worker_timeout=60,
+                )
+            )
 
 
 if __name__ == "__main__":

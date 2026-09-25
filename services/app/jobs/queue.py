@@ -86,12 +86,17 @@ def recovery_queue() -> procrastinate.App:
     return queue
 
 
-async def enqueue(db: AsyncSession, task_name: str, *, schedule_in=None, **kwargs) -> int:
+async def enqueue(
+    db: AsyncSession, task_name: str, *, schedule_in=None, job_lock=None, job_queue=None, **kwargs
+) -> int:
     """Join the caller's psycopg transaction; never commit or open another one."""
     await db.flush()
     connection = await db.connection()
     raw = await connection.get_raw_connection()
     task = get_queue().tasks[task_name]
     return await task.configure(
-        connection=raw.driver_connection, schedule_in=schedule_in
+        connection=raw.driver_connection,
+        schedule_in=schedule_in,
+        **({"lock": job_lock} if job_lock else {}),
+        **({"queue": job_queue} if job_queue else {}),
     ).defer_async(**kwargs)

@@ -10,6 +10,8 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
+import tempfile
 from pathlib import PurePosixPath
 
 import httpx
@@ -25,6 +27,7 @@ from app.adapters.audiobookshelf import (
     names,
     parse_reason,
 )
+from app.adapters.batching import read_batches
 from app.adapters.contracts import AdapterError, Capabilities, FailureKind
 from app.adapters.http import JsonEndpoint
 from app.domain.catalog_language import catalog_language
@@ -59,8 +62,6 @@ FORMAT_TYPES = {
     "opus": "AUDIOBOOK",
 }
 CATALOG_PAGE_BYTES = 32 * 1024 * 1024
-# Grimmory's list call is capped here. One book per page is the smallest page that still finishes.
-CATALOG_BOOK_LIMIT = 100_000
 
 
 class GrimmoryImportConfiguration(BaseModel):
@@ -381,8 +382,11 @@ class Grimmory(JsonEndpoint):
     def __init__(self, base_url: str, credentials, *, transport=None):
         token = credentials if isinstance(credentials, str) else None
         self._credentials = None if isinstance(credentials, str) else credentials
-        self._pages: dict[str, list[dict]] = {}
-        self._catalog_books: list[dict] | None = None
+        self._catalog_db = None
+        self._catalog_file = None
+        self._catalog_lock = asyncio.Lock()
+        self._catalog_counts = {}
+        self._catalog_cursors = {}
         self._reauth = False
         super().__init__(base_url, token, transport=transport)
         self.client.timeout = httpx.Timeout(120, connect=10)
@@ -576,83 +580,140 @@ class Grimmory(JsonEndpoint):
             raise AdapterError(FailureKind.PARSER, "Grimmory did not return a path check result.")
         return any(value == name or value.rstrip("/").endswith("/" + name) for value in values)
 
+    async def __aexit__(self, *args):
+        try:
+            await self._close_catalog()
+        finally:
+            await super().__aexit__(*args)
+
+    async def _close_catalog(self):
+        self._catalog_counts.clear()
+        self._catalog_cursors.clear()
+        if self._catalog_db is not None:
+            await asyncio.to_thread(self._catalog_db.close)
+            self._catalog_db = None
+        if self._catalog_file is not None:
+            self._catalog_file.cleanup()
+            self._catalog_file = None
+
     async def refresh_snapshot(self) -> None:
-        """Download the server catalog once for every library in this pass."""
-        self._catalog_books = None
-        self._pages.clear()
-        self._catalog_books = await self._download_catalog()
+        """Re-read all libraries into a bounded disk spool for verification."""
+        async with self._catalog_lock:
+            await self._close_catalog()
+            await self._download_catalog()
 
-    async def _catalog(self) -> list[dict]:
-        if self._catalog_books is None:
-            self._catalog_books = await self._download_catalog()
-        return self._catalog_books
-
-    async def _download_catalog(self) -> list[dict]:
-        page, books, total = 0, [], None
-        while True:
-            response = await self.request(
-                "GET",
-                "api/v1/books/page",
-                params={"page": page, "size": self.page_size},
-                timeout_seconds=120,
-                max_bytes=CATALOG_PAGE_BYTES,
+    async def _download_catalog(self):
+        self._catalog_file = tempfile.TemporaryDirectory(prefix="dewarr-inventory-")
+        connection = sqlite3.connect(
+            self._catalog_file.name + "/catalog.sqlite", check_same_thread=False
+        )
+        try:
+            connection.execute("PRAGMA cache_size=-2048")
+            connection.execute("PRAGMA journal_mode=OFF")
+            connection.execute(
+                "CREATE TABLE books (id TEXT PRIMARY KEY, library TEXT NOT NULL, "
+                "value TEXT NOT NULL)"
             )
-            content, meta = response.get("content"), response.get("page")
-            if not isinstance(content, list) or not isinstance(meta, dict):
-                raise AdapterError(FailureKind.PARSER, "Grimmory returned invalid pagination data.")
-            reported, pages = meta.get("totalElements"), meta.get("totalPages")
-            if (
-                type(reported) is not int
-                or type(pages) is not int
-                or reported < 0
-                or reported > CATALOG_BOOK_LIMIT
-                or pages < 0
-            ):
-                raise AdapterError(FailureKind.PARSER, "Grimmory returned invalid pagination data.")
-            if total is None:
-                total = reported
-            elif total != reported:
-                raise AdapterError(
-                    FailureKind.UNCERTAIN, "Library size changed during sync. Try again."
+            connection.execute("CREATE INDEX books_library_id ON books(library, length(id), id)")
+            page, count, total = 0, 0, None
+            while True:
+                response = await self.request(
+                    "GET",
+                    "api/v1/books/page",
+                    params={"page": page, "size": self.page_size},
+                    timeout_seconds=120,
+                    max_bytes=CATALOG_PAGE_BYTES,
+                    response_label="Grimmory inventory page",
                 )
-            books.extend(content)
-            page += 1
-            if page >= pages or len(books) >= total:
-                break
-            if page > CATALOG_BOOK_LIMIT:
-                raise AdapterError(FailureKind.PARSER, "Grimmory returned an unbounded book list.")
-        if len(books) != total:
-            raise AdapterError(
-                FailureKind.UNCERTAIN, "Library contents changed during sync. Try again."
-            )
-        return books
+                content, meta = response.get("content"), response.get("page")
+                if not isinstance(content, list) or not isinstance(meta, dict):
+                    raise AdapterError(
+                        FailureKind.PARSER, "Grimmory returned invalid pagination data."
+                    )
+                reported, pages = meta.get("totalElements"), meta.get("totalPages")
+                if type(reported) is not int or reported < 0 or type(pages) is not int or pages < 0:
+                    raise AdapterError(
+                        FailureKind.PARSER, "Grimmory returned invalid pagination data."
+                    )
+                if total is None:
+                    total = reported
+                if total != reported or len(content) != min(self.page_size, total - count):
+                    raise AdapterError(
+                        FailureKind.UNCERTAIN, "Library size changed during sync. Try again."
+                    )
+                if pages != (total + self.page_size - 1) // self.page_size and total:
+                    raise AdapterError(
+                        FailureKind.UNCERTAIN, "Grimmory returned inconsistent page counts."
+                    )
+                rows = []
+                for book in content:
+                    if not isinstance(book, dict) or type(book.get("id")) is not int:
+                        raise AdapterError(
+                            FailureKind.PARSER, "Grimmory returned an invalid book list."
+                        )
+                    rows.append(
+                        (external_id(str(book["id"])), str(book.get("libraryId")), json.dumps(book))
+                    )
 
-    async def _library_books(self, library_id: str) -> list[dict]:
-        selected = []
-        seen = set()
-        for book in await self._catalog():
-            if not isinstance(book, dict) or type(book.get("id")) is not int:
-                raise AdapterError(FailureKind.PARSER, "Grimmory returned an invalid book list.")
-            if str(book.get("libraryId")) != library_id:
-                continue
-            key = external_id(str(book["id"]))
-            if key in seen:
-                raise AdapterError(
-                    FailureKind.UNCERTAIN, "Library pagination repeated an item. Sync was held."
+                def write_page(rows=rows):
+                    connection.executemany("INSERT INTO books VALUES (?, ?, ?)", rows)
+                    connection.commit()
+
+                try:
+                    await asyncio.to_thread(write_page)
+                except sqlite3.IntegrityError as error:
+                    raise AdapterError(
+                        FailureKind.UNCERTAIN, "Library pagination repeated an item."
+                    ) from error
+                count += len(content)
+                if count == total:
+                    break
+                if not content:
+                    raise AdapterError(
+                        FailureKind.UNCERTAIN, "Library pagination did not make progress."
+                    )
+                page += 1
+            self._catalog_counts = dict(
+                await asyncio.to_thread(
+                    lambda: connection.execute(
+                        "SELECT library, count(*) FROM books GROUP BY library"
+                    ).fetchall()
                 )
-            seen.add(key)
-            selected.append(book)
-        selected.sort(key=lambda book: book["id"])
-        return selected
+            )
+            self._catalog_db = connection
+        except BaseException:
+            await asyncio.to_thread(connection.close)
+            self._catalog_file.cleanup()
+            self._catalog_file = None
+            raise
 
     async def page(self, library_id: str, page: int) -> tuple[list[dict], int]:
         library_id = external_id(library_id)
-        if library_id not in self._pages:
-            self._pages[library_id] = await self._library_books(library_id)
-        books = self._pages[library_id]
-        start = page * self.page_size
-        chunk = books[start : start + self.page_size]
-        return [_summary(book) for book in chunk], len(books)
+        async with self._catalog_lock:
+            if self._catalog_db is None:
+                await self._download_catalog()
+
+            def read_page():
+                previous = self._catalog_cursors.get(library_id)
+                if previous and page == previous[0] + 1:
+                    records = self._catalog_db.execute(
+                        "SELECT id, value FROM books WHERE library=? AND (length(id), id) > (?, ?) "
+                        "ORDER BY length(id), id LIMIT ?",
+                        (library_id, len(previous[1]), previous[1], self.page_size),
+                    ).fetchall()
+                else:
+                    records = self._catalog_db.execute(
+                        "SELECT id, value FROM books WHERE library=? "
+                        "ORDER BY length(id), id LIMIT ? OFFSET ?",
+                        (library_id, self.page_size, page * self.page_size),
+                    ).fetchall()
+                if records:
+                    self._catalog_cursors[library_id] = (page, records[-1][0])
+                return [_summary(json.loads(row[1])) for row in records], self._catalog_counts.get(
+                    library_id, 0
+                )
+
+            return await asyncio.to_thread(read_page)
 
     async def _tracks(self, book: dict) -> list:
         primary = book.get("primaryFile") if isinstance(book.get("primaryFile"), dict) else {}
@@ -715,6 +776,9 @@ class Grimmory(JsonEndpoint):
         return item
 
     async def _book_details(self, ids: list[str]) -> list[dict]:
+        return [book async for book in read_batches(ids, self._book_detail_batch, size=20)]
+
+    async def _book_detail_batch(self, ids: list[str]) -> list[dict]:
         """Read full books. The paged list omits folder grouping and edition ids."""
         numeric = [external_id(item_id) for item_id in ids]
         try:

@@ -113,12 +113,24 @@ async def denial(db, job):
         return "This job belongs to the restored queue and cannot be replayed"
     if job.task_name.startswith(("procrastinate.", "builtin:")):
         return "Queue history cleanup remains held after restore"
+    references = []
     for name, value in job.task_kwargs.items():
+        if name == "operation_ids":
+            if (
+                job.task_name != "organization.confirm-batch"
+                or not isinstance(value, list)
+                or not 1 <= len(value) <= 20
+            ):
+                return "This job reference is invalid"
+            references.extend(("operation", identifier) for identifier in value)
+            continue
         if not name.endswith("_id") or name in ACTOR_ARGUMENTS:
             continue
         kind = SUBJECT_ARGUMENTS.get(name)
         if not kind:
             return "This job reference has no supported restore fence"
+        references.append((kind, value))
+    for kind, value in references:
         try:
             identifier = UUID(value)
         except (ValueError, TypeError, AttributeError):

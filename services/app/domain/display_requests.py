@@ -28,7 +28,7 @@ class ExistingCopyHint(BaseModel):
 async def existing_copy_hints(db, user, work_id, spec):
     canonical = canonical_map()
     root = await canonical_work(db, work_id)
-    display = display_map(user)
+    display = display_map(user, [root.id])
     representative = (
         select(display.c.work_id).where(display.c.origin_id == root.id).scalar_subquery()
     )

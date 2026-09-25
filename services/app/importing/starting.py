@@ -228,6 +228,9 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
             source_directory=source["directory_identity"],
             destination_root=Path(configuration["root_path"]),
             staging_root=Path(configuration["staging_path"]),
+            journal_root=Path(configuration["journal_path"])
+            if configuration.get("journal_path")
+            else None,
             folder=item["folder"].split("/", 1)[1],
             mode="rename" if rename_seeding else destination.mode,
             files=[

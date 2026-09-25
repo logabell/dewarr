@@ -12,12 +12,12 @@ async def primary_choices(db, user, mapping, roots):
     if not roots:
         return choices
     rows = await db.execute(
-        select(mapping.c.work_id, Work.metadata_fields)
+        select(mapping.c.work_id, Work.metadata_fields["primary_editions"])
         .join(Work, Work.id == mapping.c.origin_id)
         .where(mapping.c.work_id.in_(roots), visible_origin_work(user))
     )
-    for root, fields in rows:
-        for medium, choice in fields.get("primary_editions", {}).items():
+    for root, choices_by_medium in rows:
+        for medium, choice in (choices_by_medium or {}).items():
             if medium not in {"ebook", "audio"} or not isinstance(choice, dict):
                 continue
             stamp = choice.get("chosen_at", "")

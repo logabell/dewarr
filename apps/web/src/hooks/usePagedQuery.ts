@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   useInfiniteQuery,
   type InfiniteData,
@@ -45,15 +46,18 @@ export function usePagedQuery<T extends { items?: unknown[] }>({
     queryFn: ({ pageParam, signal }) => queryFn(pageParam, signal),
     getNextPageParam: next,
   });
-  const first = query.data?.pages[0];
-  return {
-    ...query,
-    loadedPages: query.data?.pages,
-    data: first
+  const data = useMemo(() => {
+    const first = query.data?.pages[0];
+    return first
       ? ({
           ...first,
           items: query.data!.pages.flatMap((page) => page.items || []),
         } as T)
-      : undefined,
+      : undefined;
+  }, [query.data]);
+  return {
+    ...query,
+    loadedPages: query.data?.pages,
+    data,
   };
 }

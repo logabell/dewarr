@@ -49,6 +49,16 @@ export default function ScopeFields({
 }) {
   const libraries = useLibraries();
   const values = { ...inherited, ...overrides };
+  const showLibraries = !defaults || librariesOnly;
+  const availableLibraries = libraries.data?.filter(
+    (library) => library.accessible,
+  );
+  const unavailableDefault = [
+    values.ebook_library_id,
+    values.audio_library_id,
+  ].some(
+    (id) => id && !availableLibraries?.some((library) => library.id === id),
+  );
   const origin = (field: keyof typeof scopeLabels) =>
     Object.hasOwn(overrides, field) ? (
       <div className="preference-origin">
@@ -83,6 +93,21 @@ export default function ScopeFields({
         </SettingHelp>
       </div>
       <Notice error={libraries.error} />
+      {showLibraries &&
+        libraries.isSuccess &&
+        (!availableLibraries?.length ? (
+          <p className="notice" role="status">
+            No libraries are available to your account. An administrator can
+            check the connection and grant library access in Settings →
+            Libraries.
+          </p>
+        ) : unavailableDefault ? (
+          <p className="notice" role="status">
+            A saved default library is unavailable to your account. Choose an
+            available library or ask an administrator to check your library
+            access in Settings → Libraries.
+          </p>
+        ) : null)}
       {!librariesOnly && (
         <>
           {includeMedia && (
@@ -187,7 +212,7 @@ export default function ScopeFields({
           {origin("standalone")}
         </>
       )}
-      {(!defaults || librariesOnly) &&
+      {showLibraries &&
         (["ebook_library_id", "audio_library_id"] as const).map((field) => (
           <div key={field}>
             <label>
@@ -201,7 +226,7 @@ export default function ScopeFields({
               >
                 <option value="">Choose during acquisition</option>
                 {values[field] &&
-                  !libraries.data?.some((l) => l.id === values[field]) && (
+                  !availableLibraries?.some((l) => l.id === values[field]) && (
                     <option value={values[field]!}>
                       Unavailable saved library
                     </option>

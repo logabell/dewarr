@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, result, setCsrf, type Auth } from "../api/client";
+import { api, ApiError, result, setCsrf, type Auth } from "../api/client";
 import type { components } from "../api/schema";
 import BookDialog from "../components/BookDialog";
+import { Link } from "react-router-dom";
 import { Loading, Notice } from "../components";
+import {
+  AccessDialog,
+  sameIds,
+  useAccessLibraries,
+  UserLibraries,
+} from "./AccessControls";
 
 type User = components["schemas"]["UserView"];
 type Catalog = components["schemas"]["AccessCatalog"];
@@ -674,9 +681,16 @@ export default function Accounts({ embedded = false }: { embedded?: boolean }) {
       </div>
       <p className="access-lead">
         {panel === "users"
-          ? "Add a person, then set what they can request and download."
+          ? "Set each person’s role and libraries together. Roles control actions; libraries control content."
           : "Built-in roles are ready to assign. A custom role is a shared set you can edit in one place."}
       </p>
+      {actor?.role === "admin" && (
+        <p className="muted">
+          You can also manage access by library in{" "}
+          <Link to="/settings#libraries">Libraries</Link>. New Plex accounts
+          appear here after their first sign-in; edit them to choose libraries.
+        </p>
+      )}
       <Notice error={accounts.error || catalog.error} />
       {banner && <Notice error={new Error(banner)} />}
       {accounts.isPending ? (
@@ -793,7 +807,25 @@ function UsersTable({
                 </span>
               </td>
               <td className="access-username">{user.username}</td>
-              <td>{user.access_label}</td>
+              <td>
+                <span>{user.access_label}</span>
+                {canManageAdmins && (
+                  <span
+                    className={`access-user-libraries ${user.role !== "admin" && !user.library_ids?.length ? "access-attention" : ""}`}
+                  >
+                    {user.role === "admin"
+                      ? "All libraries"
+                      : user.library_ids == null
+                        ? "Library access unavailable"
+                        : user.library_ids.length
+                          ? `${user.library_ids.length} ${user.library_ids.length === 1 ? "library" : "libraries"}`
+                          : "No library access"}
+                  </span>
+                )}
+                {user.active === false && (
+                  <span className="access-meta">Disabled account</span>
+                )}
+              </td>
               <td>
                 {(canManageAdmins || user.role !== "admin") && (
                   <button
@@ -897,15 +929,24 @@ function AddUserDialog({
   onLinked: (message: string | null) => void;
 }) {
   const client = useQueryClient();
+  const libraries = useAccessLibraries(held === null);
+  const [libraryIds, setLibraryIds] = useState<string[]>([]);
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [access, setAccess] = useState(() => defaultAccess(catalog, held));
   const preset = catalog.presets.find((item) => item.id === access);
   const role = catalog.roles.find((item) => item.id === access);
+  const dirty = Boolean(
+    displayName ||
+    username ||
+    password ||
+    libraryIds.length ||
+    access !== defaultAccess(catalog, held),
+  );
   const create = useMutation({
-    mutationFn: async () => {
-      const created = result(
+    mutationFn: async () =>
+      result(
         await api.POST("/api/auth/users", {
           body: {
             display_name: displayName.trim(),
@@ -915,108 +956,130 @@ function AddUserDialog({
               preset && presetRoles.has(preset.id as PresetRole)
                 ? (preset.id as PresetRole)
                 : "member",
-            ...(role ? { permissions: role.permissions } : {}),
+            ...(role
+              ? { role_id: role.id, permissions: role.permissions }
+              : {}),
+            ...(held === null ? { library_ids: libraryIds } : {}),
           },
         }),
-      );
-      if (!role) return null;
-      try {
-        result(
-          await api.PUT("/api/auth/users/{user_id}/permissions", {
-            params: { path: { user_id: created.id } },
-            body: {
-              permissions: role.permissions,
-              role_id: role.id,
-              expected_permissions: created.permissions,
-            },
-          }),
-        );
-      } catch {
-        return `${created.display_name} was added, but ${role.name} was not assigned. Edit them and choose that role again.`;
-      }
-      return null;
-    },
-    onSuccess: (message) => {
-      client.invalidateQueries({ queryKey: ["accounts"] });
-      onLinked(message);
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["accounts"] }),
+        client.invalidateQueries({ queryKey: ["libraries"] }),
+      ]);
+      onLinked(null);
       close();
     },
   });
   return (
-    <BookDialog title="Add user" close={close} className="access-dialog">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          create.mutate();
-        }}
-      >
-        <div className="form-row">
-          <label>
-            Name
-            <input
-              value={displayName}
-              required
-              maxLength={120}
-              autoFocus
-              autoComplete="name"
-              onChange={(event) => setDisplayName(event.target.value)}
+    <AccessDialog
+      title="Add user"
+      close={close}
+      dirty={dirty}
+      busy={create.isPending}
+    >
+      {(requestClose) => (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            create.mutate();
+          }}
+        >
+          <div className="form-row">
+            <label>
+              Name
+              <input
+                value={displayName}
+                disabled={create.isPending}
+                required
+                maxLength={120}
+                autoFocus
+                autoComplete="name"
+                onChange={(event) => setDisplayName(event.target.value)}
+              />
+            </label>
+            <label>
+              Username
+              <input
+                value={username}
+                disabled={create.isPending}
+                spellCheck={false}
+                required
+                minLength={3}
+                maxLength={100}
+                autoComplete="off"
+                onChange={(event) => setUsername(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="form-row">
+            <label>
+              Password
+              <input
+                value={password}
+                aria-label="Password"
+                aria-describedby="new-user-password-hint"
+                disabled={create.isPending}
+                type="password"
+                required
+                minLength={12}
+                maxLength={256}
+                autoComplete="new-password"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <small id="new-user-password-hint">At least 12 characters.</small>
+            </label>
+            <label>
+              Role
+              <AccessSelect
+                catalog={catalog}
+                held={held}
+                value={access}
+                disabled={create.isPending}
+                onChange={setAccess}
+              />
+            </label>
+          </div>
+          <p className="access-hint">
+            {role?.description || preset?.description}
+          </p>
+          {held === null && (
+            <UserLibraries
+              query={libraries}
+              selected={libraryIds}
+              baseline={[]}
+              onChange={setLibraryIds}
+              administrator={(
+                role?.permissions ??
+                preset?.permissions ??
+                []
+              ).includes("admin")}
+              busy={create.isPending}
             />
-          </label>
-          <label>
-            Username
-            <input
-              value={username}
-              required
-              minLength={3}
-              maxLength={100}
-              autoComplete="off"
-              onChange={(event) => setUsername(event.target.value)}
-            />
-          </label>
-        </div>
-        <div className="form-row">
-          <label>
-            Password
-            <input
-              value={password}
-              type="password"
-              required
-              minLength={12}
-              maxLength={256}
-              autoComplete="new-password"
-              onChange={(event) => setPassword(event.target.value)}
-            />
-            <small>At least 12 characters.</small>
-          </label>
-          <label>
-            Role
-            <AccessSelect
-              catalog={catalog}
-              held={held}
-              value={access}
-              onChange={setAccess}
-            />
-          </label>
-        </div>
-        <p className="access-hint">
-          {role?.description || preset?.description}
-        </p>
-        <Notice error={create.error} />
-        <div className="access-form-actions">
-          <button type="button" onClick={close}>
-            Cancel
-          </button>
-          <button className="primary" disabled={create.isPending}>
-            {create.isPending ? "Adding…" : "Add user"}
-          </button>
-        </div>
-      </form>
-    </BookDialog>
+          )}
+          <Notice error={create.error} />
+          <div className="access-form-actions">
+            <button type="button" onClick={requestClose}>
+              Cancel
+            </button>
+            <button
+              className="primary"
+              disabled={
+                create.isPending || (held === null && !libraries.isSuccess)
+              }
+            >
+              {create.isPending ? "Adding…" : "Add user"}
+            </button>
+          </div>
+        </form>
+      )}
+    </AccessDialog>
   );
 }
 
 function EditUserDialog({
-  user,
+  user: initialUser,
   catalog,
   held,
   selfId,
@@ -1029,6 +1092,9 @@ function EditUserDialog({
   close: () => void;
 }) {
   const client = useQueryClient();
+  const [user, setUser] = useState(initialUser);
+  const libraries = useAccessLibraries(held === null);
+  const [libraryIds, setLibraryIds] = useState(initialUser.library_ids ?? []);
   const [selected, setSelected] = useState(user.permissions);
   const [roleId, setRoleId] = useState<string | null>(
     user.permission_role_id ?? null,
@@ -1045,110 +1111,197 @@ function EditUserDialog({
             permissions: selected,
             role_id: roleId,
             expected_permissions: user.permissions,
+            expected_role_id: user.permission_role_id ?? null,
+            ...(held === null
+              ? {
+                  library_ids: libraryIds,
+                  expected_library_ids: user.library_ids ?? [],
+                }
+              : {}),
           },
         }),
       ),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: ["accounts"] });
+      client.invalidateQueries({ queryKey: ["libraries"] });
       if (user.id === selfId)
         client.invalidateQueries({ queryKey: ["session"] });
       close();
     },
   });
+  const reload = useMutation({
+    mutationFn: async () => {
+      const [people, catalogData] = await Promise.all([
+        api.GET("/api/auth/users").then(result),
+        api.GET("/api/auth/access").then(result),
+        ...(held === null ? [libraries.refetch({ throwOnError: true })] : []),
+      ]);
+      const current = people.find((person) => person.id === user.id);
+      if (!current)
+        throw new Error(
+          "This account was removed. Close the editor to refresh the list.",
+        );
+      client.setQueryData(["accounts"], people);
+      client.setQueryData(["access-catalog"], catalogData);
+      return current;
+    },
+    onSuccess: (current) => {
+      setUser(current);
+      setSelected(current.permissions);
+      setRoleId(current.permission_role_id ?? null);
+      setLibraryIds(current.library_ids ?? []);
+      save.reset();
+    },
+  });
+  const busy = save.isPending || reload.isPending;
+  const dirty =
+    !sameIds(selected, user.permissions) ||
+    roleId !== (user.permission_role_id ?? null) ||
+    !sameIds(libraryIds, user.library_ids ?? []);
+  const conflict = save.error instanceof ApiError && save.error.status === 409;
   return (
-    <BookDialog
+    <AccessDialog
       title={`Edit ${user.display_name}`}
       close={close}
-      className="access-dialog access-dialog-wide"
+      dirty={dirty}
+      busy={busy}
     >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          save.mutate();
-        }}
-      >
-        <label>
-          Role
-          <select
-            value={key}
-            autoFocus
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value.startsWith("preset:")) {
-                const next = catalog.presets.find(
-                  (item) => item.id === value.slice("preset:".length),
-                );
-                setRoleId(null);
-                setSelected(next?.permissions ?? []);
-                return;
-              }
-              const next = catalog.roles.find((item) => item.id === value);
-              setRoleId(value || null);
-              if (next) setSelected(next.permissions);
-            }}
-          >
-            {key === "" && <option value="">Custom</option>}
-            <optgroup label="Built-in">
-              {catalog.presets.map((item) => (
-                <option
-                  key={item.id}
-                  value={`preset:${item.id}`}
-                  disabled={
-                    !canGrant(held, item.permissions, user.permissions) &&
-                    key !== `preset:${item.id}`
-                  }
-                >
-                  {item.label}
-                </option>
-              ))}
-            </optgroup>
-            {!!catalog.roles.length && (
-              <optgroup label="Custom">
-                {catalog.roles.map((item) => (
+      {(requestClose) => (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            save.mutate();
+          }}
+        >
+          <label>
+            Role
+            <select
+              value={key}
+              disabled={busy}
+              autoFocus
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value.startsWith("preset:")) {
+                  const next = catalog.presets.find(
+                    (item) => item.id === value.slice("preset:".length),
+                  );
+                  setRoleId(null);
+                  setSelected(next?.permissions ?? []);
+                  return;
+                }
+                const next = catalog.roles.find((item) => item.id === value);
+                setRoleId(value || null);
+                if (next) setSelected(next.permissions);
+              }}
+            >
+              {key === "" && <option value="">Custom</option>}
+              <optgroup label="Built-in">
+                {catalog.presets.map((item) => (
                   <option
                     key={item.id}
-                    value={item.id}
+                    value={`preset:${item.id}`}
                     disabled={
                       !canGrant(held, item.permissions, user.permissions) &&
-                      roleId !== item.id
+                      key !== `preset:${item.id}`
                     }
                   >
-                    {item.name}
+                    {item.label}
                   </option>
                 ))}
               </optgroup>
-            )}
-          </select>
-        </label>
-        <p className="access-hint">
-          {role?.description ||
-            preset?.description ||
-            "These permissions apply only to this person."}
-        </p>
-        <PermissionChecks
-          catalog={catalog}
-          held={held}
-          baseline={user.permissions}
-          selected={selected}
-          onChange={(next) => {
-            setRoleId(null);
-            setSelected(next);
-          }}
-        />
-        <Notice error={save.error} />
-        <div className="access-form-actions">
-          <button type="button" onClick={close}>
-            Cancel
-          </button>
-          <button
-            className="primary"
-            disabled={save.isPending || (!selected.length && key === "")}
-          >
-            {save.isPending ? "Saving…" : "Save changes"}
-          </button>
-        </div>
-      </form>
-    </BookDialog>
+              {!!catalog.roles.length && (
+                <optgroup label="Custom">
+                  {catalog.roles.map((item) => (
+                    <option
+                      key={item.id}
+                      value={item.id}
+                      disabled={
+                        !canGrant(held, item.permissions, user.permissions) &&
+                        roleId !== item.id
+                      }
+                    >
+                      {item.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+          <p className="access-hint">
+            {role?.description ||
+              preset?.description ||
+              "These permissions apply only to this person."}
+          </p>
+          {held === null ? (
+            <UserLibraries
+              query={libraries}
+              selected={libraryIds}
+              baseline={user.library_ids ?? []}
+              onChange={setLibraryIds}
+              administrator={selected.includes("admin")}
+              accountDisabled={user.active === false}
+              busy={busy}
+            />
+          ) : (
+            <p className="access-hint">
+              Library access is managed by an administrator.
+            </p>
+          )}
+          <details className="access-advanced">
+            <summary>
+              Customize permissions{" "}
+              <span className="access-meta">
+                {key === "" ? "Custom selection" : "Optional"}
+              </span>
+            </summary>
+            <PermissionChecks
+              disabled={busy}
+              catalog={catalog}
+              held={held}
+              baseline={user.permissions}
+              selected={selected}
+              onChange={(next) => {
+                setRoleId(null);
+                setSelected(next);
+              }}
+            />
+          </details>
+          <Notice error={save.error || reload.error} />
+          {conflict && (
+            <div className="access-conflict">
+              <p>
+                Reloading replaces your draft with the latest saved role and
+                library access.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => reload.mutate()}
+              >
+                {reload.isPending ? "Reloading…" : "Reload saved settings"}
+              </button>
+            </div>
+          )}
+          <div className="access-form-actions">
+            <button type="button" onClick={requestClose}>
+              Cancel
+            </button>
+            <button
+              className="primary"
+              disabled={
+                busy ||
+                conflict ||
+                !dirty ||
+                (!selected.length && key === "") ||
+                (held === null && !libraries.isSuccess)
+              }
+            >
+              {save.isPending ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      )}
+    </AccessDialog>
   );
 }
 
@@ -1310,14 +1463,20 @@ function AccessSelect({
   held,
   value,
   onChange,
+  disabled = false,
 }: {
   catalog: Catalog;
   held: string[] | null;
   value: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
-    <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <select
+      disabled={disabled}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
       <optgroup label="Built-in">
         {catalog.presets.map((preset) => (
           <option
@@ -1354,12 +1513,14 @@ function PermissionChecks({
   baseline,
   selected,
   onChange,
+  disabled = false,
 }: {
   catalog: Catalog;
   held: string[] | null;
   baseline: string[];
   selected: string[];
   onChange: (next: string[]) => void;
+  disabled?: boolean;
 }) {
   const admin = selected.includes("admin");
   const groups = [...new Set(catalog.permissions.map((item) => item.group))];
@@ -1378,6 +1539,7 @@ function PermissionChecks({
                   type="checkbox"
                   checked={admin || selected.includes(item.name)}
                   disabled={
+                    disabled ||
                     (admin && item.name !== "admin") ||
                     (held !== null && item.name === "admin") ||
                     !allowed(item.name)

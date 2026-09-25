@@ -27,13 +27,19 @@ Most configuration belongs in the app: connect libraries, reading accounts, sour
 
 | Mount | What it stores |
 | --- | --- |
-| `./config:/config` | Dewarr's encryption key. Keep it with database backups. |
+| `./config:/config` | Dewarr's encryption key and protected import journals. Keep it with database backups. |
 | `./data:/data` | Shared downloads and library files. Replace `./data` with your existing media parent folder. |
 | `postgres:/var/lib/postgresql` | PostgreSQL 18 data in a persistent Docker volume. |
 
-Dewarr initializes `/config` and runs the app as `PUID:PGID`. It does not change ownership of existing media. Give that user/group access to your shared folders. Groups added with Compose `group_add` are kept, so folders shared through another group also work.
+Dewarr initializes `/config` and runs the app as `PUID:PGID`. Give that user/group read/write access to each library and to download folders used by setup verification (which creates and removes an owned test file). Imports preserve original downloads. `UMASK` defaults to `002`: new media folders use `0775` and copied/generated files use `0664`, subject to the share's ACLs. Set `UMASK=022` for group read-only files. Use a common `PGID` (or Compose `group_add`) and consistent downloader permissions when several services need write access. Dewarr never recursively changes media ownership or permissions; hardlinks retain the source inode's permissions.
 
-Mount a parent folder, not the library folder itself. Dewarr keeps a private `.book-search-staging` folder beside the library folder and moves finished imports from it into the library, so both must be on the same filesystem. Mount `/media:/mnt` and choose `/mnt/audiobooks`, rather than mounting `/media/audiobooks:/mnt/audiobooks`. Dewarr uses one staging folder for every library, so ebook and audiobook library folders must also share that filesystem. Dewarr checks these when you choose a folder. The staging folder keeps records of past imports, so once it has any, Dewarr will not move it to another filesystem on its own. To move your libraries to a new filesystem, set `BOOK_IMPORT_STAGING_ROOT` to an empty folder there that Dewarr can read and write, with mode `0700`. A network server may map Dewarr's user to a different numeric owner.
+Dewarr chooses staging separately for each destination. It prefers `.book-search-staging` beside the library when that is writable and on the same mount. For a library-only mount such as `/library`, it uses `/library/.book-search-staging`. Ebook and audiobook libraries can live on independent NAS shares. Each staging directory must support safe publication into its own library; downloads can be on another filesystem and use copy mode.
+
+New routes store journals and locks in `/config/import-journals`, configurable with `BOOK_IMPORT_JOURNAL_ROOT`. Media staging can use the share's normal permissions. Keep the journal folder private (`0700`) on a persistent filesystem supporting file locks; it must sit outside download, staging and library roots. API and worker processes must share this storage. Native installations default to `.local/import-journals` under the working directory; create its parent or set an absolute path with an existing parent.
+
+Existing routes retain their saved staging and journal locations, including the private `0700` requirement for legacy co-located journals. Folder changes do not move or delete historical records. Finish or cancel unfinished imports before changing their storage. `BOOK_IMPORT_STAGING_ROOT` remains an explicit staging override; without it, the picker selects staging for the chosen library. Old journal locations remain part of backup and recovery evidence.
+
+Audiobookshelf ignores the hidden staging child. For Grimmory, library-only mounts require the library watcher to be disabled and Dewarr's account to have scan permission: its recursive scanner skips hidden folders, but its watcher does not reliably exclude them. With the watcher enabled, expose a shared parent and keep staging beside the watched library. Apply the same exclusion to any additional service watching that library.
 
 Use the same paths in Dewarr, qBittorrent, and your library server (Audiobookshelf or Grimmory) when possible. Grimmory's image is `grimmory/grimmory` and listens on port 6060. For example:
 
@@ -70,24 +76,24 @@ Dewarr as a Docker bind mount. NFS can map the container's uid to a server-side
 owner: a worker running as uid `1000` can legitimately see its staging folder and
 new files owned by `99:100`. Dewarr accepts this mapping and verifies actual file
 operations. You do not need to change `PUID` just to match the reported NFS owner.
-The lock files must belong to the same server-side owner as the staging folder.
+Legacy lock files must belong to the same server-side owner as their journal folder. New routes keep locks in protected app storage.
 If access is denied, check the NFS export's permissions and identity mapping;
 the `uid` and `dir_mode` options below apply to SMB/CIFS, not NFS.
 
 SMB/CIFS mounts need a few options, because the share, not Linux, decides ownership and permissions:
 
 - Dewarr needs read/write access to the share. Where Unix ownership is not provided by the server, `uid=<PUID>,gid=<PGID>` can make the mount accessible to the container user. Dewarr validates operations rather than requiring that the reported uid equal `PUID`.
-- The staging folder still needs private permissions (`0700`) because it holds recovery journals. Use per-folder permissions where the server supports them. On mounts with synthetic permissions, `dir_mode=0700` applies to the whole mount and can affect other containers; it is not a requirement for the library and download folders themselves. This limitation and the planned separation of journals from media storage are covered in [storage compatibility](STORAGE-COMPATIBILITY.md).
+- New routes allow ordinary shared media permissions, including synthetic `dir_mode`/`file_mode` settings. Their journals live in `/config/import-journals`; do not impose `dir_mode=0700` on the whole media share for Dewarr. Legacy routes with journals on the share still need private journal-folder permissions.
 - `serverino` (the default): Dewarr tracks files by inode number. With `noserverino` those numbers can change between checks. The route test warns when it sees this.
-- `nobrl` on older kernels, if the route test reports that the staging filesystem does not support file locks.
+- File locks are tested on the journal filesystem. For new routes, fix `/config` access if this check fails; changing SMB media lock options is unnecessary.
 
 Shares without hardlink support, such as many NAS SMB exports, fall back to copying.
 
 ### mergerfs and pooled storage
 
 Mount the pooled parent once, such as `/mnt/user/data:/data`, and choose library and download
-folders below `/data`. Do not give Dewarr separate Docker mounts for the download and library
-subfolders, and do not mix a mergerfs pool path with one of its underlying branch paths. A single
+folders below `/data` for efficient hardlinks. Separate download and library mounts are supported
+with copy fallback, but cannot guarantee hardlinks. Do not mix a mergerfs pool path with one of its underlying branch paths. A single
 shared view lets mergerfs place hardlinks on the same branch and matches the path layout recommended
 for Sonarr and Radarr.
 
@@ -120,9 +126,9 @@ Existing `BOOK_DATABASE_URL`, `BOOK_SECRET_KEY`, and `BOOK_SECRET_KEY_FILE` over
 
 Proxy to port 8000 and set `PUBLIC_URL=https://books.example.com`. Secure cookies are enabled automatically for HTTPS. Keep the browser's original Host header. A proxy on the Compose network can use `http://dewarr:8000` as its upstream.
 
-Form submissions accept the request's own origin (scheme, hostname and port) or the configured `PUBLIC_URL`. Direct LAN access through another hostname, IP or published port works without changing that setting. For a proxy that terminates HTTPS or rewrites the Host header, set `PUBLIC_URL` to the external browser address and recreate the container. Forwarded host/protocol headers do not authorize additional origins. `PUBLIC_URL` also remains the canonical address for identity-provider redirects and automatic secure-cookie configuration.
+Form submissions accept the request's own origin (scheme, hostname and port) or the configured `PUBLIC_URL`. Origin validation also accepts direct LAN addresses. However, an HTTPS public URL enables Secure cookies, so use HTTPS for sign-in: ordinary HTTP LAN access cannot retain those cookies. For a proxy that terminates HTTPS or rewrites the Host header, set `PUBLIC_URL` to the external browser address and recreate the container. Forwarded host/protocol headers do not authorize additional origins. `PUBLIC_URL` also remains the canonical address for identity-provider redirects and automatic secure-cookie configuration.
 
-Set `BOOK_PROXY_TOKEN` to a long random value. The proxy must send that value in `X-Dewarr-Proxy-Token`, set `X-Real-IP` to the connecting client, and append that client to `X-Forwarded-For`. When a header is repeated, the last value is the one that counts. Sign-in limits use that client when those two addresses agree, or when only one is present. If they disagree, Dewarr keeps the connection's own address, so a visitor-supplied address cannot replace the one the proxy appended. Requests without the token keep that connection address too, including visitors who open port 8000 directly.
+For client-IP attribution, set `BOOK_PROXY_TOKEN` to a long random value. The proxy must send that value in `X-Dewarr-Proxy-Token`, set `X-Real-IP` to the connecting client, and append that client to `X-Forwarded-For`. When a header is repeated, the last value is the one that counts. Sign-in limits use that client when those two addresses agree, or when only one is present. If they disagree, Dewarr keeps the connection's own address, so a visitor-supplied address cannot replace the one the proxy appended. Requests without the token keep that connection address too, including visitors who open port 8000 directly.
 
 ```nginx
 proxy_set_header Host $host;
@@ -130,6 +136,78 @@ proxy_set_header X-Dewarr-Proxy-Token your-long-random-token;
 proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 ```
+
+### Proxy identity and sign-in limits
+
+HTTPS termination does not require forwarded-protocol headers. Dewarr accepts the
+configured public origin even when the upstream request is HTTP. Keep Uvicorn's
+`--no-proxy-headers` setting so Dewarr can identify the actual connection peer;
+this also applies to native installations using the options below.
+
+Without trusted client-IP configuration, everyone behind the same proxy shares
+its 15-attempt/10-minute password sign-in budget. Successful attempts also count.
+A 429 response includes `Retry-After`; a 403 origin rejection is a different problem.
+
+The proxy-token setup above is supported in v0.3.2. The following IP/CIDR option
+and diagnostic command are development changes after v0.3.2; they are not available
+in that public release yet.
+
+If your proxy cannot inject `X-Dewarr-Proxy-Token`, explicitly trust only its
+connection address (or a dedicated proxy network):
+
+```yaml
+environment:
+  PUBLIC_URL: https://books.example.com
+  BOOK_TRUSTED_PROXY_IPS: '["192.168.2.1/32"]'
+```
+
+Use the proxy's address as seen by the container, which may differ from its public
+address due to Docker networking. The value is a JSON list. Trust is disabled by
+default; wildcards and all-address networks are rejected. Avoid a shared Docker
+subnet containing unrelated containers. Firewall direct access as appropriate.
+
+The trusted proxy must append its connecting client to `X-Forwarded-For`, or
+replace the header with an accurate chain. Dewarr walks that chain from right to
+left, stopping at the first untrusted address. Malformed chains fall back to the
+connection peer. When `X-Forwarded-For` is absent, one `X-Real-IP` is accepted from
+the trusted peer; that header must be overwritten by the proxy. Forwarded host
+and scheme never authorize additional origins. If `BOOK_PROXY_TOKEN` is also
+configured, token mode takes precedence, including rejection of an invalid token.
+This setting cannot recover a client address the proxy does not provide.
+
+### Authentication diagnostics
+
+Use one public URL setting. `BOOK_PUBLIC_URL` takes precedence over `PUBLIC_URL`,
+including in Docker. A host `.env` entry has no effect unless Compose passes it
+to the container. After changing settings:
+
+```sh
+docker compose up -d --no-deps --force-recreate dewarr
+```
+
+`docker compose restart` does not apply environment changes. For an image upgrade,
+pull the intended release as well. Native installations require a process restart.
+
+On builds after v0.3.2, this operator-only command applies the same Docker aliases
+as startup and prints selected configuration without passwords, cookies or tokens:
+
+```sh
+docker compose exec -T dewarr python -m app.diagnostics --container
+```
+
+Native installations use `uv run python -m app.diagnostics`. A new `docker exec`
+process does not inherit environment changes made inside the entrypoint, so simply
+calling `get_settings()` without applying those aliases can give misleading output.
+The diagnostic reflects the current container configuration; recreate the container
+when the desired Compose settings differ. Do not share a full environment dump.
+
+Origin failures log a reason (`missing`, `duplicate`, `malformed`, or `mismatch`),
+normalized origins and the response's `X-Request-ID`. Logs are sampled to one event
+per minute per reason per process; raw malformed headers, cookies and tokens are
+omitted. A reverse proxy should preserve exactly one browser Origin header.
+If login succeeds but `/api/auth/me` returns 401, check cookie transport and HTTPS
+rather than changing the origin allowlist. HTTPS with explicitly disabled Secure
+cookies emits an operator warning.
 
 ## Updating
 
@@ -170,7 +248,7 @@ Changing `POSTGRES_PASSWORD` in Compose does not change an existing database pas
 
 ## Troubleshooting
 
-- **The request origin is not allowed / cannot sign in:** set `PUBLIC_URL` to the browser's scheme, hostname and port (no path), then recreate the container. Native installations use `BOOK_PUBLIC_URL` and require a restart. This is especially important when an HTTPS proxy forwards requests to Dewarr over HTTP. Identity provider sign-in uses that same address for its redirect URL; see [OpenID Connect](OIDC.md). Plex sign-in uses it the same way; see [Plex](PLEX.md).
+- **The request origin is not allowed / cannot sign in:** set `PUBLIC_URL` to the browser's scheme, hostname and port (no path), check for a stale `BOOK_PUBLIC_URL` override, then recreate the container. Confirm the proxy preserves exactly one valid Origin header. Native installations use `BOOK_PUBLIC_URL` and require a restart. This is especially important when an HTTPS proxy forwards requests to Dewarr over HTTP. Identity provider sign-in uses that same address for its redirect URL; see [OpenID Connect](OIDC.md). Plex sign-in uses it the same way; see [Plex](PLEX.md).
 - **Permission denied:** check `PUID`, `PGID`, and shared-folder ownership.
 - **Database unavailable:** the log names the failed step. If `DB_HOST` does not resolve, Dewarr and PostgreSQL are not on the same Docker network. Check with `docker network inspect <network>`, then run `docker compose down` followed by `docker compose up -d` to recreate the containers and network. Your data is kept unless you add `-v`. A rejected password means the value differs from the one the database was created with.
 - **Existing database / missing key:** restore the original key to `config/app_key`.

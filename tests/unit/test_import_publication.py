@@ -732,6 +732,7 @@ def test_file_scope_cannot_publish_a_replaced_source(file_spec):
 
 def test_directory_receipt_fingerprint_remains_backward_compatible(specification):
     old_document = specification.model_dump(mode="json")
+    old_document.pop("journal_root")
     old_document.pop("source_kind")
     old_document.pop("binary_sidecars")
     old_document.pop("conversion")

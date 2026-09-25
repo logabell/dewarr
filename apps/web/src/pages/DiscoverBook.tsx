@@ -1,4 +1,5 @@
 import BookPagination from "../components/BookPagination";
+import { browseCache, refreshPending } from "../queryPolicies";
 import DetailTabs from "../components/DetailTabs";
 import BookSourceIcon from "../components/BookSourceIcon";
 import QuickAdd from "../components/QuickAdd";
@@ -105,6 +106,9 @@ function BookPage({
   const [editionPage, setEditionPage] = useState(1);
   const preview = useQuery({
     queryKey: ["provider-book", provider, externalId],
+    ...browseCache,
+    staleTime: 60_000,
+    refetchInterval: refreshPending,
     queryFn: async () =>
       result(
         await api.GET("/api/metadata/books/{provider}/{external_id}", {

@@ -1,6 +1,6 @@
 """Journaled, no-replace publication of one complete item from a frozen manifest.
 
-All recovery bookkeeping stays in the private staging root, never in an ABS library.
+Recovery bookkeeping stays in protected app storage, or a preserved legacy staging root.
 """
 
 import base64
@@ -33,6 +33,7 @@ from app.importing.filesystem import (
     relative_parts,
     source_scope,
 )
+from app.importing.layout import library_relative, overlaps, unsafe_roots
 from app.importing.naming import StrictModel, collision_key, fingerprint
 
 
@@ -70,6 +71,7 @@ class PublicationSpec(StrictModel):
     source_directory: dict[str, int]
     destination_root: Path
     staging_root: Path
+    journal_root: Path | None = None
     folder: str
     mode: Literal["hardlink", "copy", "rename"] = "hardlink"
     files: list[PublishFile] = Field(default_factory=list, max_length=5000)
@@ -89,6 +91,7 @@ class PublicationSpec(StrictModel):
         ):
             raise ValueError("A single-file import can publish only its inspected file")
         relative_parts(self.folder)
+        library_relative(self.folder)
         names = [file.name for file in self.files]
         if self.conversion:
             names.append(self.conversion.output_name)
@@ -122,13 +125,22 @@ class PublicationSpec(StrictModel):
         for root in (self.source_root, self.destination_root, self.staging_root):
             if not root.is_absolute() or str(root) == "/" or ".." in root.parts:
                 raise ValueError("Use absolute non-root paths")
-        for left, right in (
-            (self.source_root, self.destination_root),
-            (self.source_root, self.staging_root),
-            (self.destination_root, self.staging_root),
-        ):
-            if left.is_relative_to(right) or right.is_relative_to(left):
-                raise ValueError("Source, library and staging roots must not overlap")
+        if self.journal_root is not None:
+            if (
+                not self.journal_root.is_absolute()
+                or self.journal_root.anchor != "/"
+                or self.journal_root == Path("/")
+                or ".." in self.journal_root.parts
+                or any(
+                    overlaps(self.journal_root, root)
+                    for root in (self.source_root, self.destination_root, self.staging_root)
+                )
+            ):
+                raise ValueError(
+                    "Journal storage must be outside download, library and staging roots"
+                )
+        if unsafe_roots(self.source_root, self.destination_root, self.staging_root):
+            raise ValueError("Source, library and staging roots must not overlap")
         return self
 
 
@@ -144,6 +156,8 @@ def generated_files(spec):
 
 def specification_fingerprint(spec):
     payload = spec.model_dump(mode="json")
+    if spec.journal_root is None:
+        payload.pop("journal_root")  # Keep legacy frozen receipt hashes valid.
     if spec.source_kind == "directory":
         payload.pop("source_kind")  # Preserve existing directory publication receipts.
     if not spec.binary_sidecars:
@@ -193,7 +207,7 @@ def ensure_publication_marker(stage, staging, receipt_name, receipt):
         marker = os.open(
             PUBLICATION_MARKER,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o644,
+            0o666,
             dir_fd=stage,
         )
     except FileExistsError:
@@ -362,25 +376,70 @@ def sync_directory(fd):
             raise
 
 
+class StagingHandle(int):
+    """Media directory descriptor, with a separately held control directory.
+
+    Syscalls operate on the integer media fd. Only receipt/lock helpers use
+    journal_fd(), so journals cannot accidentally inherit media-share trust.
+    Both descriptors are owned by private_staging's context manager.
+    """
+
+    def __new__(cls, media, control, path):
+        result = int.__new__(cls, media)
+        result.control = control
+        result.media_path = str(path)
+        return result
+
+
+def journal_fd(staging):
+    return getattr(staging, "control", staging)
+
+
+def _private_directory(fd, path):
+    info = os.fstat(fd)
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise PublicationError(
+            f"Journal folder {path} must be private (0700); "
+            f"current permissions are {stat.S_IMODE(info.st_mode):04o}. "
+            "Use Dewarr's protected app storage for new journals. "
+            "Existing legacy journals must keep their private permissions."
+        )
+
+
 @contextmanager
-def private_staging(path):
-    with directory(path) as fd:
-        info = os.fstat(fd)
-        # NFS exports can map the worker to a server-side identity (for example
-        # Unraid's 99:100). The filesystem enforces access; comparing that owner
-        # with the container's uid rejects working mounts. Keep journals private,
-        # and validate created/reopened lock files against this directory's owner.
-        if stat.S_IMODE(info.st_mode) & 0o077:
-            raise PublicationError(
-                f"Staging folder {path} must be private (0700); "
-                f"current permissions are {stat.S_IMODE(info.st_mode):04o}. "
-                "Set permissions on this folder on the storage server. "
-                "For SMB/CIFS without Unix permissions, check dir_mode on the VM mount."
-            )
-        yield fd
+def private_staging(path, journal_root=None):
+    with directory(path) as media:
+        if journal_root is None:
+            _private_directory(media, path)
+            yield media
+        else:
+            if overlaps(Path(path), Path(journal_root)):
+                raise PublicationError("Journal and media staging roots must be separate")
+            with directory(journal_root) as control:
+                _private_directory(control, journal_root)
+                yield StagingHandle(media, control, path)
+
+
+def prepare_journals(path):
+    """Create our control directory without following links or changing existing modes."""
+    try:
+        with directory(path) as control:
+            _private_directory(control, path)
+        return
+    except FileNotFoundError:
+        pass
+    with directory(path.parent) as parent:
+        try:
+            os.mkdir(path.name, mode=0o700, dir_fd=parent)
+            sync_directory(parent)
+        except FileExistsError:
+            pass
+    with directory(path) as control:
+        _private_directory(control, path)
 
 
 def _lock_file(staging, name):
+    staging = journal_fd(staging)
     flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
     try:
         return os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=staging)
@@ -412,7 +471,7 @@ def publication_lock(staging, key):
     fd = _lock_file(staging, name)
     message = "Another worker is publishing to this library"
     try:
-        _acquire(fd, message, owner=os.fstat(staging).st_uid)
+        _acquire(fd, message, owner=os.fstat(journal_fd(staging)).st_uid)
 
         @contextmanager
         def pause():
@@ -439,7 +498,9 @@ def entry_lock(staging, entry_id):
     name = "lock-entry-" + hashlib.sha256(str(entry_id).encode()).hexdigest()
     fd = _lock_file(staging, name)
     try:
-        _acquire(fd, "Another worker is publishing this book", owner=os.fstat(staging).st_uid)
+        _acquire(
+            fd, "Another worker is publishing this book", owner=os.fstat(journal_fd(staging)).st_uid
+        )
         yield
     finally:
         os.close(fd)
@@ -455,6 +516,9 @@ def write_all(fd, data):
 
 
 def write_receipt(staging, name, receipt, *, create=False):
+    if isinstance(staging, StagingHandle):
+        receipt["staging_root"] = staging.media_path
+    staging = journal_fd(staging)
     data = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
     temporary = f"receipt-{uuid4().hex}.tmp"
     fd = os.open(
@@ -486,6 +550,8 @@ def write_receipt(staging, name, receipt, *, create=False):
 
 
 def read_receipt(staging, name):
+    expected_root = getattr(staging, "media_path", None)
+    staging = journal_fd(staging)
     try:
         with beneath(staging, name) as fd:
             size = os.fstat(fd).st_size
@@ -494,7 +560,12 @@ def read_receipt(staging, name):
             if not size:
                 return None  # An interrupted no-replace claim; receipts are never empty.
             with os.fdopen(os.dup(fd), "rb") as stream:
-                return json.load(stream)
+                receipt = json.load(stream)
+                if not isinstance(receipt, dict):
+                    raise PublicationError("Invalid publication journal")
+                if expected_root is not None and receipt.get("staging_root") != expected_root:
+                    raise PublicationError("Journal belongs to another media staging root")
+                return receipt
     except FileNotFoundError:
         return None
 
@@ -578,7 +649,7 @@ def destination_parent(root, relative):
             if existing is not None and existing != part:
                 raise PublicationError("Destination folder conflicts with an existing case variant")
             try:
-                os.mkdir(part, mode=0o755, dir_fd=fd)
+                os.mkdir(part, mode=0o777, dir_fd=fd)
                 sync_directory(fd)
             except FileExistsError:
                 pass
@@ -652,7 +723,7 @@ def prepare_stage(staging, receipt_name, receipt, spec, deadline):
     # Allocate another private staging path; never adopt or remove an unrecognized directory.
     while True:
         try:
-            os.mkdir(name, mode=0o755, dir_fd=staging)
+            os.mkdir(name, mode=0o777, dir_fd=staging)
             break
         except FileExistsError:
             receipt.setdefault("unconfirmed_stages", []).append(name)
@@ -709,7 +780,7 @@ def stage_conversion(
         pass
     if journaled_mismatch:
         _require_free_space(staging, conversion_reservation(spec))
-    output = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=stage)
+    output = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=stage)
     try:
         receipt.setdefault("partial_files", {})[name] = object_id(output)
         write_receipt(staging, receipt_name, receipt)
@@ -809,7 +880,7 @@ def stage_files(
                 output = os.open(
                     file.name,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                    0o644,
+                    0o666,
                     dir_fd=stage,
                 )
                 try:
@@ -831,7 +902,7 @@ def stage_files(
     for name, content in generated_files(spec).items():
         try:
             output = os.open(
-                name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=stage
+                name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=stage
             )
         except FileExistsError:
             with beneath(stage, name) as fd:
@@ -846,7 +917,7 @@ def stage_files(
                     output = os.open(
                         name,
                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                        0o644,
+                        0o666,
                         dir_fd=stage,
                     )
                 else:
@@ -922,7 +993,10 @@ def remaining_stage_bytes(staging, receipt, spec, deadline):
 def remaining_import_bytes(spec, *, timeout=600):
     """Read durable publication evidence before reserving additional storage."""
     deadline = time.monotonic() + timeout
-    with private_staging(spec.staging_root) as staging, directory(spec.destination_root) as target:
+    with (
+        private_staging(spec.staging_root, spec.journal_root) as staging,
+        directory(spec.destination_root) as target,
+    ):
         with publication_lock(staging, json.dumps(object_id(target), sort_keys=True)):
             receipt = read_receipt(staging, str(spec.entry_id) + ".json")
             if receipt:
@@ -982,7 +1056,10 @@ def remaining_rename_bytes(target, receipt, spec, deadline):
 
 
 def load_rename_plan(spec):
-    with private_staging(spec.staging_root) as staging, directory(spec.destination_root) as target:
+    with (
+        private_staging(spec.staging_root, spec.journal_root) as staging,
+        directory(spec.destination_root) as target,
+    ):
         with publication_lock(staging, json.dumps(object_id(target), sort_keys=True)):
             receipt = read_receipt(staging, str(spec.entry_id) + ".json")
             if receipt is None or "rename_plan" not in receipt:
@@ -997,7 +1074,10 @@ def load_rename_plan(spec):
 def remember_rename_plan(spec, plan):
     spec_hash = specification_fingerprint(spec)
     receipt_name = str(spec.entry_id) + ".json"
-    with private_staging(spec.staging_root) as staging, directory(spec.destination_root) as target:
+    with (
+        private_staging(spec.staging_root, spec.journal_root) as staging,
+        directory(spec.destination_root) as target,
+    ):
         if same_object(staging, object_id(target)):
             raise PublicationError("Staging and library refer to the same directory")
         with publication_lock(staging, json.dumps(object_id(target), sort_keys=True)):
@@ -1032,7 +1112,7 @@ def write_generated(folder, staging, receipt_name, receipt, spec, deadline):
     for name, content in generated_files(spec).items():
         try:
             output = os.open(
-                name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=folder
+                name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=folder
             )
         except FileExistsError:
             with beneath(folder, name) as fd:
@@ -1046,7 +1126,7 @@ def write_generated(folder, staging, receipt_name, receipt, spec, deadline):
                     output = os.open(
                         name,
                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                        0o644,
+                        0o666,
                         dir_fd=folder,
                     )
                 else:
@@ -1073,7 +1153,7 @@ def publish_renamed(
     spec_hash = specification_fingerprint(spec)
     receipt_name = str(spec.entry_id) + ".json"
     with (
-        private_staging(spec.staging_root) as staging,
+        private_staging(spec.staging_root, spec.journal_root) as staging,
         directory(spec.destination_root) as destination,
     ):
         if same_object(staging, object_id(destination)):
@@ -1160,7 +1240,7 @@ def publish_item(
     spec_hash = specification_fingerprint(spec)
     receipt_name = str(spec.entry_id) + ".json"
     with (
-        private_staging(spec.staging_root) as staging,
+        private_staging(spec.staging_root, spec.journal_root) as staging,
         directory(spec.destination_root) as destination,
     ):
         if same_object(staging, object_id(destination)):
@@ -1292,7 +1372,7 @@ def publish_item(
                                 return receipt
 
 
-def _mounts(mountinfo="/proc/self/mountinfo"):
+def filesystem_mounts(mountinfo="/proc/self/mountinfo"):
     try:
         with open(mountinfo, encoding="utf-8", errors="surrogateescape") as stream:
             lines = stream.read().splitlines()
@@ -1312,7 +1392,7 @@ def _mounts(mountinfo="/proc/self/mountinfo"):
 
 def mount_warnings(*paths, mountinfo="/proc/self/mountinfo"):
     """Mount options that break the device/inode identity checks publication depends on."""
-    mounts = _mounts(mountinfo)
+    mounts = filesystem_mounts(mountinfo)
     warnings = []
     for path in paths:
         containing = [mount for mount in mounts if path.is_relative_to(mount[0])]
@@ -1329,18 +1409,20 @@ def mount_warnings(*paths, mountinfo="/proc/self/mountinfo"):
 
 
 def probe_download_folder(
-    source_root: Path, relative: str, destination_root: Path, staging_root: Path
+    source_root: Path,
+    relative: str,
+    destination_root: Path,
+    staging_root: Path,
+    *,
+    journal_root: Path | None = None,
 ):
     """Use an owned temporary file to qualify an empty downloader save folder."""
-    if any(
-        left.is_relative_to(right) or right.is_relative_to(left)
-        for left, right in (
-            (source_root, destination_root),
-            (source_root, staging_root),
-            (destination_root, staging_root),
-        )
-    ):
+    if unsafe_roots(source_root, destination_root, staging_root):
         raise PublicationError("Source, staging and library roots must not overlap")
+    if journal_root is not None and any(
+        overlaps(journal_root, root) for root in (source_root, destination_root, staging_root)
+    ):
+        raise PublicationError("Journal storage must be outside media roots")
     if relative:
         relative_parts(relative)
     name = f".book-search-route-{uuid4().hex}.tmp"
@@ -1386,6 +1468,7 @@ def probe_download_folder(
                     destination_root,
                     staging_root,
                     source_kind="file",
+                    journal_root=journal_root,
                 )
             finally:
                 try:
@@ -1412,19 +1495,17 @@ def probe_destination(
     staging_root: Path,
     *,
     source_kind: Literal["directory", "file"] = "directory",
+    journal_root: Path | None = None,
 ):
     """Probe an actual selected file's link route, no-replace renames and staging locks."""
     if source_kind == "file" and file.source != relative_parts(source_relative)[-1]:
         raise PublicationError("A single-file probe must use its selected file")
-    if any(
-        left.is_relative_to(right) or right.is_relative_to(left)
-        for left, right in (
-            (source_root, destination_root),
-            (source_root, staging_root),
-            (destination_root, staging_root),
-        )
-    ):
+    if unsafe_roots(source_root, destination_root, staging_root):
         raise PublicationError("Source, staging and library roots must not overlap")
+    if journal_root is not None and any(
+        overlaps(journal_root, root) for root in (source_root, destination_root, staging_root)
+    ):
+        raise PublicationError("Journal storage must be outside media roots")
     token = uuid4().hex
     staged, target, linked = f"probe-{token}", f".book-search-probe-{token}", f"link-{token}"
     report = {"hardlink": False, "copy": False, "no_replace": False}
@@ -1460,10 +1541,11 @@ def probe_destination(
     with (
         directory(source_root) as source_mount,
         source_scope(source_mount, source_relative, source_kind) as source,
-        private_staging(staging_root) as staging,
+        private_staging(staging_root, journal_root) as staging,
         directory(destination_root) as destination,
         ExitStack() as handles,
     ):
+        control = journal_fd(staging)
         retained_files = {
             name: handles.enter_context(ExitStack()) for name in ("write", "marker", "lock")
         }
@@ -1514,23 +1596,25 @@ def probe_destination(
                 except OSError as error:
                     report["hardlink_error"] = errno.errorcode.get(error.errno, "IO_ERROR")
             phase = "checking safe journal creation"
-            # Publication journals are created with a file no-replace rename inside staging.
-            claim = os.open(claim_name, exclusive, 0o600, dir_fd=staging)
+            # Journals use file no-replace rename inside protected storage.
+            claim = os.open(claim_name, exclusive, 0o600, dir_fd=control)
             created["claim"] = object_id(claim)
             os.close(claim)
-            report["receipt_mode"] = no_replace(staging, claim_name, staging, claimed_name)
+            report["receipt_mode"] = no_replace(control, claim_name, control, claimed_name)
             created["claimed"], created["claim"] = created["claim"], None
-            claim = os.open(claim_name, exclusive, 0o600, dir_fd=staging)
+            claim = os.open(claim_name, exclusive, 0o600, dir_fd=control)
             created["claim"] = object_id(claim)
             os.close(claim)
-            if not refused(lambda: no_replace(staging, claim_name, staging, claimed_name)):
+            if not refused(lambda: no_replace(control, claim_name, control, claimed_name)):
                 created["claimed"], created["claim"] = created["claim"], None
                 raise PublicationError("Staging filesystem replaced an existing journal")
             phase = "checking filesystem locks"
-            lock = os.open(lock_name, exclusive, 0o600, dir_fd=staging)
+            lock = os.open(lock_name, exclusive, 0o600, dir_fd=control)
             created["lock"] = object_id(lock)
             retained_files["lock"].callback(os.close, lock)
-            _acquire(lock, "Another probe holds this lock", owner=os.fstat(staging).st_uid)
+            _acquire(
+                lock, "Another probe holds this lock", owner=os.fstat(journal_fd(staging)).st_uid
+            )
             fcntl.flock(lock, fcntl.LOCK_UN)
             phase = "checking safe library publication"
             os.mkdir(staged, mode=0o700, dir_fd=staging)
@@ -1635,16 +1719,19 @@ def probe_destination(
                 (staging, linked, False, created["link"]),
                 (staging, staged, True, created["stage"]),
                 (staging, write_name, False, created["write"]),
-                (staging, claim_name, False, created["claim"]),
-                (staging, claimed_name, False, created["claimed"]),
-                (staging, lock_name, False, created["lock"]),
+                (control, claim_name, False, created["claim"]),
+                (control, claimed_name, False, created["claimed"]),
+                (control, lock_name, False, created["lock"]),
             ):
                 if not owned:
                     continue
                 try:
                     observed = os.stat(name, dir_fd=fd, follow_symlinks=False)
                     if {"device": observed.st_dev, "inode": observed.st_ino} != owned:
-                        cleanup_failed(staging_root / name)
+                        cleanup_failed(
+                            ((journal_root or staging_root) if fd == control else staging_root)
+                            / name
+                        )
                         continue
                     # Close our pinned file only after checking its identity.
                     # NFS retains an unlinked open file under a .nfs name; SMB
@@ -1657,7 +1744,10 @@ def probe_destination(
                 except FileNotFoundError:
                     pass
                 except (OSError, InspectionError) as error:
-                    cleanup_failed(staging_root / name, error)
+                    cleanup_failed(
+                        ((journal_root or staging_root) if fd == control else staging_root) / name,
+                        error,
+                    )
             if created["target"]:
                 try:
                     with beneath(destination, target, folder=True) as current_target:

@@ -25,10 +25,12 @@ backups/
 /research/
 /*.md
 !/README.md
+!/AGENTS.md
 /*.csv
 /docs/*.md
 !/docs/DOCKER.md
 !/docs/DEVELOPMENT.md
+!/docs/TEST-AUDIT.md
 !/docs/OIDC.md
 !/docs/PLEX.md
 !/docs/READING-ACCOUNTS.md
@@ -46,6 +48,8 @@ backups/
 !/scripts/init_env.py
 !/scripts/export_openapi.py
 !/scripts/pytest_shard.py
+!/scripts/check.py
+!/scripts/smoke_proxy_auth.py
 !/scripts/release.py
 !/scripts/e2e_downloader_cleanup.py
 !/scripts/dependency_notices.py

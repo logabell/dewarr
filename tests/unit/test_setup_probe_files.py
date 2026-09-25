@@ -41,13 +41,22 @@ def test_concurrent_empty_root_probes_clean_only_their_own_objects(roots):
     assert not list(target.iterdir()) and not list(stage.iterdir())
 
 
-def test_failed_link_reports_copy_capability_without_claiming_a_hardlink(roots, monkeypatch):
+@pytest.mark.parametrize("protected", [False, True])
+def test_failed_link_reports_copy_capability_without_claiming_a_hardlink(
+    roots, monkeypatch, protected
+):
     def cross_device(*args, **kwargs):
         raise OSError(errno.EXDEV, "different filesystem")
 
     monkeypatch.setattr(publication.os, "link", cross_device)
     source, target, stage = roots
-    report = publication.probe_download_folder(source, "", target, stage)
+    journals = stage.parent / "control" if protected else None
+    if journals:
+        journals.mkdir(mode=0o700)
+        stage.chmod(0o777)
+    report = publication.probe_download_folder(source, "", target, stage, journal_root=journals)
+    if journals:
+        assert not list(journals.iterdir())
     assert not report["hardlink"] and report["hardlink_error"] == "EXDEV"
     assert report["copy"] and report["no_replace"]
     assert all(not list(root.iterdir()) for root in roots)
@@ -180,7 +189,7 @@ def test_valid_library_choice_creates_private_sibling_staging(media):
 
 def test_library_folder_mounted_on_its_own_asks_for_the_parent(media, monkeypatch):
     separate_filesystem(monkeypatch, media)
-    with pytest.raises(InspectionError, match="Mount the parent folder instead"):
+    with pytest.raises(InspectionError, match="different filesystem"):
         check_library_route(media, media.parent / STAGING_NAME, [])
     assert not (media.parent / STAGING_NAME).exists()
 
@@ -209,13 +218,12 @@ def test_staging_on_another_filesystem_is_refused(media, monkeypatch):
         check_library_route(media, staging, [])
 
 
-def test_libraries_on_different_filesystems_are_refused(media, monkeypatch):
+def test_other_libraries_can_use_independent_filesystems(media, monkeypatch):
     ebooks = media.parent / "ebooks"
     ebooks.mkdir()
     check_library_route(media, media.parent / STAGING_NAME, [ebooks, media.parent / "gone"])
     separate_filesystem(monkeypatch, ebooks)
-    with pytest.raises(InspectionError, match="one staging folder for every library"):
-        check_library_route(media, media.parent / STAGING_NAME, [ebooks])
+    check_library_route(media, media.parent / STAGING_NAME, [ebooks])
 
 
 def test_staging_follows_the_library_unless_configured(media, monkeypatch):
@@ -419,3 +427,62 @@ def test_probe_cleanup_does_not_mask_an_earlier_failure(roots, monkeypatch):
     assert caught.value.probe_report["cleanup_failures"][0]["error_code"] == "EACCES"
     assert len(list(stage.iterdir())) == 1
     assert not list(source.iterdir()) and not list(target.iterdir())
+
+
+@pytest.mark.parametrize("path", ["/library", "/audiobooks"])
+def test_top_level_library_uses_private_child(path):
+    library = Path(path)
+    assert choose_staging(library, None, None) == library / STAGING_NAME
+
+
+@pytest.mark.parametrize("boundary", ["device", "bind", "unwritable-parent"])
+def test_library_only_mount_chooses_child_and_probes_real_files(media, monkeypatch, boundary):
+    if boundary == "device":
+        separate_filesystem(monkeypatch, media.parent)
+    elif boundary == "bind":
+        monkeypatch.setattr(destinations, "filesystem_mounts", lambda: [(media, "ext4", set())])
+    else:
+        monkeypatch.setattr(destinations.os, "access", lambda *args: False)
+    staging = choose_staging(media, None, None)
+    assert staging == media / STAGING_NAME
+    check_library_route(media, staging, [])
+    source = media.parent / "downloads"
+    source.mkdir()
+    report = publication.probe_download_folder(source, "", media, staging)
+    assert report["no_replace"] and report["hardlink"] and report["copy"]
+    assert list(media.iterdir()) == [staging]
+    assert not list(staging.iterdir()) and not list(source.iterdir())
+    assert staging.stat().st_mode & 0o777 == 0o700
+    assert choose_staging(media, None, staging) == staging
+
+
+@pytest.mark.parametrize("obstacle", ["symlink", "file", "public"])
+def test_existing_child_staging_is_never_replaced_or_chmodded(media, obstacle):
+    staging = media / STAGING_NAME
+    sentinel = media.parent / "keep"
+    sentinel.write_text("keep")
+    if obstacle == "symlink":
+        staging.symlink_to(media.parent, target_is_directory=True)
+    elif obstacle == "file":
+        staging.write_text("keep")
+    else:
+        staging.mkdir(mode=0o755)
+    before = staging.lstat()
+    with pytest.raises(InspectionError):
+        check_library_route(media, staging, [])
+    assert staging.lstat() == before
+    assert sentinel.read_text() == "keep"
+
+
+@pytest.mark.parametrize("other_library", [False, True])
+def test_same_device_different_bind_mount_is_rejected(media, monkeypatch, other_library):
+    stage = media / STAGING_NAME
+    other = media.parent / "other"
+    other.mkdir()
+    monkeypatch.setattr(destinations, "filesystem_mounts", lambda: [(media, "ext4", set())])
+    if other_library:
+        check_library_route(media, stage, [other])
+    else:
+        with pytest.raises(InspectionError, match="different mounts"):
+            check_library_route(media, other / STAGING_NAME, [])
+        assert not (other / STAGING_NAME).exists()
