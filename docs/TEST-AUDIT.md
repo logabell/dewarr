@@ -132,3 +132,11 @@ browser clock before application timers. No failures were skipped or given
 longer timeouts. The same checks found a real missing ORM flush in capacity
 aggregation and a migration comparison bug for literal regex/index expressions;
 both were fixed, retaining a check that real index drift is detected.
+
+Further stale assertions now allow cached hydration order, normalize equivalent
+language labels, and construct genuinely legacy receipts without the newer journal
+field. Request recovery opens the current details panel before inspecting history.
+The disposable live-browser worker consumes all queues with one job at a time,
+including recovery jobs for checkpoints injected after startup; production job
+guards and the production worker lifecycle remain active. This repairs the test
+harness after production split recovery into its own worker pool.

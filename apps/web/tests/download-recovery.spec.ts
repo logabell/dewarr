@@ -175,6 +175,12 @@ test("recovery settings preserve source overrides and manage the release blockli
   });
   await page.goto("/requests");
   await page
+    .getByRole("button", {
+      name: "Details for Recovery activity book",
+      exact: true,
+    })
+    .click();
+  await page
     .getByText("Download history and recovery", { exact: true })
     .click();
   await expect(
