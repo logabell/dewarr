@@ -507,3 +507,11 @@ async def reject_failed_import(attempt_id: str) -> None:
     from app.domain.download_recovery import reject_inspected
 
     await reject_inspected(UUID(attempt_id))
+
+
+@tasks.periodic(cron="*/5 * * * *")
+@tasks.task(name="connections.health", queue="system", lock="connections.health")
+async def check_connection_health(timestamp: int = 0) -> None:
+    from app.domain.connection_health import run
+
+    await run()

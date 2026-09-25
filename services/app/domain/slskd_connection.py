@@ -66,6 +66,7 @@ async def save(db, admin, body):
     source.encrypted_secrets = encoded
     source.generation += 1
     source.status, source.last_error, source.last_success_at = "untested", None, None
+    source.last_checked_at = None
     previous_url = client.__dict__.get("base_url")
     client.name = "Soulseek"
     client.base_url = body.base_url
@@ -79,6 +80,7 @@ async def save(db, admin, body):
     client.credential_generation += 1
     client.capabilities = {}
     client.status, client.last_error, client.last_success_at = "untested", None, None
+    client.last_checked_at = None
     await db.flush()
     db.add(AuditEvent(actor_id=admin.id, action="source.slskd.updated", entity_id=client.id))
     return source, client
@@ -130,6 +132,7 @@ async def test_connection(user_id):
         changed = source.generation != generation or not source.enabled
         status = failure.kind.value if failure else "connected"
         if not changed:
+            source.last_checked_at = client_row.last_checked_at = datetime.now(UTC)
             source.status = client_row.status = status
             source.last_error = client_row.last_error = str(failure) if failure else None
             if not failure and observed:
@@ -195,6 +198,7 @@ async def search(user_id, argument, *, expected_generation):
         source.lease_token, source.lease_until = None, None
         changed = source.generation != generation or not source.enabled
         if not changed:
+            source.last_checked_at = datetime.now(UTC)
             source.status = failure.kind.value if failure else "connected"
             source.last_error = str(failure) if failure else None
             if not failure:

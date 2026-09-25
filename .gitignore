@@ -38,6 +38,7 @@ backups/
 !/docs/REQUEST-QUOTAS.md
 !/docs/DOWNLOAD-CLIENTS.md
 !/docs/MAM-PROXY.md
+!/docs/CONNECTION-HEALTH.md
 !/docs/STORAGE-COMPATIBILITY.md
 
 # Publish only reusable build, catalog, and test tools.

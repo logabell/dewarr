@@ -1,3 +1,4 @@
+import ConnectionHealth from "./components/ConnectionHealth";
 import { ApplicationRelease } from "./components/ApplicationRelease";
 import { useRefreshReadingLists } from "./hooks/useRefreshReadingLists";
 import type { ReadingProvider } from "./hooks/useRefreshReadingLists";
@@ -514,6 +515,7 @@ function Shell({ auth }: { auth: Auth }) {
             />
             <button type="submit">Search</button>
           </form>
+          <ConnectionHealth />
           {auth.user.role !== "viewer" && (
             <div className="topbar-actions">
               <button

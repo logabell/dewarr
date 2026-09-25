@@ -8,6 +8,7 @@ from sqlalchemy import String, cast, or_, select
 
 from app.db.models import (
     AcquisitionIntent,
+    AcquisitionReason,
     AcquisitionSelection,
     DownloadAttempt,
     DownloadFulfillment,
@@ -84,6 +85,15 @@ async def for_releases(db, owner_id, work_id, releases):
                 SourceResult.owner_id == owner_id,
                 AcquisitionIntent.owner_id == owner_id,
                 AcquisitionIntent.work_id.in_(family_ids(work_id)),
+                # A failed/prepared receipt is request history, not current source
+                # status once its last reason is withdrawn. Keep actual transfer
+                # evidence below, since withdrawal cannot undo a submitted download.
+                select(AcquisitionReason.id)
+                .where(
+                    AcquisitionReason.intent_id == AcquisitionIntent.id,
+                    AcquisitionReason.active.is_(True),
+                )
+                .exists(),
             )
             .order_by(Operation.created_at.desc(), Operation.id.desc())
         )

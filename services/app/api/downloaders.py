@@ -16,6 +16,7 @@ from app.api.metadata import adapter_http_error
 from app.config import get_settings
 from app.db.models import AuditEvent, ImportStorageSettings, Integration
 from app.domain import downloaders
+from app.domain.connection_health import connection_status
 from app.domain.download_folders import browse_folders
 from app.domain.downloaders import DownloadMapping
 from app.domain.operations import transaction_lock
@@ -125,7 +126,7 @@ def view(row, sources):
         enabled=row.enabled,
         has_credentials=any(decrypt_secrets(row.encrypted_secrets).values()),
         generation=row.credential_generation,
-        status=row.status,
+        status=connection_status(row),
         last_error=row.last_error,
         last_success_at=row.last_success_at,
         version=row.capabilities.get("version"),
@@ -285,6 +286,7 @@ async def save(body, admin, db, connection_id=None):
     row.credential_generation += 1
     row.capabilities = {}
     row.status, row.last_error, row.last_success_at = "untested", None, None
+    row.last_checked_at = None
     # Preserve active diagnostic leases and cooldowns across configuration edits.
     await db.flush()
     db.add(AuditEvent(actor_id=admin.id, action="downloader.saved", entity_id=row.id))

@@ -14,6 +14,10 @@ export const routeLabels = {
   audio_destination_id: "Default audiobook destination",
 } as const;
 type Field = keyof typeof routeLabels;
+const downloaderFields = [
+  { field: "torrent_downloader_id", protocol: "torrent" },
+  { field: "usenet_downloader_id", protocol: "nzb" },
+] as const;
 type DestinationChoice = { id: string; library_id: string; medium: string };
 
 type DownloaderChoice = { id: string; name: string; protocol?: string };
@@ -139,14 +143,13 @@ export default function RouteFields({
     <details onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
         <span className="setting-subheading">
-          Downloader and destination defaults
+          Downloader defaults
           <SettingHelp label="download preferences">
             The only enabled client of each type is used automatically. When
             several clients share a type, choose a default here. Soulseek uses
             its own connection for searches and downloads. Destinations use the
             folders configured in Libraries, separately for ebooks and
-            audiobooks. Choose a destination only when there are several library
-            folders. Download folders remain configured on each client.
+            audiobooks. Download folders remain configured on each client.
             Automatic imports still require a verified connection between those
             folders. Saved requests keep their accepted choices.
           </SettingHelp>
@@ -159,30 +162,14 @@ export default function RouteFields({
         your ebook or audiobook library.
       </p>
       <Notice error={options.error} />
-      {(Object.keys(routeLabels) as Field[]).map((field) => {
-        const protocol = protocolFor(field);
+      {downloaderFields.map(({ field, protocol }) => {
         const downloaders = options.data?.downloaders || [];
-        const medium = field === "audio_destination_id" ? "audio" : "ebook";
-        const choices = protocol
-          ? downloaders.filter((item) => item.protocol === protocol)
-          : libraryDestinations(
-              values,
-              medium,
-              options.data?.destinations || [],
-            );
-        const selected = protocol
-          ? protocolPreference(values, protocol, downloaders) || ""
-          : destinationPreference(values, medium, options.data?.destinations) ||
-            "";
-        const automatic = !protocol
-          ? choices.length === 1 && selected === choices[0].id
-          : choices.length === 1 &&
-            selected === choices[0].id &&
-            !values[field] &&
-            !downloaders.some(
-              (item) =>
-                item.id === values.downloader_id && item.protocol === protocol,
-            );
+        const choices = downloaders.filter(
+          (item) => item.protocol === protocol,
+        );
+        const selected =
+          protocolPreference(values, protocol, downloaders) || "";
+        const automatic = choices.length === 1 && selected === choices[0].id;
         return (
           <div key={field}>
             <label>
@@ -199,7 +186,6 @@ export default function RouteFields({
                   };
                   if (
                     !raw &&
-                    protocol &&
                     downloaders.find((item) => item.id === values.downloader_id)
                       ?.protocol === protocol
                   )
@@ -208,20 +194,16 @@ export default function RouteFields({
                 }}
               >
                 <option value="">
-                  {protocol
-                    ? choices.length > 1
-                      ? "Choose a default"
-                      : "No client configured"
-                    : choices.length > 1
-                      ? "Choose a default library folder"
-                      : "Set up a folder in Libraries"}
+                  {choices.length > 1
+                    ? "Choose a default"
+                    : "No client configured"}
                 </option>
                 {selected && !choices.some((item) => item.id === selected) && (
                   <option value={selected}>Unavailable saved choice</option>
                 )}
                 {choices.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {protocol ? downloaderLabel(item) : item.name}
+                    {downloaderLabel(item)}
                     {item.ready ? "" : " · needs verification"}
                   </option>
                 ))}
@@ -229,9 +211,8 @@ export default function RouteFields({
             </label>
             {automatic && (
               <p className="muted">
-                {protocol
-                  ? `Used automatically · your only ${protocol === "torrent" ? "torrent" : "Usenet"} client.`
-                  : `Uses your ${medium === "audio" ? "audiobook" : "ebook"} folder from Libraries. No separate destination setup needed.`}
+                Used automatically · your only{" "}
+                {protocol === "torrent" ? "torrent" : "Usenet"} client.
               </p>
             )}
             {Object.hasOwn(overrides, field) && (

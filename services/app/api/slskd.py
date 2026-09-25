@@ -10,6 +10,7 @@ from app.api.dependencies import Admin, Database
 from app.api.metadata import adapter_http_error
 from app.db.models import Integration, SourceConnection
 from app.domain import slskd_connection
+from app.domain.connection_health import connection_status
 from app.domain.downloaders import mappings_current
 from app.importing.storage import import_sources
 
@@ -69,7 +70,7 @@ def view(
         base_url=source.base_url if source and not source.deleted_at else "http://127.0.0.1:5030",
         has_api_key=bool(secrets.get("api_key")),
         generation=source.generation if source else 0,
-        status=source.status if source else "not-configured",
+        status=connection_status(source) if source else "not-configured",
         last_error=source.last_error if source else None,
         last_success_at=source.last_success_at if source else None,
         download_root=root or None,

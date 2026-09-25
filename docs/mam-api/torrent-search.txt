@@ -1,0 +1,172 @@
+
+Torrent Search (JSON)
+URI: /tor/js/loadSearchJSONbasic.php
+
+Search torrents
+
+main site search, returning json results (instead of html). This endpoint can accept input via post as application/xml, application/json, multipart/form-data, or application/x-www-form-urlencoded, as well as via get
+
+Parameter	Data type	Additional information
+description	empty	If this parameter is set, it will display the full description field for the torrent.
+dlLink	blank	show hash for dl link (prepend https://www.myanonamouse.net/tor/download.php/ and append the ?tid=# to use) for downloading on something without a session cookie. Alternatively use session cookie and just hit https://www.myanonamouse.net/tor/download.php?tid=# replacing # with the id number.
+isbn	Set	If this value is set, will return the isbn field (though often blank).
+mediaInfo	set	When set, returns the key parts of mediaInfo
+my_snatched	Exists	If set, limits returned results only to what you have snatched
+perpage	int	int in range of 5 to 1000, telling how many results to return
+tor	array
+REQUIRED
+browse_lang	list	List of integers for the languages you wish to view in results
+cat	list	List of integers for the categories you wish to view in results
+endDate	date	Date in format YYYY-MM-DD or unix timestamp torrents shoujld have been created before. Exclusive of value provided
+hash	HEX string	Hexadecimal encoded hash from a torrent
+id	int	Will return only a single ID's data
+main_cat	array	Array of ID(s) of the main category to include. IDs are:
+13 AudioBooks
+14 E-Books
+15 Musicology
+16 Radio
+searchIn	Enum	list to come
+searchType	enum	'all': Search everything
+'active': Last update had 1+ seeders
+'inactive': Last update has 0 seeders
+'fl': Freeleech torrents
+'fl-VIP': Freeleech or VIP torrents
+'VIP': VIP torrents
+'nVIP': Torrents not VIP
+'nMeta': Torrents missing meta data (old torrents)
+sortType	enum	'titleAsc': By the Title, Descending order
+'titleDesc': By the Title, Ascending order
+'fileAsc': By number of files, Ascending Order
+'fileDesc': By number of files, Descending Order
+'sizeAsc': By size of the torrent, Ascending Order
+'sizeDesc': By size of the torrent, Descending Order
+'seedersAsc': By number of Seeders, Ascending Order
+'seedersDesc': By number of Seeders, Descending Order
+'leechersAsc': By number of Leechers, Ascending Order
+'leechersDesc': By number of Leechers, Descending Order
+'snatchedAsc': By number of times snatched, Ascending Order
+'snatchedDesc': By number of times snatched, Descending Order
+'dateAsc': By Date Added, Ascending Order
+'dateDesc': By Date Added, Descending Order
+'bmkaAsc': By date bookmarked, Ascending Order (Note: may return odd results if not bookmarked)
+'bmkaDesc': By date bookmarked, Descending Order (Note: may return odd results if not bookmarked)
+'reseedAsc': Date Reseed Request Added, Ascending Order (Note: may return odd results if no reseed request)
+'reseedDesc': Date Reseed Request Added, Descending Order (Note: may return odd results if no reseed request)
+'categoryAsc': Sorted by category (number) Ascending, followed by title Ascending
+'categoryDesc': Sorted by category (number) Descending, followed by title Ascending
+'random': random, duh
+'default':
+If text search present: by weight DESC, then ID desceding,
+else if instead searchIn is 'myReseed' or 'allReseed': same as reseedAsc
+else if searchIn is Bookmarks: same as 'bmkaDesc'
+else same as 'dateDesc'
+srchIn	array
+author	Set	If set, will cause the tor[text] to search in the author
+description	Set	If set, will cause the tor[text] to search in the description
+filenames	Set	If set, will cause the tor[text] to search in the filenames
+fileTypes	Set	If set, will cause the tor[text] to search in the file types
+narrator	Set	If set, will cause the tor[text] to search in the narrator
+series	Set	If set, will cause the tor[text] to search in the series
+tags	Set	If set, will cause the tor[text] to search in the tags
+title	Set	If set, will cause the tor[text] to search in the title
+startDate	date	Date in format YYYY-MM-DD or unix timestamp of earliest torrent(s) to show. Inclusive of the provided value
+startNumber	Int	Number of entries to skip. Used in pagination.
+text	text	Text to search for.
+
+
+Example input
+application/x-www-form-urlencoded:
+tor%5Bcat%5D%5B%5D=0&tor%5BsortType%5D=default&tor%5BbrowseStart%5D=true&tor%5BstartNumber%5D=0&bannerLink&bookmarks&dlLink&description&tor%5Btext%5D=mp3%20m4a
+
+JSON:
+
+{
+	"tor": {
+		"text": "collection cookbooks food test kitchen",
+		"srchIn": [
+			"title",
+			"author",
+			"narrator"
+		],
+		"searchType": "all",
+		"searchIn": "torrents",
+		"cat": ["0"],
+		"browseFlagsHideVsShow": "0",
+		"startDate": "",
+		"endDate": "",
+		"hash": "",
+		"sortType": "default",
+		"startNumber": "0"
+	},
+	"thumbnail": "true"
+}
+
+
+Output Parameters
+Parameter	Data type	Additional information
+data	List	This is a list of objects/arrays with the following keys
+added	datetime	the date and time (in utc) the item was uploaded to site
+author_info	string	json object of id:name pairs
+bookmarked	datetime (nullable)	Datetime of when an item was bookmarked by the user (or null if not bookmarked)
+browseflags	bitfield	bit field of the different tags and flags on a torrent see [link pending] for more information
+cat	string	the html display for the category based on the users preferences
+category	int	specific category id the item is in
+catname	string	the category the item is in
+comments	int	number of comments users have added to the item
+dl	string	user specific hash to download the torrent file. You can download by appending it to the url: /tor/download.php/
+filetypes	string	concatenated string of file types
+fl_vip	boolean	if the item is freeleech and/or vip
+free	boolean	if the item is freeleech or not
+id	int	the id of the torrent itself. User can pull up the page via /t/{id}
+lang_code	string	the 3 letter ISO code for the language
+language	int	the internal int for the language
+leechers	int	number of leechers
+main_cat	int	the main category id this is in.
+13 = AudioBooks
+14 = E-Books
+15 = Musicology
+16 = Radio
+my_snatched	boolean	Whether or not you have snatched this torrent before. Note 5 to 20 min delay on updating.
+narrator_info	string	json object of id:name pairs
+numfiles	int	number of files in the torrent
+owner	int	userid of the uploader
+owner_name	string	username of the uploader
+personal_freeleech	boolean	Whether or not you have bought a torrent as a personal freeleech. Note 5 to 20 min delay on updating.
+seeders	int	number of seeders
+series_info	string	json object of id:name pairs
+size	string	Size of the torrent
+tags	string
+times_completed	int	number of users who have fully snatched the torrent
+title	string
+vip	boolean	if the item is vip or not
+total	int	the number of results the server loaded for your search. Automatically expands as you ask for later results
+total_found	int	Total results found
+
+
+Example output
+{
+    "data": [
+        {
+            "id": "273200",
+            "language": "1",
+            "main_cat": "13",
+            "category": "108",
+            "catname": "Audiobooks - Urban Fantasy",
+            "size": "6324306932",
+            "numfiles": "149",
+            "vip": "0",
+            "free": "0",
+            "fl_vip": "0",
+            "name": "Love at Stake series",
+            "w": "5527",
+            "tags": "Love at Stake series unabridged 64–128 Kbps Fiction Paranormal Romance Fantasy Vampires Bestseller mp3 m4a",
+            "author_info": "{\"8234\": \"Kerrelyn Sparks\"}",
+            "narrator_info": "{\"1\": \"Abby Craden\", \"1220\": \"Deanna Hurst\", \"13716\": \"Lorna Bennett\", \"1481\": \"P J Ochlan\", \"1499\": \"Suzanne Cypress\", \"1948\": \"Chloe Campbell\", \"2168\": \"Paula Costello\", \"3408\": \"Gia St Claire\", \"348\": \"Amy Rubinate\", \"356\": \"Therese Plummer\", \"3665\": \"Nicol Zanzarella\", \"3689\": \"Brianna Bronte\", \"3919\": \"Enrique Morales\", \"500\": \"Gabra Zackman\", \"52\": \"Coleen Marlo\", \"7388\": \"Aimee Castle\", \"7389\": \"Donna Rawlins\", \"7390\": \"Jennifer Bradshaw\"}",
+            "series_info": "{\"67\": [\"Love at Stake\", \"01-16, 13.5\"]}",
+            "filetype": "m4a mp3",
+            "description": "[size=4][b]Love at Stake - Books 1–16 & 13.5 (Unabridged) - 64–128 Kbps[\/b][\/size]\r\n\r\nWelcome to the dangerous—and hilarious—world of modern day vampires. There are vampire cable channels, a celebrity magazine called Live with the Undead, and just like the living, vampires have dental emergencies. That’s how dentist Shanna Whelan, a mortal female, meets the smolderingly undead Roman Draganesti, and finds her life turning absolutely batty…\r\n\r\n[b]In the series:[\/b]\r\n\r\n[*] 01. How To Marry a Millionaire Vampire - Narrated by Suzanne Cypress - 11h35m, MP3\r\n\r\n[*] 02. Vamps and the City - Narrated by Abby Craden - 11h34m, MP3\r\n\r\n[*] 03. Be Still My Vampire Heart - Narrated by Donna Rawlins - 10h4m, MP3\r\n\r\n[*] 04. The Undead Next Door - Narrated by Deanna Hurst - 13h4m, M4A\r\n\r\n[*] 05. All I Want for Christmas Is a Vampire - Narrated by Coleen Marlo - 10h30m, M4A\r\n\r\n[*] 06. Secret Life of a Vampire - Narrated by Jennifer Bradshaw - 11h9m, MP3\r\n\r\n[*] 07. Forbidden Nights with a Vampire - Narrated by Chloe Campbell - 9h32m, MP3\r\n\r\n[*] 08. The Vampire and the Virgin - Narrated by Therese Plummer - 10h29m, MP3\r\n\r\n[*] 09. Eat Prey Love - Narrated by Gia St. Claire - 10h7m, MP3\r\n\r\n[*] 10. Vampire Mine - Narrated by Gabra Zackman - 10h, MP3\r\n\r\n[*] 11. Sexiest Vampire Alive - Narrated by Aimee Castle - 10h27m, MP3\r\n\r\n[*] 12. Wanted: Undead or Alive - Narrated by P. J. Ochlan - 9h30m, MP3\r\n\r\n[*] 13. Wild About You - Narrated by Nicol Zanzarella - 9h39m, MP3\r\n\r\n[*] 13.5. Vampires Gone Wild - Narrated by Brianna Bronte & Lorna Bennett - 8 hrs, MP3\r\n\r\n[*] 14. The Vampire with the Dragon Tattoo - Narrated by Paula Costello - 9h46m, MP3\r\n\r\n[*] 15. How to Seduce a Vampire (Without Really Trying) - Narrated by Amy Rubinate - 10h24m, MP3\r\n\r\n[*] 16. Crouching Tiger, Forbidden Vampire - Narrated by Enrique Morales - 9h2m, MP3\r\n\r\n[b]Author's Website:[\/b] http:\/\/www.kerrelynsparks.com\/booklist.html",
+            "dl": "[REDACTED_USER_SPECIFIC_DOWNLOAD_TOKEN]",
+            "bookmarked": null
+        },
+        ...
+}

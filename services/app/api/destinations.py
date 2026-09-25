@@ -157,6 +157,7 @@ async def setup_probe(
             "destination_id": str(row.id),
             "configuration": configuration,
             "setup_command": command,
+            "previous_probe": (await view(db, row)).probe or {},
             "setup_downloader": {
                 "id": str(downloader.id),
                 "generation": downloader.credential_generation,

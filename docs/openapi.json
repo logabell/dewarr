@@ -365,6 +365,27 @@
         }
       }
     },
+    "/api/health/connections": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Connections",
+        "operationId": "connections_api_health_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionHealthView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/setup": {
       "get": {
         "tags": [
@@ -14180,6 +14201,90 @@
         }
       }
     },
+    "/api/sources/mam/account": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Account",
+        "operationId": "account_api_sources_mam_account_get",
+        "parameters": [
+          {
+            "name": "expected_generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Expected Generation"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MAMAccount"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources/mam/purchases": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Purchase",
+        "operationId": "purchase_api_sources_mam_purchases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MAMPurchase"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MAMPurchaseResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sources/mam/search": {
       "post": {
         "tags": [
@@ -17272,7 +17377,7 @@
             "maximum": 86400.0,
             "minimum": 60.0,
             "title": "Seedbox Interval Seconds",
-            "default": 300
+            "default": 3600
           },
           "auto_vip": {
             "type": "boolean",
@@ -17316,9 +17421,17 @@
             "default": 2.5
           },
           "ratio_buy_gb": {
-            "type": "integer",
-            "maximum": 100000.0,
-            "minimum": 50.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100000.0,
+                "minimum": 50.0
+              },
+              {
+                "type": "string",
+                "const": "max"
+              }
+            ],
             "title": "Ratio Buy Gb",
             "default": 50
           },
@@ -17335,9 +17448,17 @@
             "default": 10
           },
           "buffer_buy_gb": {
-            "type": "integer",
-            "maximum": 100000.0,
-            "minimum": 50.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100000.0,
+                "minimum": 50.0
+              },
+              {
+                "type": "string",
+                "const": "max"
+              }
+            ],
             "title": "Buffer Buy Gb",
             "default": 50
           },
@@ -17354,9 +17475,17 @@
             "default": 5000
           },
           "bonus_buy_gb": {
-            "type": "integer",
-            "maximum": 100000.0,
-            "minimum": 50.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100000.0,
+                "minimum": 50.0
+              },
+              {
+                "type": "string",
+                "const": "max"
+              }
+            ],
             "title": "Bonus Buy Gb",
             "default": 50
           },
@@ -20939,6 +21068,85 @@
         ],
         "title": "ConnectionChoice"
       },
+      "ConnectionHealthItem": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "settings_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "status",
+          "message",
+          "checked_at",
+          "settings_url"
+        ],
+        "title": "ConnectionHealthItem"
+      },
+      "ConnectionHealthView": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionHealthItem"
+            },
+            "type": "array",
+            "title": "Connections"
+          },
+          "issues": {
+            "type": "integer",
+            "title": "Issues"
+          },
+          "check_interval_seconds": {
+            "type": "integer",
+            "title": "Check Interval Seconds",
+            "default": 300
+          }
+        },
+        "type": "object",
+        "required": [
+          "connections",
+          "issues"
+        ],
+        "title": "ConnectionHealthView"
+      },
       "ConnectionReconciliationRequest": {
         "properties": {
           "scan_id": {
@@ -21950,6 +22158,13 @@
             "type": "boolean",
             "title": "Automatic Import Ready",
             "default": false
+          },
+          "source_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Keys"
           }
         },
         "type": "object",
@@ -26614,6 +26829,138 @@
         ],
         "title": "ListView"
       },
+      "MAMAccount": {
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "classname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classname"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio"
+          },
+          "uploaded": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded"
+          },
+          "downloaded": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloaded"
+          },
+          "seedbonus": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seedbonus"
+          },
+          "vip_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vip Until"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "uid"
+        ],
+        "title": "MAMAccount"
+      },
+      "MAMAutomationChecks": {
+        "properties": {
+          "seedbox": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seedbox"
+          },
+          "vip": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vip"
+          },
+          "upload": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload"
+          }
+        },
+        "type": "object",
+        "title": "MAMAutomationChecks"
+      },
       "MAMConnectionInput": {
         "properties": {
           "base_url": {
@@ -26775,12 +27122,30 @@
             ],
             "title": "Last Success At"
           },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "proxy_health": {
+            "$ref": "#/components/schemas/ProxyHealthView"
+          },
           "route": {
             "type": "string",
             "title": "Route"
           },
           "automation": {
             "$ref": "#/components/schemas/AccountAutomation"
+          },
+          "automation_checks": {
+            "$ref": "#/components/schemas/MAMAutomationChecks"
           }
         },
         "type": "object",
@@ -26796,6 +27161,7 @@
           "status",
           "last_error",
           "last_success_at",
+          "last_checked_at",
           "route"
         ],
         "title": "MAMConnectionView"
@@ -26862,6 +27228,77 @@
           "message"
         ],
         "title": "MAMNetworkView"
+      },
+      "MAMPurchase": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_generation": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Generation"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "upload",
+              "VIP",
+              "wedges"
+            ],
+            "title": "Kind"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100000.0,
+                "minimum": 50.0
+              },
+              {
+                "type": "string",
+                "const": "max"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_generation",
+          "kind"
+        ],
+        "title": "MAMPurchase"
+      },
+      "MAMPurchaseResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "rejected",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "MAMPurchaseResult"
       },
       "MAMRelease": {
         "properties": {
@@ -31566,6 +32003,45 @@
           "indexer_id"
         ],
         "title": "ProwlarrSearch"
+      },
+      "ProxyHealthView": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "untested"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          }
+        },
+        "type": "object",
+        "title": "ProxyHealthView"
       },
       "PublicationReconciliationItemView": {
         "properties": {

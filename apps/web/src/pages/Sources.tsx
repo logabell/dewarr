@@ -1,6 +1,11 @@
 import { DeleteSourceConnection } from "../components/DeleteConfiguration";
-import SettingHelp from "../components/SettingHelp";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import MamControlCenter from "./MamControlCenter";
+import {
+  AccountAutomation,
+  AUTOMATION_DEFAULTS,
+  type AutomationSettings,
+} from "./MamAutomation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
@@ -364,394 +369,8 @@ function TorrentInspection({ sourceId }: { sourceId: string }) {
   );
 }
 
-type AutomationSettings = {
-  seedbox_ip: boolean;
-  seedbox_interval_seconds: number;
-  auto_vip: boolean;
-  vip_interval_hours: number;
-  use_wedge: boolean;
-  wedge_min_size: boolean;
-  wedge_min_size_mb: number;
-  protect_ratio: boolean;
-  ratio_below: number;
-  ratio_buy_gb: number;
-  maintain_buffer: boolean;
-  buffer_below_gb: number;
-  buffer_buy_gb: number;
-  spend_bonus: boolean;
-  bonus_above: number;
-  bonus_buy_gb: number;
-  upload_interval_hours: number;
-};
-
-const AUTOMATION_DEFAULTS: AutomationSettings = {
-  seedbox_ip: false,
-  seedbox_interval_seconds: 300,
-  auto_vip: false,
-  vip_interval_hours: 24,
-  use_wedge: false,
-  wedge_min_size: false,
-  wedge_min_size_mb: 0,
-  protect_ratio: false,
-  ratio_below: 2.5,
-  ratio_buy_gb: 50,
-  maintain_buffer: false,
-  buffer_below_gb: 10,
-  buffer_buy_gb: 50,
-  spend_bonus: false,
-  bonus_above: 5000,
-  bonus_buy_gb: 50,
-  upload_interval_hours: 3,
-};
-
 function automationSettings(connection: Connection): AutomationSettings {
   return { ...AUTOMATION_DEFAULTS, ...connection.automation };
-}
-
-function wholeNumber(value: string) {
-  const next = Number.parseInt(value, 10);
-  return Number.isInteger(next) ? next : null;
-}
-
-function boundedNumber(value: string, min: number, max: number) {
-  const next = Number(value);
-  return Number.isFinite(next) && next >= min && next <= max ? next : null;
-}
-
-function AccountAutomation({
-  value,
-  onChange,
-}: {
-  value: AutomationSettings;
-  onChange: (value: AutomationSettings) => void;
-}) {
-  const enabledCount = [
-    value.seedbox_ip,
-    value.auto_vip,
-    value.use_wedge,
-    value.protect_ratio,
-    value.maintain_buffer,
-    value.spend_bonus,
-  ].filter(Boolean).length;
-  return (
-    <details className="account-automation">
-      <summary>
-        <span>Account automation</span>
-        <span className="account-automation-state">
-          {enabledCount ? `${enabledCount} enabled` : "All off"}
-        </span>
-      </summary>
-      <p className="muted">
-        These stay off until you turn them on. They can spend bonus points, use
-        a Freeleech wedge you already own, or change the IP MyAnonamouse treats
-        as your seedbox.
-      </p>
-      <div className="helper-option">
-        <div className="helper-toggle">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={value.seedbox_ip}
-              onChange={(event) =>
-                onChange({ ...value, seedbox_ip: event.target.checked })
-              }
-            />
-            Auto-authorize seedbox IP
-          </label>
-          <SettingHelp label="seedbox IP">
-            Checks the public IP of this server&apos;s route to MyAnonamouse on
-            the interval below. When that IP or network changes, or the last
-            update is a day old, Dewarr updates the dynamic seedbox so the
-            tracker accepts the address. The IP check does not send your MAM
-            cookie.
-          </SettingHelp>
-        </div>
-        {value.seedbox_ip && (
-          <label>
-            Check interval (seconds)
-            <input
-              type="number"
-              min={60}
-              max={86400}
-              value={value.seedbox_interval_seconds}
-              onChange={(event) => {
-                const next = wholeNumber(event.target.value);
-                if (next !== null)
-                  onChange({ ...value, seedbox_interval_seconds: next });
-              }}
-            />
-          </label>
-        )}
-      </div>
-      <div className="helper-option">
-        <div className="helper-toggle">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={value.auto_vip}
-              onChange={(event) =>
-                onChange({ ...value, auto_vip: event.target.checked })
-              }
-            />
-            Auto-max VIP
-          </label>
-          <SettingHelp label="VIP top-up">
-            Spends bonus points to extend VIP, up to the longest purchase
-            MyAnonamouse allows. Skips the purchase when you cannot afford one
-            week or VIP is already at that cap.
-          </SettingHelp>
-        </div>
-        {value.auto_vip && (
-          <label>
-            Top-up interval (hours)
-            <input
-              type="number"
-              min={1}
-              max={168}
-              value={value.vip_interval_hours}
-              onChange={(event) => {
-                const next = wholeNumber(event.target.value);
-                if (next !== null)
-                  onChange({ ...value, vip_interval_hours: next });
-              }}
-            />
-          </label>
-        )}
-      </div>
-      <div className="helper-option">
-        <div className="helper-toggle">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={value.use_wedge}
-              onChange={(event) =>
-                onChange({ ...value, use_wedge: event.target.checked })
-              }
-            />
-            Use a Freeleech wedge on download
-          </label>
-          <SettingHelp label="Freeleech wedge">
-            On each manual or automatic download, ask MyAnonamouse to spend one
-            Freeleech wedge you already own when the torrent is not already
-            free. This does not buy a wedge. A search result can also spend one
-            wedge for that torrent alone. Public freeleech, a wedge already
-            applied, and VIP freeleech while VIP is active are left alone. If
-            MyAnonamouse refuses, the torrent is not sent to the download
-            client.
-          </SettingHelp>
-        </div>
-        {value.use_wedge && (
-          <>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={value.wedge_min_size}
-                onChange={(event) =>
-                  onChange({ ...value, wedge_min_size: event.target.checked })
-                }
-              />
-              Only for torrents larger than a minimum size
-            </label>
-            {value.wedge_min_size && (
-              <label>
-                Minimum size (MB)
-                <input
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  value={value.wedge_min_size_mb}
-                  onChange={(event) => {
-                    const next = boundedNumber(
-                      event.target.value,
-                      0,
-                      10_000_000,
-                    );
-                    if (next !== null)
-                      onChange({ ...value, wedge_min_size_mb: next });
-                  }}
-                />
-              </label>
-            )}
-          </>
-        )}
-      </div>
-      <div className="setting-subheading">
-        <h3>Upload credit</h3>
-        <SettingHelp label="upload credit">
-          Buys the amount you set while the matching rule is on. Ratio is
-          checked before the reserve. Extra bonus points can buy again in the
-          same check until the balance falls to the threshold.
-        </SettingHelp>
-      </div>
-      <div className="helper-option">
-        <div className="helper-toggle">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={value.protect_ratio}
-              onChange={(event) =>
-                onChange({ ...value, protect_ratio: event.target.checked })
-              }
-            />
-            Protect minimum ratio
-          </label>
-          <SettingHelp label="minimum ratio">
-            Buys upload credit when your ratio falls below the number you set.
-          </SettingHelp>
-        </div>
-        {value.protect_ratio && (
-          <div className="automation-fields">
-            <label>
-              If ratio falls below
-              <input
-                type="number"
-                min={0.1}
-                max={1000}
-                step="0.1"
-                value={value.ratio_below}
-                onChange={(event) => {
-                  const next = boundedNumber(event.target.value, 0.1, 1000);
-                  if (next !== null) onChange({ ...value, ratio_below: next });
-                }}
-              />
-            </label>
-            <label>
-              Buy (GB)
-              <input
-                type="number"
-                min={50}
-                max={100000}
-                value={value.ratio_buy_gb}
-                onChange={(event) => {
-                  const next = wholeNumber(event.target.value);
-                  if (next !== null && next >= 50)
-                    onChange({ ...value, ratio_buy_gb: next });
-                }}
-              />
-            </label>
-          </div>
-        )}
-      </div>
-      <div className="helper-option">
-        <div className="helper-toggle">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={value.maintain_buffer}
-              onChange={(event) =>
-                onChange({ ...value, maintain_buffer: event.target.checked })
-              }
-            />
-            Maintain credit reserve
-          </label>
-          <SettingHelp label="credit reserve">
-            Buys upload credit when uploaded minus downloaded falls below this
-            many gigabytes. Skipped when the ratio rule already bought credit in
-            the same check.
-          </SettingHelp>
-        </div>
-        {value.maintain_buffer && (
-          <div className="automation-fields">
-            <label>
-              If reserve falls below (GB)
-              <input
-                type="number"
-                min={0}
-                max={10000000}
-                step="0.1"
-                value={value.buffer_below_gb}
-                onChange={(event) => {
-                  const next = boundedNumber(event.target.value, 0, 10_000_000);
-                  if (next !== null)
-                    onChange({ ...value, buffer_below_gb: next });
-                }}
-              />
-            </label>
-            <label>
-              Buy (GB)
-              <input
-                type="number"
-                min={50}
-                max={100000}
-                value={value.buffer_buy_gb}
-                onChange={(event) => {
-                  const next = wholeNumber(event.target.value);
-                  if (next !== null && next >= 50)
-                    onChange({ ...value, buffer_buy_gb: next });
-                }}
-              />
-            </label>
-          </div>
-        )}
-      </div>
-      <div className="helper-option">
-        <div className="helper-toggle">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={value.spend_bonus}
-              onChange={(event) =>
-                onChange({ ...value, spend_bonus: event.target.checked })
-              }
-            />
-            Spend excess bonus points
-          </label>
-          <SettingHelp label="bonus points">
-            Buys upload credit while bonus points are above this number. Stops
-            when the balance does not fall, or when it reaches the threshold.
-          </SettingHelp>
-        </div>
-        {value.spend_bonus && (
-          <div className="automation-fields">
-            <label>
-              If bonus points exceed
-              <input
-                type="number"
-                min={0}
-                max={100000000}
-                value={value.bonus_above}
-                onChange={(event) => {
-                  const next = wholeNumber(event.target.value);
-                  if (next !== null && next >= 0)
-                    onChange({ ...value, bonus_above: next });
-                }}
-              />
-            </label>
-            <label>
-              Buy (GB)
-              <input
-                type="number"
-                min={50}
-                max={100000}
-                value={value.bonus_buy_gb}
-                onChange={(event) => {
-                  const next = wholeNumber(event.target.value);
-                  if (next !== null && next >= 50)
-                    onChange({ ...value, bonus_buy_gb: next });
-                }}
-              />
-            </label>
-          </div>
-        )}
-      </div>
-      {(value.protect_ratio || value.maintain_buffer || value.spend_bonus) && (
-        <label>
-          Check interval (hours)
-          <input
-            type="number"
-            min={1}
-            max={168}
-            value={value.upload_interval_hours}
-            onChange={(event) => {
-              const next = wholeNumber(event.target.value);
-              if (next !== null && next >= 1 && next <= 168)
-                onChange({ ...value, upload_interval_hours: next });
-            }}
-          />
-        </label>
-      )}
-    </details>
-  );
 }
 
 function MamCheckError({ message }: { message?: string | null }) {
@@ -792,6 +411,8 @@ function MamCheckError({ message }: { message?: string | null }) {
 
 export function MamConnectionForm({ value }: { value: Connection }) {
   const cache = useQueryClient();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [controlBusy, setControlBusy] = useState(false);
   const [base, setBase] = useState(value.base_url);
   const [proxy, setProxy] = useState(value.proxy_url || "");
   const [proxyFallback, setProxyFallback] = useState(
@@ -825,6 +446,9 @@ export function MamConnectionForm({ value }: { value: Connection }) {
     enabled: false,
   });
   const persist = async () => {
+    if (formRef.current && !formRef.current.reportValidity()) {
+      throw new Error("Check the highlighted settings before saving.");
+    }
     const connection = result(
       await api.PUT("/api/sources/mam/connection", {
         body: {
@@ -853,6 +477,8 @@ export function MamConnectionForm({ value }: { value: Connection }) {
   };
   const save = useMutation({
     mutationFn: persist,
+    onSettled: () =>
+      cache.invalidateQueries({ queryKey: ["connection-health"] }),
     onSuccess: (connection) => {
       setCookie("");
       setRetainedCookie(null);
@@ -860,6 +486,8 @@ export function MamConnectionForm({ value }: { value: Connection }) {
     },
   });
   const proxyTest = useMutation({
+    onSettled: () =>
+      cache.invalidateQueries({ queryKey: ["connection-health"] }),
     mutationFn: async () => {
       if (dirty) await persist();
       return result(
@@ -878,6 +506,8 @@ export function MamConnectionForm({ value }: { value: Connection }) {
     onError: () => cache.invalidateQueries({ queryKey: ["mam-connection"] }),
   });
   const cookieTest = useMutation({
+    onSettled: () =>
+      cache.invalidateQueries({ queryKey: ["connection-health"] }),
     mutationFn: async () => {
       if (dirty) await persist();
       return result(await api.POST("/api/sources/mam/connection/test"));
@@ -891,285 +521,333 @@ export function MamConnectionForm({ value }: { value: Connection }) {
   });
   const busy = save.isPending || proxyTest.isPending || cookieTest.isPending;
   const health = !networkDirty && enabled ? network.data : null;
-  const proxyError = proxyTest.error?.message || health?.proxy?.error;
+  const savedProxy = !networkDirty && enabled ? value.proxy_health : null;
+  const savedProxyNewer = Boolean(
+    savedProxy?.checked_at &&
+    (savedProxy.status === "stale" ||
+      !health ||
+      new Date(savedProxy.checked_at) >= new Date(health.checked_at)),
+  );
+  const proxyStatus = savedProxyNewer
+    ? savedProxy?.status
+    : health?.proxy_status === "healthy"
+      ? "connected"
+      : savedProxy?.status;
+  const proxyRecovered =
+    savedProxy?.status === "connected" &&
+    savedProxy.checked_at &&
+    new Date(savedProxy.checked_at).getTime() > proxyTest.submittedAt;
+  const proxyError =
+    (!proxyRecovered ? proxyTest.error?.message : null) ||
+    (savedProxyNewer
+      ? savedProxy?.status === "unavailable"
+        ? savedProxy.message
+        : null
+      : health?.proxy?.error);
+  const proxyIp = savedProxyNewer ? savedProxy?.ip : health?.proxy?.ip;
+  const proxyCheckedAt = savedProxyNewer
+    ? savedProxy?.checked_at
+    : health?.checked_at;
+  const accountRecovered =
+    value.status === "connected" &&
+    value.last_checked_at &&
+    new Date(value.last_checked_at).getTime() > cookieTest.submittedAt;
   const accountError =
-    cookieTest.error?.message || (!accountDirty ? value.last_error : null);
+    (!accountRecovered ? cookieTest.error?.message : null) ||
+    (!accountDirty ? value.last_error : null);
   const accountStatus = !enabled
     ? "Disabled"
     : accountDirty
       ? "Not tested"
       : value.status === "connected"
         ? "Authenticated"
-        : value.status === "authentication"
-          ? "Rejected"
-          : "Unverified";
+        : value.status === "stale"
+          ? "Check overdue"
+          : value.status === "authentication"
+            ? "Rejected"
+            : "Unverified";
   return (
-    <form
-      className="panel editor mam-setup"
-      aria-label="MAM connection settings"
-      onChange={() => {
-        save.reset();
-        proxyTest.reset();
-        cookieTest.reset();
-      }}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!busy) save.mutate();
-      }}
-    >
-      <fieldset className="mam-setup-fields" disabled={busy}>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(event) => setEnabled(event.target.checked)}
+    <>
+      <MamControlCenter
+        key={value.generation}
+        connection={value}
+        blocked={accountDirty || enabled !== value.enabled || busy}
+        onBusy={setControlBusy}
+      />
+      <form
+        ref={formRef}
+        className="panel editor mam-setup"
+        aria-label="MAM connection settings"
+        onChange={() => {
+          save.reset();
+          proxyTest.reset();
+          cookieTest.reset();
+        }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy && !controlBusy) save.mutate();
+        }}
+      >
+        <fieldset className="mam-setup-fields" disabled={busy || controlBusy}>
+          <AccountAutomation
+            value={automation}
+            onChange={setAutomation}
+            checks={value.automation_checks}
           />
-          Enable MAM
-        </label>
-        <div className="mam-setup-checks">
-          <section
-            className="mam-network"
-            aria-label="MAM network status"
-            data-health={
-              proxyError
-                ? "unhealthy"
-                : (proxy ? health?.proxy?.ip : health?.direct.ip)
-                  ? "healthy"
-                  : "unknown"
-            }
-          >
-            <div className="mam-network-heading">
-              <h3>Proxy</h3>
-              <span className="mam-network-badge" role="status">
-                {proxyTest.isPending
-                  ? "Testing…"
-                  : proxyError
-                    ? "Unavailable"
-                    : health?.proxy_status === "healthy"
-                      ? "Healthy"
-                      : proxy
-                        ? "Not tested"
-                        : "Direct"}
-              </span>
-            </div>
-            <label>
-              HTTP proxy URL
-              <input
-                type="url"
-                value={proxy}
-                onChange={(event) => setProxy(event.target.value)}
-                placeholder="http://gluetun:8888"
-                maxLength={2000}
-              />
-            </label>
-            <p className="mam-check-hint">
-              Optional. Check the proxy and public IPs without signing in to
-              MAM.
-            </p>
-            <button
-              type="button"
-              disabled={!enabled}
-              onClick={(event) => {
-                if (event.currentTarget.form?.reportValidity())
-                  proxyTest.mutate();
-              }}
-            >
-              {proxyTest.isPending
-                ? "Testing proxy…"
-                : proxy
-                  ? "Test proxy"
-                  : "Test network"}
-            </button>
-            <div aria-live="polite">
-              <MamCheckError message={proxyError} />
-              <dl>
-                <div className="mam-network-address">
-                  <dt>Proxy IP</dt>
-                  <dd>
-                    {health?.proxy?.ip ||
-                      (proxyError
-                        ? "Unavailable"
-                        : proxy
-                          ? "Not tested"
-                          : "Not configured")}
-                  </dd>
-                </div>
-                <div className="mam-network-address">
-                  <dt>Direct server IP</dt>
-                  <dd>
-                    {health?.direct.ip ||
-                      (health?.direct.error ? "Unavailable" : "Not tested")}
-                  </dd>
-                </div>
-              </dl>
-              <MamCheckError
-                message={
-                  health?.direct.error
-                    ? `Direct IP check failed. ${health.direct.error}`
-                    : null
-                }
-              />
-              {health && (
-                <p className="mam-network-checked">
-                  Last checked{" "}
-                  <time dateTime={health.checked_at}>
-                    {new Date(health.checked_at).toLocaleTimeString()}
-                  </time>
-                </p>
-              )}
-              {health?.proxy?.ip && health.proxy.ip === health.direct.ip && (
-                <p className="mam-check-hint">
-                  Both routes report the same IP. Check the VPN if you expect
-                  different addresses.
-                </p>
-              )}
-            </div>
-          </section>
-          <section
-            className="mam-network"
-            aria-label="MAM account check"
-            data-health={
-              accountError
-                ? "unhealthy"
-                : accountStatus === "Authenticated"
-                  ? "healthy"
-                  : "unknown"
-            }
-          >
-            <div className="mam-network-heading">
-              <h3>MAM account</h3>
-              <span
-                className="mam-network-badge"
-                role="status"
-                aria-label="Connection test status"
-              >
-                {cookieTest.isPending
-                  ? "Testing…"
-                  : accountError
-                    ? "Failed"
-                    : accountStatus}
-              </span>
-            </div>
-            <label>
-              mam_id
-              <input
-                type="password"
-                value={cookie}
-                onChange={(event) => setCookie(event.target.value)}
-                autoComplete="new-password"
-                placeholder={
-                  value.has_session ? "••••••••" : "Session cookie value"
-                }
-                maxLength={8192}
-              />
-            </label>
-            <p className="mam-check-hint">
-              Verify your cookie using{" "}
-              {proxy
-                ? proxyFallback
-                  ? "the proxy, with direct fallback"
-                  : "the proxy only"
-                : "the direct connection"}
-              .
-            </p>
-            <button
-              type="button"
-              disabled={!enabled || !(value.has_session || cookie)}
-              onClick={(event) => {
-                if (event.currentTarget.form?.reportValidity())
-                  cookieTest.mutate();
-              }}
-            >
-              {cookieTest.isPending ? "Testing mam_id…" : "Test mam_id"}
-            </button>
-            <div aria-live="polite">
-              <MamCheckError message={accountError} />
-            </div>
-          </section>
-        </div>
-        <div className="actions">
-          <button className="primary">Save connection</button>
-          {value.configured && (
-            <DeleteSourceConnection
-              source="mam"
-              name="MAM"
-              generation={value.generation}
-              disabled={busy}
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
             />
-          )}
-          {dirty && (
-            <span className="mam-check-hint">
-              Tests save your changes first.
-            </span>
-          )}
-        </div>
-        <MamCheckError message={save.error?.message} />
-        <details className="mam-advanced">
-          <summary>Advanced settings</summary>
-          <div className="mam-advanced-fields">
-            <label>
-              MAM URL
-              <input
-                type="url"
-                value={base}
-                onChange={(event) => setBase(event.target.value)}
-                required
-                maxLength={2000}
-              />
-            </label>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={proxyFallback}
-                onChange={(event) => setProxyFallback(event.target.checked)}
-              />
-              Allow direct fallback when the proxy is unavailable
-            </label>
-            {proxyFallback && proxy && (
-              <p className="mam-check-hint">
-                MAM will see the direct server IP if the proxy fails.
-              </p>
-            )}
-            <div className="settings-fields">
+            Enable MAM
+          </label>
+          <div className="mam-setup-checks">
+            <section
+              className="mam-network"
+              aria-label="MAM network status"
+              data-health={
+                proxyError
+                  ? "unhealthy"
+                  : (proxy ? proxyStatus === "connected" : health?.direct.ip)
+                    ? "healthy"
+                    : "unknown"
+              }
+            >
+              <div className="mam-network-heading">
+                <h3>Proxy</h3>
+                <span className="mam-network-badge" role="status">
+                  {proxyTest.isPending
+                    ? "Testing…"
+                    : proxyError
+                      ? "Unavailable"
+                      : proxyStatus === "connected"
+                        ? "Healthy"
+                        : proxyStatus === "stale"
+                          ? "Check overdue"
+                          : proxy
+                            ? "Not tested"
+                            : "Direct"}
+                </span>
+              </div>
               <label>
-                Proxy username
+                HTTP proxy URL
                 <input
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  autoComplete="off"
-                  maxLength={300}
+                  type="url"
+                  value={proxy}
+                  onChange={(event) => setProxy(event.target.value)}
+                  placeholder="http://gluetun:8888"
+                  maxLength={2000}
                 />
               </label>
+              <p className="mam-check-hint">
+                Optional. Check the proxy and public IPs without signing in to
+                MAM.
+              </p>
+              <button
+                type="button"
+                disabled={!enabled}
+                onClick={(event) => {
+                  if (event.currentTarget.form?.reportValidity())
+                    proxyTest.mutate();
+                }}
+              >
+                {proxyTest.isPending
+                  ? "Testing proxy…"
+                  : proxy
+                    ? "Test proxy"
+                    : "Test network"}
+              </button>
+              <div aria-live="polite">
+                <MamCheckError message={proxyError} />
+                <dl>
+                  <div className="mam-network-address">
+                    <dt>Proxy IP</dt>
+                    <dd>
+                      {proxyIp ||
+                        (proxyError
+                          ? "Unavailable"
+                          : proxy
+                            ? "Not tested"
+                            : "Not configured")}
+                    </dd>
+                  </div>
+                  <div className="mam-network-address">
+                    <dt>Direct server IP</dt>
+                    <dd>
+                      {health?.direct.ip ||
+                        (health?.direct.error ? "Unavailable" : "Not tested")}
+                    </dd>
+                  </div>
+                </dl>
+                <MamCheckError
+                  message={
+                    health?.direct.error
+                      ? `Direct IP check failed. ${health.direct.error}`
+                      : null
+                  }
+                />
+                {proxyCheckedAt && (
+                  <p className="mam-network-checked">
+                    Last checked{" "}
+                    <time dateTime={proxyCheckedAt}>
+                      {new Date(proxyCheckedAt).toLocaleTimeString()}
+                    </time>
+                  </p>
+                )}
+                {health?.proxy?.ip && health.proxy.ip === health.direct.ip && (
+                  <p className="mam-check-hint">
+                    Both routes report the same IP. Check the VPN if you expect
+                    different addresses.
+                  </p>
+                )}
+              </div>
+            </section>
+            <section
+              className="mam-network"
+              aria-label="MAM account check"
+              data-health={
+                accountError
+                  ? "unhealthy"
+                  : accountStatus === "Authenticated"
+                    ? "healthy"
+                    : "unknown"
+              }
+            >
+              <div className="mam-network-heading">
+                <h3>MAM account</h3>
+                <span
+                  className="mam-network-badge"
+                  role="status"
+                  aria-label="Connection test status"
+                >
+                  {cookieTest.isPending
+                    ? "Testing…"
+                    : accountError
+                      ? "Failed"
+                      : accountStatus}
+                </span>
+              </div>
               <label>
-                Proxy password
+                mam_id
                 <input
                   type="password"
-                  placeholder={
-                    value.has_proxy_credentials &&
-                    !clearAuth &&
-                    proxy === (value.proxy_url || "")
-                      ? "••••••••"
-                      : undefined
-                  }
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
+                  value={cookie}
+                  onChange={(event) => setCookie(event.target.value)}
                   autoComplete="new-password"
-                  maxLength={1000}
+                  placeholder={
+                    value.has_session ? "••••••••" : "Session cookie value"
+                  }
+                  maxLength={8192}
+                />
+              </label>
+              <p className="mam-check-hint">
+                Verify your cookie using{" "}
+                {proxy
+                  ? proxyFallback
+                    ? "the proxy, with direct fallback"
+                    : "the proxy only"
+                  : "the direct connection"}
+                .
+              </p>
+              <button
+                type="button"
+                disabled={!enabled || !(value.has_session || cookie)}
+                onClick={(event) => {
+                  if (event.currentTarget.form?.reportValidity())
+                    cookieTest.mutate();
+                }}
+              >
+                {cookieTest.isPending ? "Testing mam_id…" : "Test mam_id"}
+              </button>
+              <div aria-live="polite">
+                <MamCheckError message={accountError} />
+              </div>
+            </section>
+          </div>
+          <div className="actions">
+            <button className="primary">Save connection</button>
+            {value.configured && (
+              <DeleteSourceConnection
+                source="mam"
+                name="MAM"
+                generation={value.generation}
+                disabled={busy}
+              />
+            )}
+            {dirty && (
+              <span className="mam-check-hint">
+                Tests save your changes first.
+              </span>
+            )}
+          </div>
+          <MamCheckError message={save.error?.message} />
+          <details className="mam-advanced">
+            <summary>Advanced settings</summary>
+            <div className="mam-advanced-fields">
+              <label>
+                MAM URL
+                <input
+                  type="url"
+                  value={base}
+                  onChange={(event) => setBase(event.target.value)}
+                  required
+                  maxLength={2000}
                 />
               </label>
               <label className="check-label">
                 <input
                   type="checkbox"
-                  checked={clearAuth}
-                  onChange={(event) => setClearAuth(event.target.checked)}
+                  checked={proxyFallback}
+                  onChange={(event) => setProxyFallback(event.target.checked)}
                 />
-                Clear saved proxy credentials
+                Allow direct fallback when the proxy is unavailable
               </label>
+              {proxyFallback && proxy && (
+                <p className="mam-check-hint">
+                  MAM will see the direct server IP if the proxy fails.
+                </p>
+              )}
+              <div className="settings-fields">
+                <label>
+                  Proxy username
+                  <input
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    autoComplete="off"
+                    maxLength={300}
+                  />
+                </label>
+                <label>
+                  Proxy password
+                  <input
+                    type="password"
+                    placeholder={
+                      value.has_proxy_credentials &&
+                      !clearAuth &&
+                      proxy === (value.proxy_url || "")
+                        ? "••••••••"
+                        : undefined
+                    }
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="new-password"
+                    maxLength={1000}
+                  />
+                </label>
+                <label className="check-label">
+                  <input
+                    type="checkbox"
+                    checked={clearAuth}
+                    onChange={(event) => setClearAuth(event.target.checked)}
+                  />
+                  Clear saved proxy credentials
+                </label>
+              </div>
             </div>
-          </div>
-        </details>
-        <AccountAutomation value={automation} onChange={setAutomation} />
-      </fieldset>
-    </form>
+          </details>
+        </fieldset>
+      </form>
+    </>
   );
 }

@@ -1,0 +1,68 @@
+.topbar:has(.connection-health) {
+  position: relative;
+}
+.connection-health {
+  position: relative;
+  flex-shrink: 0;
+}
+.connection-health-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--warning, #e9b65c);
+  cursor: pointer;
+  list-style: none;
+}
+.connection-health-trigger::-webkit-details-marker {
+  display: none;
+}
+.connection-health-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 50;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 70vh;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 36px #0002;
+}
+.connection-health-panel ul {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+.connection-health-panel li + li {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.connection-health-panel p {
+  margin: 6px 0;
+}
+.connection-health-panel small,
+.connection-health-panel a {
+  display: block;
+  margin-top: 6px;
+}
+@media (max-width: 600px) {
+  .connection-health {
+    position: static;
+  }
+  .connection-health-panel {
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: 60vh;
+  }
+  .connection-health-trigger span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}

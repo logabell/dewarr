@@ -79,7 +79,9 @@ async def lock_group_principals(db, selections, *, additional_user_ids=()):
         )
 
 
-async def approve_route(db, owner_id, destination_id, revision, *, expected=None, lock=False):
+async def approve_route(
+    db, owner_id, destination_id, revision, *, expected=None, lock=False, mapping=None
+):
     from app.importing.automatic import check_policy
 
     if get_settings().recovery_mode:
@@ -127,6 +129,11 @@ async def approve_route(db, owner_id, destination_id, revision, *, expected=None
     )
     if current.revision != revision or (await current_profile(db)).layout != "conventional":
         raise HTTPException(409, "Verify a supported automatic import route before downloading")
+    if mapping is not None:
+        from app.importing.route_evidence import approved
+
+        if not approved(policy.configuration, current.probe, mapping):
+            raise HTTPException(409, "Verify and enable imports from this client’s download folder")
     return snapshot
 
 
@@ -172,6 +179,7 @@ async def require_selection(db, selection):
         approval["destination_revision"],
         expected=approval,
         lock=True,
+        mapping=selection.frozen["mapping"],
     )
     profile = ProfileSnapshot.model_validate(operation.payload["profile"])
     current = await refresh_profile(db, selection.owner_id, profile)

@@ -23,6 +23,7 @@ from app.api import (
     catalog_grouping,
     community_lists,
     configuration_deletion,
+    connection_health,
     destinations,
     discovery,
     discovery_collections,
@@ -146,6 +147,7 @@ def create_app() -> FastAPI:
             {"status": "unavailable", "action": "Check database and migrations"}, 503
         )
 
+    app.include_router(connection_health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(oidc.router, prefix="/api")
     app.include_router(plex.router, prefix="/api")

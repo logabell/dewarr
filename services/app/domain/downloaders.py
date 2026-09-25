@@ -326,6 +326,7 @@ async def test_connection(user_id, connection_id):
         row.lease_token, row.lease_until = None, None
         changed = row.credential_generation != generation or not row.enabled
         if not changed:
+            row.last_checked_at = datetime.now(UTC)
             row.status = failure.kind.value if failure else "connected"
             row.last_error = str(failure) if failure else None
             row.capabilities = capabilities.model_dump(mode="json") if capabilities else {}

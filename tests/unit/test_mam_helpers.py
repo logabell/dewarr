@@ -239,13 +239,13 @@ async def test_ratio_and_bonus_each_buy_upload_credit():
             )
         )
         if request.url.path.endswith("bonusBuy.php"):
-            return httpx.Response(200, json={"success": True})
+            return httpx.Response(200, json={"success": True, "seedbonus": 30000})
         return httpx.Response(
             200,
             json={
                 "uid": 9,
                 "username": "member",
-                "seedbonus": 9000,
+                "seedbonus": 55000,
                 "ratio": 1.2,
                 "uploaded": "20 GiB",
                 "downloaded": "15 GiB",
@@ -332,14 +332,14 @@ async def test_bonus_purchases_stop_when_points_fall_under_the_threshold():
     def handler(request):
         if request.url.path.endswith("bonusBuy.php"):
             amounts.append(request.url.params.get("amount"))
-            remaining = 4000 if len(amounts) > 1 else 6000
+            remaining = 4000 if len(amounts) > 1 else 29000
             return httpx.Response(200, json={"success": True, "seedbonus": remaining})
         return httpx.Response(
             200,
             json={
                 "uid": 9,
                 "username": "member",
-                "seedbonus": 12000,
+                "seedbonus": 54000,
                 "ratio": 2,
                 "uploaded": "20 GiB",
                 "downloaded": "5 GiB",

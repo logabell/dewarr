@@ -45,7 +45,7 @@ def due_command(raw_settings, state, now):
     )
     if settings.seedbox_ip:
         age = _age(state, "seedbox_at", now)
-        if age is None or age >= timedelta(seconds=settings.seedbox_interval_seconds):
+        if age is None or age >= timedelta(seconds=max(3600, settings.seedbox_interval_seconds)):
             command.seedbox = True
             ip = state.get("seedbox_ip")
             asn = state.get("seedbox_asn")

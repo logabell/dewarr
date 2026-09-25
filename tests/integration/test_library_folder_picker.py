@@ -111,7 +111,7 @@ async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
         defaults = (await client.get(f"/api/acquisition/preferences/{scope}")).json()["effective"]
         assert defaults["ebook_library_id"] == library_id
         assert defaults["ebook_destination_id"] == chosen["id"]
-        assert defaults["downloader_id"] == str(route["downloader"])
+        assert defaults.get("downloader_id") is None
     async with database() as db:
         mounted = await storage_settings(db)
         assert mounted.import_destinations["ebooks"] == route["target"]

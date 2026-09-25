@@ -33,6 +33,7 @@ from app.importing.grouping import current_grouping
 from app.importing.matching import match_group
 from app.importing.naming import fingerprint
 from app.importing.planning import FreezeInput, GroupSelection, freeze_plan
+from app.importing.route_evidence import approved
 from app.importing.settings import current_profile
 from app.importing.starting import DestinationChoice, ImportInput, start_import
 from app.jobs.queue import enqueue
@@ -64,10 +65,22 @@ async def check_policy(db, row, *, lock=False):
         not current.publication_available
         or current.revision != policy.configuration["destination_revision"]
         or not current.probe
-        or current.probe.get("source_key") != policy.configuration["source_key"]
-        or current.probe.get("source_path") != policy.configuration["source_path"]
+        or not approved(policy.configuration, current.probe)
     ):
         raise HTTPException(409, "Automatic import route needs verification and renewed approval")
+    if getattr(row, "attempt_id", None):
+        from app.domain.acquisition_selection import verified_probe
+        from app.importing.destinations import destination_configuration
+
+        attempt = await db.get(DownloadAttempt, row.attempt_id)
+        selection = await db.get(AcquisitionSelection, attempt.selection_id)
+        mapping = selection.frozen["mapping"]
+        if not approved(policy.configuration, current.probe, mapping) or not await verified_probe(
+            db, destination, await destination_configuration(db, destination), mapping
+        ):
+            raise HTTPException(
+                409, "Verify this client's download folder for the library before importing"
+            )
     return policy, approver, destination, current
 
 
@@ -462,7 +475,7 @@ async def run(identifier):
                     db, attempt, await db.get(AcquisitionSelection, attempt.selection_id)
                 )
                 await download_reviews.requester_authority(db, selection)
-                if selection.frozen["mapping"]["source_key"] != policy.configuration["source_key"]:
+                if not approved(policy.configuration, current.probe, selection.frozen["mapping"]):
                     raise HTTPException(
                         409, "The completed source is outside this automatic import route"
                     )

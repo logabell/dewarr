@@ -5,7 +5,14 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import func, select
 
-from app.db.models import AcquisitionIntent, DownloadAttempt, Operation, SourceResult
+from app.db.models import (
+    AcquisitionIntent,
+    AcquisitionReason,
+    DownloadAttempt,
+    Integration,
+    Operation,
+    SourceResult,
+)
 from app.domain import automatic_selection, quick_add
 from tests.integration.test_acquisition import catalog
 from tests.integration.test_acquisition_defaults import save
@@ -256,13 +263,28 @@ async def test_cancelled_request_during_search_does_not_download(
         assert not await db.scalar(select(DownloadAttempt.id))
 
 
+@pytest.mark.parametrize("usenet_primary", [False, True])
 @pytest.mark.parametrize("blocked", [False, True])
 @pytest.mark.parametrize("automatic_folders", [False, True])
 async def test_clicked_release_download_is_pinned_and_idempotent(
-    client, database, authorized, blocked, automatic_folders
+    client, database, authorized, blocked, automatic_folders, usenet_primary
 ):
     if not automatic_folders:
         await defaults(client, authorized)
+    if usenet_primary:
+        async with database() as db, db.begin():
+            other_client = Integration(
+                name="Usenet",
+                kind="sabnzbd",
+                base_url="http://unused.invalid",
+                encrypted_secrets="unused",
+                status="connected",
+                enabled=True,
+            )
+            db.add(other_client)
+            await db.flush()
+            usenet_id = str(other_client.id)
+        await save(client, {"downloader_id": usenet_id})
     profiles = (await client.get("/api/acquisition/profiles")).json()
     async with database() as db, db.begin():
         search = await db.get(Operation, authorized["search"])
@@ -304,6 +326,7 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
         operation = await db.get(Operation, identifier)
         assert operation.status == ("held" if blocked else "completed"), operation.message
         assert operation.payload["command"]["result_id"] == str(authorized["result"])
+        assert operation.payload["command"]["downloader_id"] == authorized["body"]["downloader_id"]
         assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == (
             0 if blocked else 1
         )
@@ -357,6 +380,42 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
         assert completed["state"] == "downloaded"
         assert completed["prevent_download"]
         assert "Waiting for library import" in completed["message"]
+
+    # An independent list reason keeps this request's source receipt current.
+    book_list = (await client.post("/api/lists", json={"name": "Still wanted"})).json()
+    listed = await client.post(
+        f"/api/lists/{book_list['id']}/entries",
+        json={"work_id": request.json()["work_id"]},
+    )
+    assert listed.status_code == 204, listed.text
+    async with database() as db, db.begin():
+        reason = AcquisitionReason(
+            intent_id=UUID(saved["request_id"]),
+            kind="list",
+            reference=book_list["id"],
+            list_id=UUID(book_list["id"]),
+        )
+        db.add(reason)
+        await db.flush()
+        list_reason_id = reason.id
+    for reason in request.json()["reasons"]:
+        response = await client.delete(
+            f"/api/requests/{saved['request_id']}/reasons/{reason['id']}"
+        )
+        assert response.status_code == 200, response.text
+    fresh = (await client.get(f"/api/source-searches/{authorized['search']}")).json()
+    status = next(i["download"] for i in fresh["items"] if i["id"] == str(authorized["result"]))
+    assert status["state"] == ("failed" if blocked else "downloaded")
+
+    response = await client.delete(f"/api/requests/{saved['request_id']}/reasons/{list_reason_id}")
+    assert response.status_code == 200, response.text
+    fresh = (await client.get(f"/api/source-searches/{authorized['search']}")).json()
+    status = next(i["download"] for i in fresh["items"] if i["id"] == str(authorized["result"]))
+    if blocked:
+        assert status is None
+    else:
+        assert status["state"] == "downloaded"
+        assert status["prevent_download"]
 
 
 async def test_clicked_release_rejects_result_from_another_search(client, database, authorized):

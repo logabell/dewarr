@@ -23,9 +23,7 @@ test("download defaults inherit per field and persist after reload", async ({
     name: "Download defaults",
     exact: true,
   });
-  await panel
-    .getByText("Downloader and destination defaults", { exact: true })
-    .click();
+  await panel.getByText("Downloader defaults", { exact: true }).click();
   const torrentDefault = panel.getByLabel("Default torrent downloader", {
     exact: true,
   });

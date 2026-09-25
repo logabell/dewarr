@@ -55,7 +55,9 @@ export function useSeriesRoutes(
         d.medium === medium &&
         d.ready &&
         d.automatic_import_ready &&
-        d.source_key === downloader?.source_key,
+        (d.source_keys || [d.source_key]).includes(
+          downloader?.source_key || "",
+        ),
     ) || [];
   const destination = (medium: string) =>
     chooseRoute(

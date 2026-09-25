@@ -118,7 +118,7 @@ export default function AutomaticSelection({
       (d) =>
         d.ready &&
         d.medium === medium &&
-        d.source_key === client?.source_key &&
+        (d.source_keys || [d.source_key]).includes(client?.source_key || "") &&
         (!library || d.library_id === library),
     ) || [];
   const sameFolder =

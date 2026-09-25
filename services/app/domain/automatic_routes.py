@@ -67,7 +67,7 @@ def selection_clients(routes, medium):
     return values
 
 
-async def inherit(db, user, spec, profile, options):
+async def inherit(db, user, spec, profile, options, *, include_fallback=True):
     """Resolve defaults once for a review; validation never renews saved consent."""
     permitted(user)
     preferences = profile.preferences
@@ -132,9 +132,11 @@ async def inherit(db, user, spec, profile, options):
                 else "Configured library folder"
             )
         routes[medium] = route
-    alternate_id, alternate_generation, alternate_routes = await fallback_routes(
-        db, user, spec, profile, downloader, routes
-    )
+    alternate_id, alternate_generation, alternate_routes = (None, None, {})
+    if include_fallback:
+        alternate_id, alternate_generation, alternate_routes = await fallback_routes(
+            db, user, spec, profile, downloader, routes
+        )
     return AutomaticRoutes(
         downloader_id=downloader_id,
         downloader_generation=generation,
@@ -271,7 +273,7 @@ async def resolve(db, user, spec, downloader_id, generation, routes):
     for medium in sorted(media):
         route = routes[medium]
         approval = await approve_route(
-            db, user.id, route.destination_id, route.destination_revision
+            db, user.id, route.destination_id, route.destination_revision, mapping=mapping
         )
         destination = await db.get(ImportDestination, route.destination_id)
         config = await destination_configuration(db, destination)

@@ -12,6 +12,7 @@ from app.api.dependencies import Admin, CurrentUser, Database, Member
 from app.api.metadata import adapter_http_error
 from app.api.source_artifacts import SourceArtifactView, artifact_view
 from app.db.models import AuditEvent, SourceConnection, SourceResult
+from app.domain.connection_health import connection_status
 from app.domain.operations import transaction_lock
 from app.domain.prowlarr_network import prowlarr_call
 from app.domain.source_artifacts import persist_artifact
@@ -69,7 +70,7 @@ def view(row):
         enabled=bool(row and row.enabled),
         generation=row.generation if row else 0,
         excluded_indexers=secrets.get("excluded_indexers", []),
-        status=row.status if row else "not-configured",
+        status=connection_status(row) if row else "not-configured",
         last_error=row.last_error if row else None,
         last_success_at=row.last_success_at if row else None,
     )
@@ -100,6 +101,7 @@ async def save_connection(body: ProwlarrConnectionInput, admin: Admin, db: Datab
     row.deleted_at = None
     row.generation += 1
     row.status, row.last_error, row.last_success_at = "untested", None, None
+    row.last_checked_at = None
     db.add(AuditEvent(actor_id=admin.id, action="source.prowlarr.updated"))
     await db.commit()
     return view(row)

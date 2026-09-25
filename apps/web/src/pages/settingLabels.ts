@@ -1,6 +1,7 @@
 export function connectionLabel(status?: string) {
   const labels: Record<string, string> = {
     connected: "Connected",
+    stale: "Check overdue",
     "not-configured": "Not connected",
     untested: "Not tested",
     disabled: "Disabled",

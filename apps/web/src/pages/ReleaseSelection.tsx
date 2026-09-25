@@ -152,7 +152,9 @@ export default function ReleaseSelection({ artifact }: { artifact: Artifact }) {
       (item) =>
         item.ready &&
         item.medium === artifact.release.medium &&
-        item.source_key === downloader?.source_key &&
+        (item.source_keys || [item.source_key]).includes(
+          downloader?.source_key || "",
+        ) &&
         (!requiredLibrary || item.library_id === requiredLibrary),
     ) || [];
   const destination = chooseRoute(

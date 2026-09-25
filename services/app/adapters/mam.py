@@ -22,13 +22,20 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.adapters.contracts import AdapterError, FailureKind, Release
 from app.adapters.http import configured_url
+from app.adapters.mam_account import (
+    MAMPurchase,
+    MAMPurchaseResult,
+    UploadAmount,
+    account_data,
+    upload_wire_amount,
+)
 from app.adapters.mam_transport import route_error
 from app.domain.catalog_network import retry_delay
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 SEARCH_PATH = "tor/js/loadSearchJSONbasic.php"
 VIP_POINTS_PER_WEEK = 1250
-VIP_MAX_WEEKS = 12.85
+VIP_MAX_WEEKS = 90 / 7
 UPLOAD_CREDIT_GB = 50
 RATIO_FLOOR = 2.5
 BUFFER_FLOOR_GB = 10
@@ -56,7 +63,7 @@ class AccountAutomation(BaseModel):
     """Account actions an administrator can turn on. All of them default off."""
 
     seedbox_ip: bool = False
-    seedbox_interval_seconds: int = Field(default=300, ge=60, le=86400)
+    seedbox_interval_seconds: int = Field(default=3600, ge=60, le=86400)
     auto_vip: bool = False
     vip_interval_hours: int = Field(default=24, ge=1, le=168)
     use_wedge: bool = False
@@ -64,13 +71,13 @@ class AccountAutomation(BaseModel):
     wedge_min_size_mb: float = Field(default=0, ge=0, le=10_000_000)
     protect_ratio: bool = False
     ratio_below: float = Field(default=RATIO_FLOOR, gt=0, le=1000)
-    ratio_buy_gb: int = Field(default=UPLOAD_CREDIT_GB, ge=50, le=100_000)
+    ratio_buy_gb: UploadAmount = UPLOAD_CREDIT_GB
     maintain_buffer: bool = False
     buffer_below_gb: float = Field(default=BUFFER_FLOOR_GB, ge=0, le=10_000_000)
-    buffer_buy_gb: int = Field(default=UPLOAD_CREDIT_GB, ge=50, le=100_000)
+    buffer_buy_gb: UploadAmount = UPLOAD_CREDIT_GB
     spend_bonus: bool = False
     bonus_above: int = Field(default=BONUS_CEILING, ge=0, le=100_000_000)
-    bonus_buy_gb: int = Field(default=UPLOAD_CREDIT_GB, ge=50, le=100_000)
+    bonus_buy_gb: UploadAmount = UPLOAD_CREDIT_GB
     upload_interval_hours: int = Field(default=UPLOAD_CHECK_HOURS, ge=1, le=168)
 
     @field_validator(
@@ -101,11 +108,11 @@ class HelperCommand(BaseModel):
     upload_buffer: bool = False
     upload_bonus: bool = False
     ratio_below: float = RATIO_FLOOR
-    ratio_buy_gb: int = UPLOAD_CREDIT_GB
+    ratio_buy_gb: UploadAmount = UPLOAD_CREDIT_GB
     buffer_below_gb: float = BUFFER_FLOOR_GB
-    buffer_buy_gb: int = UPLOAD_CREDIT_GB
+    buffer_buy_gb: UploadAmount = UPLOAD_CREDIT_GB
     bonus_above: int = BONUS_CEILING
-    bonus_buy_gb: int = UPLOAD_CREDIT_GB
+    bonus_buy_gb: UploadAmount = UPLOAD_CREDIT_GB
 
     @property
     def uploads(self):
@@ -823,13 +830,68 @@ class MAMClient:
         return page.items[0]
 
     async def test(self):
-        value = await self.request("jsonLoad.php")
-        if not integer(value.get("uid")) or not isinstance(value.get("username"), str):
-            raise AdapterError(
-                FailureKind.AUTHENTICATION,
-                "MAM did not confirm an authenticated account. Check mam_id and route.",
-            )
+        await self.account()
         return None
+
+    async def account(self):
+        return account_data(await self.request("jsonLoad.php"))
+
+    async def purchase(self, command):
+        command = MAMPurchase.model_validate(command)
+        payload = await self.request("jsonLoad.php")
+        account = account_data(payload)
+        cost = (
+            (25000 if command.amount == "max" else command.amount * 500)
+            if command.kind == "upload"
+            else 50000
+            if command.kind == "wedges"
+            else 1250
+        )
+        if account.seedbonus is None or account.seedbonus < cost:
+            return MAMPurchaseResult(
+                status="rejected",
+                message="Not enough verified bonus points for this purchase. Refresh your account.",
+            )
+        if command.kind == "VIP" and vip_weeks_available(payload) < 1:
+            return MAMPurchaseResult(
+                status="rejected", message="There is no room for the minimum seven-day VIP top-up."
+            )
+        extra = (
+            {"amount": upload_wire_amount(command.amount)}
+            if command.kind == "upload"
+            else {"duration": "max"}
+            if command.kind == "VIP"
+            else {}
+        )
+        await self._pause()
+        try:
+            bought = await self._buy(command.kind, extra)
+        except AdapterError:
+            # Once the store request starts, a lost response cannot prove it did not spend.
+            # Do not propagate a retryable proxy failure or automatically repeat it.
+            return MAMPurchaseResult(
+                status="unknown",
+                message=(
+                    "MAM did not confirm the outcome. "
+                    "Check your account on MAM before buying again."
+                ),
+            )
+        if accepted(bought):
+            return MAMPurchaseResult(status="completed", message="MAM confirmed your purchase.")
+        if any(flag(bought.get(key)) is False for key in ("success", "Success")):
+            return MAMPurchaseResult(
+                status="rejected",
+                message=(
+                    "MAM declined the purchase. Check your balance and store eligibility on MAM."
+                ),
+            )
+        return MAMPurchaseResult(
+            status="unknown",
+            message=(
+                "MAM returned an unrecognized result. "
+                "Check your account on MAM before buying again."
+            ),
+        )
 
     async def resolve(self, argument):
         source_id, requested = resolve_target(argument)
@@ -946,12 +1008,20 @@ class MAMClient:
     async def _buy_upload(self, payload, command):
         purchased = False
         amount = credit_amount(payload, command)
-        if amount:
+        points = number(payload.get("seedbonus")) if isinstance(payload, dict) else None
+        cost = 25000 if amount == "max" else (amount or 0) * 500
+        if amount and points is not None and math.isfinite(points) and points >= cost:
             await self._pause()
-            bought = await self._buy("upload", {"amount": amount})
+            bought = await self._buy("upload", {"amount": upload_wire_amount(amount)})
             purchased = accepted(bought)
+            if not purchased:
+                # An unacknowledged purchase must not fall through to another
+                # spending rule using the pre-purchase balance.
+                return False
             if purchased:
                 logger.info("Account automation purchased upload credit")
+                if number(bought.get("seedbonus")) is None or amount == "max":
+                    return purchased
                 payload = _with_bonus(payload, bought)
         if not command.upload_bonus:
             return purchased
@@ -959,12 +1029,17 @@ class MAMClient:
             points = number(payload.get("seedbonus")) if isinstance(payload, dict) else None
             if points is None or not math.isfinite(points) or points <= command.bonus_above:
                 break
+            cost = 25000 if command.bonus_buy_gb == "max" else command.bonus_buy_gb * 500
+            if points < cost:
+                break
             await self._pause()
-            bought = await self._buy("upload", {"amount": command.bonus_buy_gb})
+            bought = await self._buy("upload", {"amount": upload_wire_amount(command.bonus_buy_gb)})
             if not accepted(bought):
                 break
             purchased = True
             logger.info("Account automation purchased upload credit")
+            if command.bonus_buy_gb == "max":
+                break
             nxt = number(bought.get("seedbonus")) if isinstance(bought, dict) else None
             if nxt is None or nxt >= points:
                 break

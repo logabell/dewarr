@@ -590,6 +590,7 @@ function Results({
                       </button>
                       {canAcquire && canDownload(item.release.medium) && (
                         <SourceReleaseDownload
+                          key={item.download?.operation_id || "unselected"}
                           searchId={data.id}
                           resultId={item.id}
                           title={item.release.title}

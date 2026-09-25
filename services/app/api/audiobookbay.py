@@ -14,6 +14,7 @@ from app.api.metadata import adapter_http_error
 from app.api.source_artifacts import SourceArtifactView, artifact_view
 from app.db.models import AuditEvent, SourceConnection, SourceResult
 from app.domain.audiobookbay_network import abb_call, resolve_abb
+from app.domain.connection_health import connection_status
 from app.domain.downloaders import SETTINGS_LOCK, connection_or_404
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
@@ -80,7 +81,7 @@ def view(row):
         metadata_downloader_id=secrets.get("metadata_downloader_id"),
         enabled=bool(row and row.enabled),
         generation=row.generation if row else 0,
-        status=row.status if row else "not-configured",
+        status=connection_status(row) if row else "not-configured",
         last_error=row.last_error if row else None,
         last_success_at=row.last_success_at if row else None,
         route="required-proxy" if row and row.proxy_url else "direct",
@@ -123,6 +124,7 @@ async def save_connection(body: ABBConnectionInput, admin: Admin, db: Database):
     row.deleted_at = None
     row.generation += 1
     row.status, row.last_error, row.last_success_at = "untested", None, None
+    row.last_checked_at = None
     db.add(AuditEvent(actor_id=admin.id, action="source.audiobookbay.updated"))
     await db.commit()
     return view(row)

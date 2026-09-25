@@ -39,6 +39,7 @@ async def recover_stalled_jobs() -> None:
         try:
             for task_name in (
                 "system.probe",
+                "connections.health",
                 "notifications.dispatch",
                 "sources.search",
                 "sources.prepare",

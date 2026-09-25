@@ -1,0 +1,210 @@
+/* Shared application palette, with a compact account ledger and point exchange. */
+.mam-control {
+  --mam-soft: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.mam-control-heading,
+.mam-store-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mam-control .mam-control-heading h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 24px;
+  margin: 3px 0 5px;
+  overflow-wrap: anywhere;
+}
+.mam-control p,
+.mam-control h4 {
+  margin: 0;
+}
+.mam-control .eyebrow {
+  font-size: 10px;
+}
+.mam-control .muted,
+.mam-control-footnote,
+.mam-account-timestamp,
+.mam-store-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mam-balances {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0;
+}
+.mam-balances > div {
+  padding: 16px 14px;
+  background: var(--surface);
+  min-width: 0;
+}
+.mam-balances dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+.mam-balances dd {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.mam-store-heading {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.mam-store {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 16px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  align-items: start;
+}
+.mam-control label,
+.mam-automation label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+}
+.mam-control select,
+.mam-control input,
+.mam-automation select,
+.mam-automation input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.mam-amount-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.mam-purchase-description {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.mam-exchange {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--mam-soft);
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.mam-exchange span:last-child {
+  color: var(--muted);
+}
+.mam-control > button {
+  justify-self: start;
+}
+.mam-control-note,
+.mam-purchase-review {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--mam-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.mam-purchase-review {
+  display: grid;
+  gap: 10px;
+}
+.mam-control-footnote {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.mam-automation .mam-rules {
+  display: grid;
+  gap: 12px;
+}
+.mam-rule {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  min-width: 0;
+}
+.mam-rule[data-enabled="true"] {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+.mam-rule .check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.mam-rule .muted,
+.mam-rule-note .muted {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mam-rule .automation-fields {
+  margin-top: 4px;
+  align-items: start;
+  gap: 14px;
+}
+.mam-rule-note {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px;
+}
+.mam-rule-note > label {
+  max-width: 240px;
+}
+@media (max-width: 680px) {
+  .mam-balances {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mam-store {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mam-control-heading > div {
+    width: 100%;
+  }
+  .mam-balances dd {
+    font-size: 17px;
+  }
+}
+.mam-automation-checks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  font-size: 11px;
+}
+.mam-automation-checks dt {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.mam-automation-checks dd {
+  margin: 0;
+  color: var(--muted);
+}
+@media (max-width: 680px) {
+  .mam-automation-checks {
+    grid-template-columns: 1fr;
+  }
+}

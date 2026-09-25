@@ -26,6 +26,8 @@ from app.domain import (
     book_sources,
     source_strategy,
 )
+from app.domain.downloader_defaults import protocol_default
+from app.domain.downloaders import transfer_connection
 from app.domain.operations import transaction_lock
 from app.domain.release_dates import release_facts, search_allowed
 from app.domain.release_monitor import sync_monitor
@@ -534,8 +536,23 @@ async def _selected_release(
         raise HTTPException(409, "This release does not match the request's medium")
     route_spec = spec.model_copy(update={"mode": release.medium})
     profile = ProfileSnapshot.model_validate(intent.release_policy)
+    protocol = automatic_selection.wanted_protocol(release.protocol)
+    client_id = await protocol_default(db, profile.preferences, protocol)
+    if not client_id:
+        label = {"torrent": "torrent", "nzb": "Usenet", "soulseek": "Soulseek"}[protocol]
+        raise HTTPException(
+            422, f"Configure a default {label} client in Settings → Download clients."
+        )
+    downloader = await transfer_connection(db, client_id)
     routes, _ = await automatic_routes.inherit(
-        db, user, route_spec, profile, automatic_routes.AutomaticRoutes()
+        db,
+        user,
+        route_spec,
+        profile,
+        automatic_routes.AutomaticRoutes(
+            downloader_id=downloader.id, downloader_generation=downloader.credential_generation
+        ),
+        include_fallback=False,
     )
     await automatic_routes.resolve(
         db, user, route_spec, routes.downloader_id, routes.downloader_generation, routes.routes

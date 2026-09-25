@@ -22,7 +22,7 @@ from app.domain.downloaders import (
     mapped_path,
     mappings_current,
 )
-from app.importing.destinations import destination_configuration
+from app.importing.destinations import current_receipts, destination_configuration
 from app.importing.naming import fingerprint
 from app.importing.storage import import_sources
 
@@ -108,6 +108,7 @@ class DestinationChoice(BaseModel):
     source_key: str | None
     ready: bool
     automatic_import_ready: bool = False
+    source_keys: list[str] = Field(default_factory=list)
 
 
 class SelectionOptions(BaseModel):
@@ -203,7 +204,9 @@ async def options(user: Member, db: Database):
     )
     for row, name in rows:
         configuration = await destination_configuration(db, row)
-        source_key = (row.probe or {}).get("source_key")
+        verified = await current_receipts(db, row.probe, fingerprint(configuration))
+        source_keys = sorted({item["source_key"] for item in verified})
+        source_key = source_keys[0] if source_keys else None
         automatic_ready = False
         if get_settings().download_dispatch_enabled:
             try:
@@ -225,6 +228,7 @@ async def options(user: Member, db: Database):
                     db, row, configuration, {"source_key": source_key}
                 ),
                 automatic_import_ready=automatic_ready,
+                source_keys=source_keys,
             )
         )
     return SelectionOptions(downloaders=downloaders, destinations=destinations)

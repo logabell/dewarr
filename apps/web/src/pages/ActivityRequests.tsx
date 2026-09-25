@@ -268,6 +268,8 @@ export default function ActivityRequests({
         "activity",
         "downloads",
         "list-monitor",
+        "book-sources",
+        "source-request",
       ].map((key) => cache.invalidateQueries({ queryKey: [key] })),
     );
   };

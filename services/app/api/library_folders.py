@@ -36,6 +36,7 @@ from app.importing.destinations import check_library_route, choose_staging, hold
 from app.importing.filesystem import InspectionError
 from app.importing.naming import StrictModel
 from app.importing.planning import assert_admin
+from app.importing.route_evidence import approval
 from app.importing.seeding_rename import normalize_seeding_target
 from app.importing.storage import storage_settings
 from app.security import decrypt_secrets
@@ -346,8 +347,7 @@ async def activate(destination_id: UUID, body: ActivateInput, admin: Admin, db: 
     policy.generation += 1
     policy.configuration = {
         "destination_revision": current.revision,
-        "source_key": current.probe["source_key"],
-        "source_path": current.probe["source_path"],
+        **approval(current.probe),
     }
     # One choice sets library identity and physical route together. Preserve unrelated preferences.
     for key, owner in [("installation", None), (f"user:{admin.id}", admin.id)]:
@@ -362,9 +362,6 @@ async def activate(destination_id: UUID, body: ActivateInput, admin: Admin, db: 
             f"{destination.medium}_library_id": str(destination.library_id),
             f"{destination.medium}_destination_id": str(destination.id),
         }
-        binding = current.probe.get("setup_downloader")
-        if binding:
-            defaults.preferences = {**defaults.preferences, "downloader_id": binding["id"]}
         defaults.generation += 1
     db.add(
         AuditEvent(

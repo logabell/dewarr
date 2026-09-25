@@ -401,6 +401,30 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await expect(feedback).toContainText(
     "The release language does not match this request",
   );
+  savedDownload = {
+    state: "failed",
+    message: "This release needs a qBittorrent connection",
+    request_id: "request-1",
+    operation_id: "selected-1",
+    reasons: ["This release needs a qBittorrent connection"],
+    prevent_download: false,
+  };
+  await page.clock.install();
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(feedback).toContainText("qBittorrent connection");
+  // A withdrawal clears the saved receipt while the source table stays mounted.
+  savedDownload = null;
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(table.locator(".source-download-message")).toHaveCount(0);
+  await expect(sourceDownload.first()).toBeEnabled();
   const downloadCount = releaseDownloads.length;
   for (const [state, label] of [
     ["queued", "Download queued"],

@@ -263,7 +263,9 @@ function PolicyEditor({
         d.medium === m &&
         d.ready &&
         d.automatic_import_ready &&
-        d.source_key === downloader?.source_key,
+        (d.source_keys || [d.source_key]).includes(
+          downloader?.source_key || "",
+        ),
     ) || [];
   const destination = (m: string) =>
     chooseRoute(

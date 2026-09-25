@@ -2,8 +2,18 @@
 
 Settings → Download clients supports qBittorrent, Transmission, and Deluge, alongside
 the existing Usenet clients. Save and test a connection, map its download folder to a
-folder the worker can read, then choose it in the download route. Existing destination
-probe, capacity, file inspection, and library confirmation requirements still apply.
+folder the worker can read. Torrent and Usenet sources use their respective default
+client; Soulseek uses slskd. A sole enabled client of a type is the automatic default.
+With multiple clients of the same type, choose the default in Settings → Download clients.
+
+Settings → Libraries selects the final ebook and audiobook folders. These folders are
+shared destinations, independent of which client downloaded the content. Saving and
+verifying a library folder checks every ready client's download path and does not change
+client defaults. Each path must support safe hardlinking or copying into the library.
+If one path fails, its named error is shown while other verified paths remain usable.
+After connecting a new client or changing its download path, verify the library folder
+again to include that path. Completed downloads are inspected, then hardlinked or copied
+into the selected media folder; the client's download folder remains separate.
 
 | Capability | qBittorrent | Transmission | Deluge Web UI |
 | --- | --- | --- | --- |

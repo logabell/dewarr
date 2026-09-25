@@ -12,7 +12,7 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { api, result } from "../api/client";
-import { downloaderLabel } from "./RouteFields";
+
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import MountedFolderBrowser from "../components/MountedFolderBrowser";
@@ -294,7 +294,9 @@ function FolderPicker({
   const [otherPath, setOtherPath] = useState(
     !!saved?.local_path && saved.local_path !== saved.backend_path,
   );
-  const [downloaderId, setDownloaderId] = useState("");
+  const [verificationWarnings, setVerificationWarnings] = useState<string[]>(
+    [],
+  );
   const [seedingRename, setSeedingRename] = useState(!!saved?.seeding_rename);
   const [clientPath, setClientPath] = useState(saved?.client_path || "");
   const [automaticChoice, setAutomatic] = useState<boolean | null>(null);
@@ -334,11 +336,10 @@ function FolderPicker({
       };
     },
   });
-  const downloader =
-    options.data?.downloaders.find((d) => d.id === downloaderId) ||
-    (options.data?.downloaders.length === 1
-      ? options.data.downloaders[0]
-      : undefined);
+  const clients = options.data?.downloaders || [];
+  const qbit = clients.filter((client) => client.kind === "qbittorrent");
+  const verificationClients = seedingRename ? qbit : clients;
+  const canVerify = verificationClients.length > 0;
   const folders = (options.data?.libraries || [])
     .filter((item) =>
       medium === "audio" ? item.audio_allowed : item.ebooks_allowed,
@@ -371,8 +372,8 @@ function FolderPicker({
       ? "Choose the mounted folder Dewarr can access."
       : seedingRename && !clientPath.trim()
         ? "Enter the library folder path in qBittorrent."
-        : seedingRename && downloader && downloader.kind !== "qbittorrent"
-          ? "Choose qBittorrent to rename the seeding copy."
+        : seedingRename && qbit.length !== 1
+          ? "Seeding rename requires one configured qBittorrent client."
           : saved && !policy.data
             ? "Load the automatic import settings before saving this folder."
             : "";
@@ -385,6 +386,7 @@ function FolderPicker({
         throw new Error(
           "Enter the absolute folder Dewarr has mounted, such as /data/audiobooks.",
         );
+      setVerificationWarnings([]);
       setProgress("Saving folder…");
       const destination = result(
         await api.PUT("/api/organization/library-folders/{medium}", {
@@ -402,70 +404,87 @@ function FolderPicker({
         }),
       );
       current.current = destination;
-      // Persist the folder even when download-client setup is still incomplete.
-      // Activation and automatic imports still require a successful route probe.
-      if (!downloader) return destination;
-      setProgress(
-        seedingRename
-          ? `Checking the qBittorrent library path and ${libraryApp(library.server_kind)} access…`
-          : `Checking hardlinks and ${libraryApp(library.server_kind)} access…`,
-      );
-      const operation = result(
+      if (!canVerify) return { ...destination, warnings: [] as string[] };
+      let verified = destination;
+      let warnings: string[] = [];
+      // A copy fallback changes the destination revision. Recheck the other
+      // paths once under that final mode rather than retaining stale receipts.
+      for (let pass = 0; pass < 2; pass++) {
+        const revision = verified.revision;
+        warnings = [];
+        for (const client of verificationClients) {
+          setProgress(
+            `Checking ${client.name}'s download folder → ${library.library_name}…`,
+          );
+          try {
+            const operation = result(
+              await api.POST(
+                "/api/organization/destinations/{destination_id}/setup-probe",
+                {
+                  params: {
+                    path: { destination_id: destination.id },
+                    header: { "idempotency-key": randomUUID() },
+                  },
+                  body: {
+                    downloader_id: client.id,
+                    downloader_generation: client.generation,
+                    expected_revision: verified.revision,
+                  },
+                },
+              ),
+            );
+            let completed = false;
+            for (let attempt = 0; attempt < 80; attempt++) {
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+              const activity = result(await api.GET("/api/activity"));
+              const status = activity.find(
+                (entry) => entry.id === operation.id,
+              );
+              if (
+                status &&
+                ["failed", "needs-review", "cancelled"].includes(status.status)
+              )
+                throw new Error(
+                  status.message || "Folder verification failed.",
+                );
+              if (status?.status === "completed") {
+                completed = true;
+                break;
+              }
+            }
+            if (!completed)
+              throw new Error(
+                "The worker has not finished checking this download folder.",
+              );
+          } catch (error) {
+            warnings.push(
+              `${client.name}: ${error instanceof Error ? error.message : "Folder verification failed."}`,
+            );
+          }
+          verified =
+            result(await api.GET("/api/organization/destinations")).find(
+              (item) => item.id === destination.id,
+            ) || verified;
+          current.current = verified;
+        }
+        if (verified.revision === revision) break;
+      }
+      if (!verified.publication_available)
+        throw new Error(warnings.join(" ") || "Folder verification failed.");
+      setProgress("Setting your library destination…");
+      const activated = result(
         await api.POST(
-          "/api/organization/destinations/{destination_id}/setup-probe",
+          "/api/organization/library-folders/{destination_id}/activate",
           {
-            params: {
-              path: { destination_id: destination.id },
-              header: { "idempotency-key": randomUUID() },
-            },
-            body: {
-              downloader_id: downloader.id,
-              downloader_generation: downloader.generation,
-              expected_revision: destination.revision,
-            },
+            params: { path: { destination_id: destination.id } },
+            body: { expected_revision: verified.revision, automatic },
           },
         ),
       );
-      for (let attempt = 0; attempt < 80; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        const activity = result(await api.GET("/api/activity"));
-        const status = activity.find((entry) => entry.id === operation.id);
-        if (
-          status?.status === "failed" ||
-          status?.status === "needs-review" ||
-          status?.status === "cancelled"
-        )
-          throw new Error(status.message || "Folder verification failed.");
-        if (status?.status === "completed") {
-          setProgress("Setting your library destination…");
-          const verified = result(
-            await api.GET("/api/organization/destinations"),
-          ).find((item) => item.id === destination.id);
-          if (verified) current.current = verified;
-          if (!verified?.publication_available) {
-            const message = verified?.probe?.message;
-            throw new Error(
-              typeof message === "string"
-                ? message
-                : "Folder verification failed.",
-            );
-          }
-          return result(
-            await api.POST(
-              "/api/organization/library-folders/{destination_id}/activate",
-              {
-                params: { path: { destination_id: destination.id } },
-                body: { expected_revision: verified.revision, automatic },
-              },
-            ),
-          );
-        }
-      }
-      throw new Error(
-        "The worker has not finished checking this folder. Check the download client and worker, then try again.",
-      );
+      current.current = activated;
+      return { ...activated, warnings };
     },
-    onSuccess: async () => {
+    onSuccess: async (destination) => {
       await Promise.all([
         cache.invalidateQueries({ queryKey: ["library-folder-settings"] }),
         cache.invalidateQueries({ queryKey: ["download-defaults"] }),
@@ -473,7 +492,9 @@ function FolderPicker({
         cache.invalidateQueries({ queryKey: ["automatic-import-policy"] }),
         cache.invalidateQueries({ queryKey: ["setup-readiness"] }),
       ]);
-      close();
+      if (destination.warnings.length)
+        setVerificationWarnings(destination.warnings);
+      else close();
     },
     onSettled: () =>
       cache.invalidateQueries({ queryKey: ["library-folder-settings"] }),
@@ -727,26 +748,12 @@ function FolderPicker({
                     </span>
                   </label>
                 </section>
-                {options.data.downloaders.length > 1 && (
-                  <label className="library-downloader-label">
-                    Download client
-                    <select
-                      value={downloaderId}
-                      onChange={(event) => {
-                        setDownloaderId(event.target.value);
-                        setSeedingRename(false);
-                      }}
-                      disabled={save.isPending}
-                    >
-                      <option value="">Choose a client</option>
-                      {options.data.downloaders.map((d) => (
-                        <option value={d.id} key={d.id}>
-                          {downloaderLabel(d)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+                <p className="muted">
+                  This is the final {medium === "audio" ? "audiobook" : "ebook"}{" "}
+                  destination for all sources. Download clients use their own
+                  download folders. Dewarr checks each connected client's file
+                  access here; this does not change your client defaults.
+                </p>
                 {!options.data.downloaders.length && (
                   <p className="notice">
                     You can save this folder now. To verify it and enable
@@ -770,8 +777,7 @@ function FolderPicker({
                       type="checkbox"
                       checked={seedingRename}
                       disabled={
-                        save.isPending ||
-                        (!seedingRename && downloader?.kind !== "qbittorrent")
+                        save.isPending || (!seedingRename && qbit.length !== 1)
                       }
                       onChange={(event) => {
                         setSeedingRename(event.target.checked);
@@ -804,6 +810,19 @@ function FolderPicker({
                     </label>
                   )}
                 </details>
+                {verificationWarnings.length > 0 && (
+                  <div className="notice" role="alert">
+                    <strong>
+                      Library folder saved. Some download paths need attention.
+                    </strong>
+                    {verificationWarnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                    <Link to="/settings#downloaders" onClick={close}>
+                      Check download client folders
+                    </Link>
+                  </div>
+                )}
                 <Notice error={save.error || policy.error} />
                 {save.isPending && (
                   <div role="status" className="library-verification-progress">
@@ -826,11 +845,9 @@ function FolderPicker({
         <footer className="library-setup-footer">
           <p id={saveHelpId} role="status">
             {saveBlocker ||
-              (!downloader
-                ? options.data.downloaders.length
-                  ? "Select a download client to verify, or save the folder for later."
-                  : "Save now; verify after setting up a download client."
-                : "Save → verify file access → activate")}
+              (!canVerify
+                ? "Save now; verify after setting up a download client."
+                : "Save → verify connected download paths → activate")}
           </p>
           <div className="button-row">
             <button type="button" disabled={save.isPending} onClick={close}>
@@ -844,10 +861,10 @@ function FolderPicker({
               disabled={save.isPending || !!saveBlocker}
             >
               {save.isPending
-                ? downloader
+                ? canVerify
                   ? "Checking…"
                   : "Saving…"
-                : downloader
+                : canVerify
                   ? verifying
                     ? automatic
                       ? "Verify & enable imports"

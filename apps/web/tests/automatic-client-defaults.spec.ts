@@ -3,6 +3,7 @@ import { expect, test } from "./fixtures";
 test("client defaults are automatic per type and selectable when there are several", async ({
   page,
 }, testInfo) => {
+  test.slow(); // Reload each saved/inherited preference variant and verify persistence.
   const credentials = { username: "reader", password: "browser test password" };
   const headers = { Origin: "http://127.0.0.1:8001" };
   const bootstrap = await page.request.post("/api/auth/bootstrap", {
@@ -65,7 +66,7 @@ test("client defaults are automatic per type and selectable when there are sever
       id: "20000000-0000-4000-8000-000000000003",
       name: "Family audiobooks",
     };
-    let destinations = [audio, ebook];
+    const destinations = [audio, ebook, secondAudio];
     let clients = [torrent, nzb, soulseek];
     await page.route("**/api/acquisition/selections/options", (route) =>
       route.fulfill({ json: { downloaders: clients, destinations } }),
@@ -82,9 +83,7 @@ test("client defaults are automatic per type and selectable when there are sever
       exact: true,
     });
     const expand = () =>
-      panel
-        .getByText("Downloader and destination defaults", { exact: true })
-        .click();
+      panel.getByText("Downloader defaults", { exact: true }).click();
     await expand();
     const torrentDefault = panel.getByLabel("Default torrent downloader", {
       exact: true,
@@ -98,15 +97,8 @@ test("client defaults are automatic per type and selectable when there are sever
     const ebookDefault = panel.getByLabel("Default ebook destination", {
       exact: true,
     });
-    await expect(audioDefault).toHaveValue(audio.id);
-    await expect(audioDefault).toBeDisabled();
-    await expect(ebookDefault).toHaveValue(ebook.id);
-    await expect(ebookDefault).toBeDisabled();
-    await expect(
-      panel.getByText(
-        "Uses your audiobook folder from Libraries. No separate destination setup needed.",
-      ),
-    ).toBeVisible();
+    await expect(audioDefault).toHaveCount(0);
+    await expect(ebookDefault).toHaveCount(0);
     await expect(torrentDefault).toHaveValue(torrent.id);
     await expect(torrentDefault).toBeDisabled();
     await expect(nzbDefault).toHaveValue(nzb.id);
@@ -125,6 +117,53 @@ test("client defaults are automatic per type and selectable when there are sever
     await page.reload();
     await expand();
     await expect(torrentDefault).toHaveValue(torrent.id);
+    // A saved or inherited sole client must behave like an unsaved sole client.
+    for (const defaults of [
+      { overrides: { usenet_downloader_id: nzb.id } },
+      { inherited: { usenet_downloader_id: nzb.id } },
+      { overrides: { downloader_id: nzb.id } },
+      { inherited: { downloader_id: nzb.id } },
+    ]) {
+      await page.route(
+        "**/api/acquisition/preferences/personal",
+        async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          await route.fulfill({
+            json: {
+              ...body,
+              overrides: defaults.overrides || {},
+              inherited: {
+                ...body.inherited,
+                downloader_id: null,
+                usenet_downloader_id: null,
+                ...defaults.inherited,
+              },
+            },
+          });
+        },
+      );
+      await page.reload();
+      await expand();
+      await expect(torrentDefault).toHaveValue(torrent.id);
+      await expect(torrentDefault).toBeDisabled();
+      await expect(nzbDefault).toHaveValue(nzb.id);
+      await expect(nzbDefault).toBeDisabled();
+      await expect(
+        panel.getByText("Used automatically · your only Usenet client.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(audioDefault).toHaveCount(0);
+      await expect(ebookDefault).toHaveCount(0);
+      await expect(
+        panel.getByRole("button", {
+          name: "Save download defaults",
+          exact: true,
+        }),
+      ).toBeDisabled();
+      await page.unroute("**/api/acquisition/preferences/personal");
+    }
     clients = [...clients, second];
     await page.reload();
     await expand();
@@ -143,23 +182,6 @@ test("client defaults are automatic per type and selectable when there are sever
     await expand();
     await expect(torrentDefault).toHaveValue(second.id);
     await expect(nzbDefault).toHaveValue(nzb.id);
-    destinations = [...destinations, secondAudio];
-    await page.reload();
-    await expand();
-    await expect(audioDefault).toBeEnabled();
-    await expect(audioDefault).toHaveValue("");
-    await expect(ebookDefault).toHaveValue(ebook.id);
-    await expect(ebookDefault).toBeDisabled();
-    await audioDefault.selectOption(secondAudio.id);
-    await panel
-      .getByRole("button", { name: "Save download defaults", exact: true })
-      .click();
-    await expect(panel.getByRole("status")).toContainText(
-      "Download defaults saved",
-    );
-    await page.reload();
-    await expand();
-    await expect(audioDefault).toHaveValue(secondAudio.id);
     await page.screenshot({
       path: testInfo.outputPath("protocol-defaults.png"),
       fullPage: true,

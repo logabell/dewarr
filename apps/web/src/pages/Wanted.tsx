@@ -127,9 +127,13 @@ export default function Wanted({
   });
   const refresh = async () => {
     await Promise.all(
-      ["requests", "request-preview", "activity"].map((name) =>
-        cache.invalidateQueries({ queryKey: [name] }),
-      ),
+      [
+        "requests",
+        "request-preview",
+        "activity",
+        "book-sources",
+        "source-request",
+      ].map((name) => cache.invalidateQueries({ queryKey: [name] })),
     );
   };
   const save = useMutation({

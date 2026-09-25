@@ -106,6 +106,7 @@ export default function Downloaders({
   const [editing, setEditing] = useState<string | null>(null);
   const connections = useQuery({
     queryKey: ["downloaders"],
+    refetchInterval: 30_000,
     queryFn: async () => result(await api.GET("/api/downloaders")),
   });
   const test = useMutation({
@@ -117,6 +118,7 @@ export default function Downloaders({
       ),
     onSettled: () =>
       Promise.all([
+        cache.invalidateQueries({ queryKey: ["connection-health"] }),
         cache.invalidateQueries({ queryKey: ["downloaders"] }),
         cache.invalidateQueries({ queryKey: ["setup-readiness"] }),
         cache.invalidateQueries({ queryKey: ["library-folder-options"] }),

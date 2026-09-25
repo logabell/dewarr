@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.adapters.contracts import AdapterError, FailureKind
@@ -16,9 +16,11 @@ from app.adapters.mam import (
     cookie_value,
     stored_automation,
 )
+from app.adapters.mam_account import MAMAccount, MAMPurchase, MAMPurchaseResult
 from app.api.dependencies import Admin, CurrentUser, Database
 from app.api.metadata import adapter_http_error
 from app.db.models import AuditEvent, SourceConnection
+from app.domain.connection_health import connection_status
 from app.domain.mam_diagnostics import EgressResult, probe_egress
 from app.domain.operations import transaction_lock
 from app.domain.source_network import source_call
@@ -67,6 +69,19 @@ class MAMConnectionInput(BaseModel):
         return self
 
 
+class ProxyHealthView(BaseModel):
+    status: str = "untested"
+    checked_at: datetime | None = None
+    message: str = ""
+    ip: str | None = None
+
+
+class MAMAutomationChecks(BaseModel):
+    seedbox: datetime | None = None
+    vip: datetime | None = None
+    upload: datetime | None = None
+
+
 class MAMConnectionView(BaseModel):
     configured: bool
     enabled: bool
@@ -79,12 +94,33 @@ class MAMConnectionView(BaseModel):
     status: str
     last_error: str | None
     last_success_at: datetime | None
+    last_checked_at: datetime | None
+    proxy_health: ProxyHealthView = Field(default_factory=ProxyHealthView)
     route: str
     automation: AccountAutomation = Field(default_factory=AccountAutomation)
+    automation_checks: MAMAutomationChecks = Field(default_factory=MAMAutomationChecks)
 
 
 def view(row):
+    from app.domain.connection_health import proxy_snapshot
+
+    proxy_health = ProxyHealthView()
+    if row and row.proxy_url:
+        status, checked, message = proxy_snapshot(row)
+        proxy_health = ProxyHealthView(
+            status=status,
+            checked_at=checked,
+            message=message,
+            ip=(row.proxy_health or {}).get("ip") if status == "connected" else None,
+        )
     secrets = decrypt_secrets(row.encrypted_secrets) if row else {}
+    checks = {}
+    for name in ("seedbox", "vip", "upload"):
+        raw = (row.automation_state or {}).get(f"{name}_at") if row else None
+        try:
+            checks[name] = datetime.fromisoformat(raw) if isinstance(raw, str) else None
+        except ValueError:
+            checks[name] = None
     return MAMConnectionView(
         configured=bool(row and not row.deleted_at),
         enabled=bool(row and row.enabled),
@@ -94,9 +130,11 @@ def view(row):
         has_session=bool(secrets.get("mam_id")),
         has_proxy_credentials=bool(secrets.get("proxy_password")),
         generation=row.generation if row else 0,
-        status=row.status if row else "not-configured",
+        status=connection_status(row) if row else "not-configured",
         last_error=row.last_error if row else None,
         last_success_at=row.last_success_at if row else None,
+        last_checked_at=row.last_checked_at if row else None,
+        proxy_health=proxy_health,
         route=(
             "proxy-preferred"
             if row and row.proxy_url and row.proxy_fallback_direct
@@ -105,6 +143,7 @@ def view(row):
             else "direct"
         ),
         automation=stored_automation(row.automation) if row else AccountAutomation(),
+        automation_checks=MAMAutomationChecks(**checks),
     )
 
 
@@ -144,6 +183,7 @@ async def save_connection(body: MAMConnectionInput, admin: Admin, db: Database):
     row.deleted_at = None
     row.generation += 1
     row.status, row.last_error, row.last_success_at = "untested", None, None
+    row.last_checked_at, row.proxy_health = None, {}
     # Source-imposed cooldown survives configuration edits and process restarts.
     db.add(AuditEvent(actor_id=admin.id, action="source.mam.updated"))
     await db.commit()
@@ -163,6 +203,32 @@ async def test_connection(admin: Admin, db: Database):
     await db.rollback()
     await call(user_id, "test")
     return view(await db.get(SourceConnection, "mam", populate_existing=True))
+
+
+@router.get("/account", response_model=MAMAccount)
+async def account(
+    admin: Admin, db: Database, response: Response, expected_generation: int = Query(ge=0)
+):
+    user_id = admin.id
+    await db.rollback()
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await source_call(user_id, "account", expected_generation=expected_generation)
+    except AdapterError as error:
+        raise adapter_http_error(error) from error
+
+
+@router.post("/purchases", response_model=MAMPurchaseResult)
+async def purchase(body: MAMPurchase, admin: Admin, db: Database, response: Response):
+    user_id = admin.id
+    await db.rollback()
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await source_call(
+            user_id, "purchase", body, expected_generation=body.expected_generation
+        )
+    except AdapterError as error:
+        raise adapter_http_error(error) from error
 
 
 @router.post("/search", response_model=ReleasePage)
@@ -224,11 +290,19 @@ async def test_network(admin: Admin, db: Database, include_cookie: bool = True):
             proxy_url, secrets.get("proxy_username"), secrets.get("proxy_password")
         )
 
-    cookie_result, proxy, direct = await asyncio.gather(test_cookie(), test_proxy(), probe_egress())
-    failure, used_route = cookie_result
+    proxy, direct = await asyncio.gather(test_proxy(), probe_egress())
+    if proxy is not None:
+        from app.domain.connection_health import record_proxy
+
+        await record_proxy(generation, proxy)
+    # Authenticate after the egress probe so the actual MAM route has the final
+    # say: public IP lookup may succeed while the proxy cannot reach MAM.
+    failure, used_route = await test_cookie()
     row = await db.get(SourceConnection, "mam", populate_existing=True)
     if not row or row.generation != generation or not row.enabled:
         raise HTTPException(409, "MAM settings changed during the network test. Test again.")
+    if proxy is not None and (row.proxy_health or {}).get("status") == "unavailable":
+        proxy = EgressResult(error=row.proxy_health["message"])
     has_session = bool(secrets.get("mam_id"))
     authenticated = include_cookie and has_session and failure is None
     route = used_route or ("proxy" if proxy_url else "direct")

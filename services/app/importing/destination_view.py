@@ -5,9 +5,8 @@ from sqlalchemy import select
 
 from app.db.models import RestoreCheckpoint
 from app.domain.recovery_approvals import denial
-from app.importing.destinations import destination_configuration, setup_route_current
+from app.importing.destinations import current_receipts, destination_configuration
 from app.importing.naming import StrictModel, fingerprint
-from app.importing.storage import import_sources
 
 
 class DestinationView(StrictModel):
@@ -31,14 +30,23 @@ class DestinationView(StrictModel):
 async def view(db, row):
     configuration = await destination_configuration(db, row)
     revision = fingerprint(configuration)
-    probe = row.probe if row.probe and row.probe.get("configuration_revision") == revision else None
-    if probe and str((await import_sources(db)).get(probe.get("source_key"))) != probe.get(
-        "source_path"
+    valid = await current_receipts(db, row.probe, revision)
+    probe = (
+        (
+            {**valid[-1], "download_routes": valid}
+            if row.probe and "download_routes" in row.probe
+            else valid[0]
+        )
+        if valid
+        else None
+    )
+    if (
+        not probe
+        and row.probe
+        and row.probe.get("status") == "failed"
+        and row.probe.get("configuration_revision") == revision
     ):
-        probe = None
-    if probe:
-        if not await setup_route_current(db, probe):
-            probe = None
+        probe = row.probe
     if probe:
         historical = (
             await denial(db, "operation", row.probe_operation_id)

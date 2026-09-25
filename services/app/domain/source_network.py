@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.mam import MAMClient, stored_automation
-from app.db.models import SourceConnection, User
+from app.db.models import AuditEvent, SourceConnection, User
 from app.db.session import session_factory
 from app.domain.operations import transaction_lock
 from app.security import decrypt_secrets, encrypt_secrets
@@ -40,7 +40,9 @@ async def source_call(
 ):
     token = uuid4()
     async with session_factory()() as db, db.begin():
-        await check_actor(db, user_id, admin=operation in {"test", "maintain"})
+        await check_actor(
+            db, user_id, admin=operation in {"test", "maintain", "account", "purchase"}
+        )
         await transaction_lock(db, "source:mam")
         if recovery_guard is not None:
             await recovery_guard(db)
@@ -48,13 +50,19 @@ async def source_call(
         if not row or not row.enabled:
             raise HTTPException(409, "An administrator must connect and enable MAM first")
         if expected_generation is not None and row.generation != expected_generation:
-            raise HTTPException(409, "MAM settings changed. Search again.")
+            raise HTTPException(409, "MAM settings changed. Reload before continuing.")
         secrets = decrypt_secrets(row.encrypted_secrets)
         if not secrets.get("mam_id"):
             raise AdapterError(
                 FailureKind.AUTHENTICATION, "Enter mam_id before making MAM requests."
             )
         now = datetime.now(UTC)
+        if operation == "maintain" and argument is not None and argument.seedbox:
+            from app.domain.account_automation import _age
+
+            age = _age(row.automation_state, "seedbox_at", now)
+            if age is not None and age < timedelta(hours=1):
+                raise HTTPException(429, "MAM seedbox checks are limited to once per hour.")
         if row.lease_token:
             if row.lease_until and row.lease_until > now:
                 raise AdapterError(
@@ -81,10 +89,31 @@ async def source_call(
         generation, endpoint, proxy = row.generation, row.base_url, row.proxy_url
         proxy_fallback_direct = row.proxy_fallback_direct
         automation = stored_automation(row.automation)
+        if operation == "purchase":
+            if await db.get(AuditEvent, argument.request_id):
+                raise HTTPException(
+                    409,
+                    "This purchase was already submitted. Refresh your account before continuing.",
+                )
+            # Commit an attempt before network I/O. Lost responses and process crashes
+            # must not make a repeated request ID spend again.
+            db.add(
+                AuditEvent(
+                    id=argument.request_id,
+                    actor_id=user_id,
+                    action="source.mam.purchase",
+                    detail={
+                        "kind": argument.kind,
+                        "amount": argument.amount,
+                        "status": "submitted",
+                    },
+                )
+            )
     client = None
     failure = None
     value = None
     used_route = "proxy" if proxy else "direct"
+    proxy_failed = False
 
     async def invoke(active_client):
         active_client.automation = automation
@@ -92,7 +121,7 @@ async def source_call(
             return (
                 await getattr(active_client, operation)(argument)
                 if argument is not None
-                else await active_client.test()
+                else await getattr(active_client, operation)()
             )
 
     try:
@@ -109,7 +138,10 @@ async def source_call(
         try:
             value = await invoke(client)
         except AdapterError as error:
-            if not (proxy and proxy_fallback_direct and getattr(error, "proxy_retryable", False)):
+            proxy_failed = bool(proxy and getattr(error, "proxy_retryable", False))
+            if operation in {"purchase", "maintain"} or not (
+                proxy and proxy_fallback_direct and getattr(error, "proxy_retryable", False)
+            ):
                 raise
             logger.warning(
                 "Configured MAM proxy failed; retrying through the direct route (%s)",
@@ -161,7 +193,22 @@ async def source_call(
         if client and client.cooldown:
             deadline = datetime.now(UTC) + timedelta(seconds=client.cooldown)
             row.blocked_until = max(row.blocked_until or deadline, deadline)
+        if proxy and not changed and (proxy_failed or not failure):
+            row.proxy_health = {
+                **(row.proxy_health or {}),
+                "generation": generation,
+                "status": "unavailable" if proxy_failed else "connected",
+                "checked_at": datetime.now(UTC).isoformat(),
+                "message": (
+                    "MAM proxy failed; using the direct fallback."
+                    if used_route == "direct-fallback"
+                    else "MAM proxy could not reach MAM."
+                    if proxy_failed
+                    else "MAM is reachable through the proxy."
+                ),
+            }
         if operation != "maintain" and not changed:
+            row.last_checked_at = datetime.now(UTC)
             row.status = failure.kind.value if failure else "connected"
             row.last_error = str(failure) if failure else None
             if not failure:
@@ -172,13 +219,21 @@ async def source_call(
             row.automation_state = next_automation_state(
                 row.automation_state, argument, None if failure else value, datetime.now(UTC)
             )
+        if operation == "purchase":
+            event = await db.get(AuditEvent, argument.request_id)
+            event.detail = {
+                **event.detail,
+                "status": value.status if value is not None else "unknown",
+            }
         # Persist session rotation even if this request's reader lost access.
     if changed:
         raise HTTPException(
             409, "MAM connection changed during this request; retry with the current settings"
         )
     async with session_factory()() as db:
-        await check_actor(db, user_id, admin=operation in {"test", "maintain"})
+        await check_actor(
+            db, user_id, admin=operation in {"test", "maintain", "account", "purchase"}
+        )
     if failure:
         raise failure
     if with_generation and with_route:

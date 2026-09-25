@@ -391,3 +391,100 @@ async def test_probe_cleanup_failure_cannot_activate_and_keeps_diagnostics(
         json={"expected_revision": checked["revision"]},
     )
     assert activated.status_code == 409
+
+
+@pytest.mark.parametrize("failure", ["disabled", "failed_probe", "changed_during_probe"])
+async def test_clients_share_library_without_replacing_defaults_or_each_others_verification(
+    client, admin, database, empty_route, monkeypatch, failure
+):
+    from app.db.models import AutomaticImportPolicy, ImportDestination
+    from app.domain.acquisition_selection import verified_probe
+    from app.importing.route_evidence import approved
+    from tests.integration.test_acquisition_defaults import save
+
+    route = empty_route
+    settings = get_settings()
+    sources = dict(settings.import_sources)
+    client_ids = [route["downloader"]]
+    async with database() as db, db.begin():
+        for kind in ("sabnzbd", "slskd"):
+            root = route["source"].parent / kind
+            (root / "books").mkdir(parents=True)
+            sources[kind] = root
+            row = Integration(
+                name=kind,
+                kind=kind,
+                base_url="http://unused.invalid",
+                encrypted_secrets="never-contact-downloader",
+                enabled=True,
+                status="connected",
+                credential_generation=1,
+                config={
+                    "save_path": "/downloads/books",
+                    "category": "books",
+                    "mappings": [
+                        {
+                            "download_root": "/downloads",
+                            "source_key": kind,
+                            "source_path": str(root),
+                        }
+                    ],
+                },
+            )
+            db.add(row)
+            await db.flush()
+            client_ids.append(row.id)
+    monkeypatch.setattr(settings, "import_sources", sources)
+    await save(client, {"downloader_id": str(client_ids[0])}, "installation")
+    for index, client_id in enumerate(client_ids):
+        response = await start(client, route, key=f"client-{index}", downloader_id=str(client_id))
+        assert response.status_code == 202, response.text
+        await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    assert checked["publication_available"]
+    assert len(checked["probe"]["download_routes"]) == 3
+    options = (await client.get("/api/acquisition/selections/options")).json()
+    assert options["destinations"][0]["source_keys"] == ["fixture", "sabnzbd", "slskd"]
+    response = await client.post(
+        f"/api/organization/library-folders/{checked['id']}/activate",
+        json={"expected_revision": checked["revision"]},
+    )
+    assert response.status_code == 200, response.text
+    for scope in ("personal", "installation"):
+        preferences = (await client.get(f"/api/acquisition/preferences/{scope}")).json()
+        assert preferences["effective"]["downloader_id"] == str(client_ids[0])
+    async with database() as db:
+        policy = await db.scalar(select(AutomaticImportPolicy))
+        destination = await db.get(ImportDestination, UUID(checked["id"]))
+        configuration = await destinations.destination_configuration(db, destination)
+        for source_key in sources:
+            mapping = {"source_key": source_key, "relative_path": "books"}
+            assert approved(policy.configuration, checked["probe"], mapping)
+            assert await verified_probe(db, destination, configuration, mapping)
+        assert not approved(
+            policy.configuration,
+            checked["probe"],
+            {"source_key": "slskd", "relative_path": "unapproved"},
+        )
+    if failure != "disabled":
+        if failure == "failed_probe":
+            (sources["slskd"] / "books").rmdir()
+        response = await start(
+            client, route, key="recheck-soulseek", downloader_id=str(client_ids[-1])
+        )
+        assert response.status_code == 202, response.text
+    if failure != "failed_probe":
+        async with database() as db, db.begin():
+            (await db.get(Integration, client_ids[-1])).enabled = False
+    if failure != "disabled":
+        await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    assert checked["publication_available"]
+    assert {item["source_key"] for item in checked["probe"]["download_routes"]} == {
+        "fixture",
+        "sabnzbd",
+    }
+    policy = (
+        await client.get(f"/api/organization/destinations/{checked['id']}/automatic-import")
+    ).json()
+    assert policy["ready"], policy

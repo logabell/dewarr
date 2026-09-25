@@ -10,19 +10,23 @@ import { SlskdConnectionForm } from "./SlskdSettings";
 export default function SourceSettings() {
   const cache = useQueryClient();
   const mam = useQuery({
+    refetchInterval: 30_000,
     queryKey: ["mam-connection"],
     queryFn: async () => result(await api.GET("/api/sources/mam/connection")),
   });
   const abb = useQuery({
+    refetchInterval: 30_000,
     queryKey: ["abb-connection"],
     queryFn: async () =>
       result(await api.GET("/api/sources/audiobookbay/connection")),
   });
   const slskd = useQuery({
+    refetchInterval: 30_000,
     queryKey: ["slskd-connection"],
     queryFn: async () => result(await api.GET("/api/sources/slskd/connection")),
   });
   const prowlarr = useQuery({
+    refetchInterval: 30_000,
     queryKey: ["prowlarr-connection"],
     queryFn: async () =>
       result(await api.GET("/api/sources/prowlarr/connection")),

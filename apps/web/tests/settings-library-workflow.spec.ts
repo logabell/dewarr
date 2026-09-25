@@ -1,6 +1,11 @@
 import { expect, test } from "./fixtures";
 
-for (const clientSetup of ["missing", "unmapped", "multiple"]) {
+for (const clientSetup of [
+  "missing",
+  "unmapped",
+  "multiple",
+  "partial failure",
+]) {
   test(`a library folder can be saved with ${clientSetup} download clients`, async ({
     page,
   }) => {
@@ -11,6 +16,7 @@ for (const clientSetup of ["missing", "unmapped", "multiple"]) {
     let generation = 0;
     let activatedPreference: boolean | undefined;
     const writes: string[] = [];
+    const probedClients: string[] = [];
     const downloader = {
       id: "qbit",
       kind: "qbittorrent",
@@ -57,7 +63,12 @@ for (const clientSetup of ["missing", "unmapped", "multiple"]) {
               ? [{ ...downloader, mappings_current: false }]
               : [
                   downloader,
-                  { ...downloader, id: "second", name: "Second client" },
+                  {
+                    ...downloader,
+                    id: "second",
+                    kind: "sabnzbd",
+                    name: "SABnzbd",
+                  },
                 ];
       else if (path.startsWith("/api/acquisition/preferences/"))
         data = { effective: {}, inherited: {}, overrides: {}, revision: "one" };
@@ -76,10 +87,21 @@ for (const clientSetup of ["missing", "unmapped", "multiple"]) {
           generation,
         };
       } else if (path.endsWith("/setup-probe")) {
+        probedClients.push(route.request().postDataJSON().downloader_id);
         data = { id: "probe", status: "queued" };
       } else if (path === "/api/activity") {
         destination.publication_available = true;
-        data = [{ id: "probe", status: "completed" }];
+        data = [
+          {
+            id: "probe",
+            status:
+              clientSetup === "partial failure" &&
+              probedClients.at(-1) === "second"
+                ? "failed"
+                : "completed",
+            message: "Download folder is not accessible",
+          },
+        ];
       } else if (path.endsWith("/activate")) {
         activatedPreference = route.request().postDataJSON().automatic;
         active = true;
@@ -107,28 +129,23 @@ for (const clientSetup of ["missing", "unmapped", "multiple"]) {
       "/data/ebooks",
     );
     await expect(dialog.getByRole("radio")).toHaveCount(2);
-    if (clientSetup === "multiple") {
-      const clients = dialog.getByRole("combobox", { name: "Download client" });
-      await clients.click();
-      await page
-        .getByRole("listbox", { name: "Download client" })
-        .getByRole("option", { name: "Second client", exact: true })
-        .click({ timeout: 3000 });
-      await expect(clients).toHaveValue("second");
-      await expect(clients).toBeFocused();
-      await clients.click();
-      await page
-        .getByRole("listbox", { name: "Download client" })
-        .getByRole("option", { name: "Choose a client", exact: true })
+    await expect(
+      dialog.getByRole("combobox", { name: "Download client" }),
+    ).toHaveCount(0);
+    if (["multiple", "partial failure"].includes(clientSetup)) {
+      await dialog
+        .getByRole("button", { name: "Save & verify folder", exact: true })
         .click();
-      await expect(clients).toHaveValue("");
-      await clients.press("ArrowDown");
-      await clients.press("Escape");
-      await expect(
-        page.getByRole("listbox", { name: "Download client" }),
-      ).not.toBeVisible();
-      await expect(dialog).toBeVisible();
-      await expect(clients).toBeFocused();
+      if (clientSetup === "partial failure") {
+        await expect(dialog.getByRole("alert")).toContainText(
+          "SABnzbd: Download folder is not accessible",
+          { timeout: 15_000 },
+        );
+      } else await expect(dialog).toHaveCount(0);
+      expect(probedClients).toEqual(["qbit", "second"]);
+      expect(activatedPreference).toBe(true);
+      await expect(page.getByText("Hardlinks verified")).toBeVisible();
+      return;
     }
     await expect(
       dialog.getByRole("checkbox", { name: "Import on completion" }),
@@ -160,15 +177,9 @@ for (const clientSetup of ["missing", "unmapped", "multiple"]) {
         exact: true,
       }),
     ).toHaveCount(0);
-    if (clientSetup === "multiple") {
-      await expect(
-        card.getByRole("button", { name: "Verify folder", exact: true }),
-      ).toBeEnabled();
-    } else {
-      await expect(
-        card.getByRole("link", { name: "Set up download client" }),
-      ).toHaveAttribute("href", "/settings#downloaders");
-    }
+    await expect(
+      card.getByRole("link", { name: "Set up download client" }),
+    ).toHaveAttribute("href", "/settings#downloaders");
     if (clientSetup === "missing") {
       await card
         .getByRole("button", { name: "Disable automatic import" })

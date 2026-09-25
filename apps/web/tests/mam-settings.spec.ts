@@ -13,6 +13,13 @@ async function setupMam(page: Page, configured = true) {
       generation: configured ? 1 : 0,
       status: configured ? "untested" : "not-configured",
       last_error: "",
+      last_checked_at: null as string | null,
+      proxy_health: {
+        status: "untested",
+        checked_at: null as string | null,
+        ip: null as string | null,
+        message: "",
+      },
       automation: {} as Record<string, unknown>,
     },
     actions: [] as string[],
@@ -271,4 +278,35 @@ test("advanced credentials and automation save before testing, with save conflic
   await form.getByRole("button", { name: "Test proxy", exact: true }).click();
   await expect(form).toContainText("Settings changed; reload before saving.");
   expect(state.actions).toEqual(["save", "proxy", "save"]);
+});
+
+test("background results expire cached proxy success and clear old cookie errors", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = await setupMam(page);
+  const form = formFor(page);
+  const network = form.getByRole("region", { name: "MAM network status" });
+  await form.getByRole("button", { name: "Test proxy", exact: true }).click();
+  await expect(network).toContainText("Healthy");
+  state.rejectCookie = true;
+  await form.getByRole("button", { name: "Test mam_id", exact: true }).click();
+  const account = form.getByRole("region", { name: "MAM account check" });
+  await expect(account).toContainText("Failed");
+  state.connection.proxy_health = {
+    status: "stale",
+    checked_at: "2026-09-24T11:59:59Z",
+    ip: null,
+    message: "Check overdue",
+  };
+  state.connection.status = "connected";
+  state.connection.last_error = "";
+  state.connection.last_checked_at = new Date(
+    Date.now() + 30_000,
+  ).toISOString();
+  await page.clock.fastForward(31_000);
+  await expect(network).toContainText("Check overdue");
+  await expect(network).not.toContainText("Healthy");
+  await expect(account).toContainText("Authenticated");
+  await expect(account).not.toContainText("Failed");
 });

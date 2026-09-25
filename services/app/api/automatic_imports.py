@@ -11,6 +11,7 @@ from app.domain.operations import transaction_lock
 from app.importing.destination_view import view as destination_view
 from app.importing.naming import StrictModel
 from app.importing.planning import assert_admin
+from app.importing.route_evidence import approval, approved
 from app.importing.settings import current_profile
 
 router = APIRouter(prefix="/organization/destinations", tags=["organization"])
@@ -50,8 +51,7 @@ async def view(db, destination):
         and approver.role == "admin"
         and can_enable
         and policy.configuration["destination_revision"] == current.revision
-        and policy.configuration["source_key"] == current.probe.get("source_key")
-        and policy.configuration["source_path"] == current.probe.get("source_path")
+        and approved(policy.configuration, current.probe)
     )
     requested = policy.configuration.get("requested_enabled", policy.enabled) if policy else True
     message = (
@@ -141,8 +141,7 @@ async def save(destination_id: UUID, body: PolicyInput, admin: Admin, db: Databa
     elif body.enabled:
         policy.configuration = {
             "destination_revision": current.revision,
-            "source_key": current.probe["source_key"],
-            "source_path": current.probe["source_path"],
+            **approval(current.probe),
         }
     else:
         policy.configuration = {}

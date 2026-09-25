@@ -49,6 +49,7 @@ from app.domain.source_artifacts import artifact_bytes, member
 from app.domain.work_graph import acquisition_lock, canonical_work
 from app.importing.destinations import destination_configuration, setup_route_current
 from app.importing.naming import fingerprint
+from app.importing.route_evidence import receipts
 from app.importing.storage import import_sources
 from app.importing.versioning import version_revision
 
@@ -79,28 +80,31 @@ async def owned_selection(db, user, identifier):
 
 
 async def verified_probe(db, destination, configuration, mapping):
-    probe = destination.probe or {}
-    binding = probe.get("setup_downloader")
-    return bool(
-        destination.enabled
-        and await setup_route_current(db, probe)
-        and (
-            not binding
-            or mapping.get("relative_path", binding["mapping"]["relative_path"])
-            == binding["mapping"]["relative_path"]
-        )
-        and probe.get("status") == "verified"
-        and probe.get("configuration_revision") == fingerprint(configuration)
-        and probe.get("source_key") == mapping["source_key"]
-        and probe.get("source_path") == str((await import_sources(db)).get(mapping["source_key"]))
-        and probe.get("no_replace")
-        and (
-            probe.get("seeding_rename")
-            if configuration.get("seeding_rename")
-            else probe.get(destination.mode)
-        )
-        and probe.get("backend", {}).get("root_mapping")
-    )
+    for probe in receipts(destination.probe):
+        binding = probe.get("setup_downloader")
+        if (
+            destination.enabled
+            and await setup_route_current(db, probe)
+            and (
+                not binding
+                or mapping.get("relative_path", binding["mapping"]["relative_path"])
+                == binding["mapping"]["relative_path"]
+            )
+            and probe.get("status") == "verified"
+            and probe.get("configuration_revision") == fingerprint(configuration)
+            and probe.get("source_key") == mapping["source_key"]
+            and probe.get("source_path")
+            == str((await import_sources(db)).get(mapping["source_key"]))
+            and probe.get("no_replace")
+            and (
+                probe.get("seeding_rename")
+                if configuration.get("seeding_rename")
+                else probe.get(destination.mode)
+            )
+            and probe.get("backend", {}).get("root_mapping")
+        ):
+            return True
+    return False
 
 
 def release_compatible(release, rule, version):

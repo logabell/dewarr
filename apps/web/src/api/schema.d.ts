@@ -175,6 +175,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/health/connections": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Connections */
+    get: operations["connections_api_health_connections_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/setup": {
     parameters: {
       query?: never;
@@ -4323,6 +4340,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/sources/mam/account": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Account */
+    get: operations["account_api_sources_mam_account_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sources/mam/purchases": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Purchase */
+    post: operations["purchase_api_sources_mam_purchases_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/sources/mam/search": {
     parameters: {
       query?: never;
@@ -5407,7 +5458,7 @@ export interface components {
       seedbox_ip: boolean;
       /**
        * Seedbox Interval Seconds
-       * @default 300
+       * @default 3600
        */
       seedbox_interval_seconds: number;
       /**
@@ -5449,7 +5500,7 @@ export interface components {
        * Ratio Buy Gb
        * @default 50
        */
-      ratio_buy_gb: number;
+      ratio_buy_gb: number | "max";
       /**
        * Maintain Buffer
        * @default false
@@ -5464,7 +5515,7 @@ export interface components {
        * Buffer Buy Gb
        * @default 50
        */
-      buffer_buy_gb: number;
+      buffer_buy_gb: number | "max";
       /**
        * Spend Bonus
        * @default false
@@ -5479,7 +5530,7 @@ export interface components {
        * Bonus Buy Gb
        * @default 50
        */
-      bonus_buy_gb: number;
+      bonus_buy_gb: number | "max";
       /**
        * Upload Interval Hours
        * @default 3
@@ -6825,6 +6876,33 @@ export interface components {
       /** Mappings */
       mappings?: components["schemas"]["DownloadMapping"][] | null;
     };
+    /** ConnectionHealthItem */
+    ConnectionHealthItem: {
+      /** Key */
+      key: string;
+      /** Name */
+      name: string;
+      /** Status */
+      status: string;
+      /** Message */
+      message: string;
+      /** Checked At */
+      checked_at: string | null;
+      /** Settings Url */
+      settings_url: string | null;
+    };
+    /** ConnectionHealthView */
+    ConnectionHealthView: {
+      /** Connections */
+      connections: components["schemas"]["ConnectionHealthItem"][];
+      /** Issues */
+      issues: number;
+      /**
+       * Check Interval Seconds
+       * @default 300
+       */
+      check_interval_seconds: number;
+    };
     /** ConnectionReconciliationRequest */
     ConnectionReconciliationRequest: {
       /**
@@ -7202,6 +7280,8 @@ export interface components {
        * @default false
        */
       automatic_import_ready: boolean;
+      /** Source Keys */
+      source_keys?: string[];
     };
     /** DestinationInput */
     DestinationInput: {
@@ -8987,6 +9067,39 @@ export interface components {
       /** Settings Revision */
       settings_revision: string;
     };
+    /** MAMAccount */
+    MAMAccount: {
+      /**
+       * Checked At
+       * Format: date-time
+       */
+      checked_at?: string;
+      /** Username */
+      username: string;
+      /** Uid */
+      uid: string;
+      /** Classname */
+      classname?: string | null;
+      /** Ratio */
+      ratio?: string | null;
+      /** Uploaded */
+      uploaded?: string | null;
+      /** Downloaded */
+      downloaded?: string | null;
+      /** Seedbonus */
+      seedbonus?: number | null;
+      /** Vip Until */
+      vip_until?: string | null;
+    };
+    /** MAMAutomationChecks */
+    MAMAutomationChecks: {
+      /** Seedbox */
+      seedbox?: string | null;
+      /** Vip */
+      vip?: string | null;
+      /** Upload */
+      upload?: string | null;
+    };
     /** MAMConnectionInput */
     MAMConnectionInput: {
       /**
@@ -9048,9 +9161,13 @@ export interface components {
       last_error: string | null;
       /** Last Success At */
       last_success_at: string | null;
+      /** Last Checked At */
+      last_checked_at: string | null;
+      proxy_health?: components["schemas"]["ProxyHealthView"];
       /** Route */
       route: string;
       automation?: components["schemas"]["AccountAutomation"];
+      automation_checks?: components["schemas"]["MAMAutomationChecks"];
     };
     /** MAMNetworkView */
     MAMNetworkView: {
@@ -9073,6 +9190,33 @@ export interface components {
       proxy_status: string;
       proxy: components["schemas"]["EgressResult"] | null;
       direct: components["schemas"]["EgressResult"];
+      /** Message */
+      message: string;
+    };
+    /** MAMPurchase */
+    MAMPurchase: {
+      /**
+       * Request Id
+       * Format: uuid
+       */
+      request_id: string;
+      /** Expected Generation */
+      expected_generation: number;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "upload" | "VIP" | "wedges";
+      /** Amount */
+      amount?: number | "max" | null;
+    };
+    /** MAMPurchaseResult */
+    MAMPurchaseResult: {
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "completed" | "rejected" | "unknown";
       /** Message */
       message: string;
     };
@@ -10825,6 +10969,23 @@ export interface components {
        * @default 50
        */
       limit: number;
+    };
+    /** ProxyHealthView */
+    ProxyHealthView: {
+      /**
+       * Status
+       * @default untested
+       */
+      status: string;
+      /** Checked At */
+      checked_at?: string | null;
+      /**
+       * Message
+       * @default
+       */
+      message: string;
+      /** Ip */
+      ip?: string | null;
     };
     /** PublicationReconciliationItemView */
     PublicationReconciliationItemView: {
@@ -14191,6 +14352,26 @@ export interface operations {
         };
         content: {
           "application/json": unknown;
+        };
+      };
+    };
+  };
+  connections_api_health_connections_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConnectionHealthView"];
         };
       };
     };
@@ -22925,6 +23106,70 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["MAMConnectionView"];
+        };
+      };
+    };
+  };
+  account_api_sources_mam_account_get: {
+    parameters: {
+      query: {
+        expected_generation: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MAMAccount"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  purchase_api_sources_mam_purchases_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MAMPurchase"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MAMPurchaseResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

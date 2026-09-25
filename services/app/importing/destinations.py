@@ -20,6 +20,7 @@ from app.importing.backend import verify_backend
 from app.importing.filesystem import InspectionError, describe_os_error, directory
 from app.importing.naming import fingerprint
 from app.importing.publication import PublishFile, probe_destination, probe_download_folder
+from app.importing.route_evidence import receipts
 from app.importing.storage import import_sources, storage_settings
 from app.security import decrypt_secrets
 
@@ -119,7 +120,13 @@ async def setup_route_current(db, evidence):
     if not binding:
         return True
     row = await db.get(Integration, UUID(binding["id"]), populate_existing=True)
-    if not row or row.kind not in TRANSFER_KINDS or row.owner_id is not None or not row.enabled:
+    if (
+        not row
+        or row.deleted_at
+        or row.kind not in TRANSFER_KINDS
+        or row.owner_id is not None
+        or not row.enabled
+    ):
         return False
     if row.credential_generation != binding["generation"] or row.status != "connected":
         return False
@@ -128,6 +135,18 @@ async def setup_route_current(db, evidence):
     except (HTTPException, KeyError, ValueError):
         return False
     return mapping == binding["mapping"]
+
+
+async def current_receipts(db, probe, revision):
+    sources = await import_sources(db)
+    return [
+        item
+        for item in receipts(probe)
+        if item.get("configuration_revision") == revision
+        and item.get("status") == "verified"
+        and str(sources.get(item.get("source_key"))) == item.get("source_path")
+        and await setup_route_current(db, item)
+    ]
 
 
 async def probe_route(operation_id: UUID, *, client_factory=None):
@@ -154,7 +173,12 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                 "failed",
                 "Destination access or configuration changed",
             )
-            destination.probe = None
+            previous = await current_receipts(
+                db,
+                operation.payload.get("previous_probe"),
+                fingerprint(await destination_configuration(db, destination)),
+            )
+            destination.probe = {**previous[-1], "download_routes": previous} if previous else None
             return
         destination.probe_token = token
         operation.status, operation.message = (
@@ -313,12 +337,18 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                 "failed",
                 "Destination access changed; result discarded",
             )
-            destination.probe_token, destination.probe = None, None
+            previous = await current_receipts(
+                db,
+                payload.get("previous_probe"),
+                fingerprint(await destination_configuration(db, destination)),
+            )
+            destination.probe_token = None
+            destination.probe = {**previous[-1], "download_routes": previous} if previous else None
             return
         if ok and copy_fallback:
             destination.mode = "copy"
             configuration = await destination_configuration(db, destination)
-        destination.probe = {
+        receipt = {
             "status": "verified" if ok else "failed",
             "message": message,
             "source_key": payload["source_key"],
@@ -332,6 +362,22 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             ),
             **report,
         }
+        previous = await current_receipts(
+            db, payload.get("previous_probe"), fingerprint(configuration)
+        )
+        binding = payload.get("setup_downloader")
+        if binding:
+            previous = [
+                item
+                for item in previous
+                if item.get("setup_downloader", {}).get("id") != binding["id"]
+            ]
+        combined = [*previous, *([receipt] if ok else [])]
+        destination.probe = (
+            {**combined[-1], "download_routes": combined}
+            if combined and (previous or payload.get("previous_probe", {}).get("download_routes"))
+            else receipt
+        )
         destination.probe_token = None
         operation.status, operation.message = "completed" if ok else "failed", message
         db.add(

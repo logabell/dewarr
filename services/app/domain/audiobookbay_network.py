@@ -84,6 +84,7 @@ async def abb_call(
             row.blocked_until = max(row.blocked_until or due, due)
         changed = row.generation != generation or not row.enabled
         if not changed:
+            row.last_checked_at = datetime.now(UTC)
             row.status = failure.kind.value if failure else "connected"
             row.last_error = str(failure) if failure else None
             if not failure:
