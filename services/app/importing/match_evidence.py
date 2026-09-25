@@ -139,8 +139,17 @@ def group_evidence(snapshot, group):
             ]
         if title:
             titles.add(normalized(title))
+        # EPUB creators and audio tags may use semicolon lists, including a
+        # trailing separator. Preserve every credit; commas remain part of names.
         if names := tuple(
-            sorted({normalized(name) for name in names if isinstance(name, str) and name.strip()})
+            sorted(
+                {
+                    credit
+                    for name in names
+                    if isinstance(name, str)
+                    for credit in embedded_names(name)
+                }
+            )
         ):
             authors.add(names)
         languages.update(

@@ -77,6 +77,7 @@ pytestmark = pytest.mark.integration
         "requester",
         "reviewer",
         "automatic",
+        "automatic-author-conflict",
         "automatic-audio",
         "automatic-provider",
         "automatic-provider-audio",
@@ -144,6 +145,11 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
     else:
         epub(
             source,
+            author="Alex Morgan; Other Writer"
+            if handoff == "automatic-author-conflict"
+            else "Alex Morgan;"
+            if handoff in {"automatic", "automatic-unmatched"}
+            else "Alex Morgan",
             isbn="9781234567897" if automatic_mode and handoff != "automatic-unmatched" else None,
         )
     epub(source.parent / "unrelated.epub", title="Not part of this torrent")
