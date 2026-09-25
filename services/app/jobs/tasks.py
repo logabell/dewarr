@@ -63,6 +63,19 @@ async def schedule_import_confirmation(timestamp: int) -> None:
             entry.next_check_at = datetime.now(UTC) + timedelta(minutes=1)
 
 
+@tasks.task(
+    name="organization.verify-download-routes",
+    queue="inspection",
+    retry=3,
+    lock="organization.verify-download-routes",
+    pass_context=True,
+)
+async def verify_download_routes(context, user_id: str) -> None:
+    from app.importing.setup_verification import verify_download_routes as verify
+
+    await verify(user_id, job_id=context.job.id)
+
+
 @tasks.task(name="organization.probe", queue="inspection", retry=3)
 async def check_destination(operation_id: str) -> None:
     from app.importing.destinations import probe_route

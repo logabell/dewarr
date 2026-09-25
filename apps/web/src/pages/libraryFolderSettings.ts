@@ -20,6 +20,7 @@ export function selectLibraryDestination(
 export function useLibraryFolderSettings() {
   return useQuery({
     queryKey: ["library-folder-settings"],
+    refetchInterval: 5000,
     queryFn: async () => {
       const [destinations, libraries, defaults] = await Promise.all([
         api.GET("/api/organization/destinations").then(result),

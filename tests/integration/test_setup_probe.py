@@ -44,7 +44,7 @@ async def empty_route(client, admin, database, tmp_path, monkeypatch):
             name="qBit",
             kind="qbittorrent",
             base_url="http://unused.invalid",
-            encrypted_secrets="never-contact-downloader",
+            encrypted_secrets=encrypt_secrets({"password": "never-contact-downloader"}),
             status="connected",
             enabled=True,
             credential_generation=1,
@@ -415,7 +415,7 @@ async def test_clients_share_library_without_replacing_defaults_or_each_others_v
                 name=kind,
                 kind=kind,
                 base_url="http://unused.invalid",
-                encrypted_secrets="never-contact-downloader",
+                encrypted_secrets=encrypt_secrets({"password": "never-contact-downloader"}),
                 enabled=True,
                 status="connected",
                 credential_generation=1,
@@ -528,3 +528,102 @@ async def test_setup_verification_honors_saved_import_preference(
     policy = (await client.get(endpoint)).json()
     assert policy["enabled"] is enabled
     assert policy["ready"] is enabled
+
+
+async def test_mapping_save_automatically_rechecks_library(client, admin, database, empty_route):
+    assert (await start(client, empty_route)).status_code == 202
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    before = await current(client)
+    assert before["client_routes"][0]["status"] == "verified"
+    response = await client.put(
+        f"/api/downloaders/{empty_route['downloader']}/mappings",
+        json={
+            "expected_generation": 1,
+            "mappings": [{"download_root": "/downloads", "source_key": "fixture"}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    stale = await current(client)
+    assert not stale["publication_available"]
+    assert stale["client_routes"][0]["status"] == "needs-verification"
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    after = await current(client)
+    assert after["client_routes"][0]["status"] == "verified"
+    assert after["client_routes"][0]["checked_at"]
+    assert after["probe"]["setup_downloader"]["generation"] == 2
+    policy = (
+        await client.get(f"/api/organization/destinations/{after['id']}/automatic-import")
+    ).json()
+    assert policy["enabled"] and policy["ready"]
+
+
+async def test_connection_test_verifies_all_clients_and_reports_each_failure(
+    client, admin, database, empty_route, monkeypatch
+):
+    from app.domain import downloaders
+
+    async def connected(*args):
+        pass
+
+    monkeypatch.setattr(downloaders, "test_connection", connected)
+    async with database() as db, db.begin():
+        other = Integration(
+            name="SAB",
+            kind="sabnzbd",
+            base_url="http://unused.invalid",
+            encrypted_secrets="unused",
+            status="connected",
+            enabled=True,
+            credential_generation=1,
+            config={
+                "save_path": "/downloads/missing",
+                "mappings": [
+                    {
+                        "download_root": "/downloads",
+                        "source_key": "fixture",
+                        "source_path": str(empty_route["source"]),
+                    }
+                ],
+            },
+        )
+        db.add(other)
+    response = await client.post(f"/api/downloaders/{empty_route['downloader']}/test")
+    assert response.status_code == 200, response.text
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    routes = {route["name"]: route for route in checked["client_routes"]}
+    assert checked["publication_available"]  # The working client remains usable.
+    assert routes["qBit"]["status"] == "verified"
+    assert routes["SAB"]["status"] == "failed"
+    assert "missing" in routes["SAB"]["message"]
+    (empty_route["source"] / "missing").mkdir()
+    assert (
+        await client.post(f"/api/downloaders/{empty_route['downloader']}/test")
+    ).status_code == 200
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    assert all(route["status"] == "verified" for route in (await current(client))["client_routes"])
+
+
+async def test_automatic_route_verification_resumes_after_worker_restart(
+    client, admin, database, empty_route, monkeypatch
+):
+    from app.importing import setup_verification
+
+    original = setup_verification.probe_route
+
+    async def interrupted(operation_id):
+        raise RuntimeError("worker interrupted")
+
+    monkeypatch.setattr(setup_verification, "probe_route", interrupted)
+    with pytest.raises(RuntimeError, match="worker interrupted"):
+        await setup_verification.verify_download_routes(admin["id"], job_id=1234)
+    assert (await current(client))["client_routes"][0]["status"] == "checking"
+    monkeypatch.setattr(setup_verification, "probe_route", original)
+    await setup_verification.verify_download_routes(admin["id"], job_id=1234)
+    assert (await current(client))["client_routes"][0]["status"] == "verified"
+    async with database() as db:
+        assert await db.scalar(select(func.count()).select_from(Operation)) == 1
+    # A duplicate setup event skips already-current routes.
+    await setup_verification.verify_download_routes(admin["id"], job_id=1235)
+    async with database() as db:
+        assert await db.scalar(select(func.count()).select_from(Operation)) == 1

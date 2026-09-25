@@ -22,6 +22,7 @@ from app.domain.downloaders import DownloadMapping
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
 from app.importing.storage import import_sources, storage_settings
+from app.jobs.queue import enqueue
 from app.security import decrypt_secrets, encrypt_secrets
 
 router = APIRouter(prefix="/downloaders", tags=["downloaders"])
@@ -321,6 +322,9 @@ async def test_connection(connection_id: UUID, admin: Admin, db: Database):
     except AdapterError as error:
         raise adapter_http_error(error) from error
     row = await downloaders.transfer_connection(db, connection_id)
+    if row.enabled and row.status == "connected":
+        await enqueue(db, "organization.verify-download-routes", user_id=str(user_id))
+        await db.commit()
     return view(row, await import_sources(db))
 
 
@@ -376,5 +380,7 @@ async def update_mappings(connection_id: UUID, body: MappingInput, admin: Admin,
     row.config = {**row.config, "mappings": mappings}
     row.credential_generation += 1
     db.add(AuditEvent(actor_id=admin.id, action="downloader.mappings.updated", entity_id=row.id))
+    if row.enabled and row.status == "connected":
+        await enqueue(db, "organization.verify-download-routes", user_id=str(admin.id))
     await db.commit()
     return view(row, await import_sources(db))

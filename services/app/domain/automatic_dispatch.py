@@ -135,8 +135,8 @@ async def approve_route(
         if not approved(policy.configuration, current.probe, mapping):
             raise HTTPException(
                 409,
-                "This download client's folder is not verified for the library. "
-                "Check its folder mapping in Settings → Download clients.",
+                "This download-to-library route needs verification. "
+                "Use Verify again in Settings → Libraries.",
             )
     return snapshot
 

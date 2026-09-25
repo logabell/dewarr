@@ -72,9 +72,30 @@ for (const clientSetup of [
                 ];
       else if (path.startsWith("/api/acquisition/preferences/"))
         data = { effective: {}, inherited: {}, overrides: {}, revision: "one" };
-      else if (path === "/api/organization/destinations")
+      else if (path === "/api/organization/destinations") {
+        if (destination)
+          destination.client_routes = (
+            clientReady || clientSetup === "unmapped"
+              ? ["qbit"]
+              : clientSetup === "missing"
+                ? []
+                : ["qbit", "second"]
+          ).map((id) => ({
+            downloader_id: id,
+            name: id === "qbit" ? "qBittorrent" : "SABnzbd",
+            download_path: `/downloads/${id}`,
+            status: !probedClients.includes(id)
+              ? "needs-verification"
+              : clientSetup === "partial failure" && id === "second"
+                ? "failed"
+                : "verified",
+            message:
+              clientSetup === "partial failure" && id === "second"
+                ? "Download folder is not accessible"
+                : "Download folder → library verified",
+          }));
         data = destination ? [destination] : [];
-      else if (path.endsWith("/automatic-import")) {
+      } else if (path.endsWith("/automatic-import")) {
         if (route.request().method() === "PUT") {
           requested = route.request().postDataJSON().enabled;
           generation++;
@@ -91,6 +112,7 @@ for (const clientSetup of [
         data = { id: "probe", status: "queued" };
       } else if (path === "/api/activity") {
         destination.publication_available = true;
+        active = true;
         data = [
           {
             id: "probe",
@@ -144,7 +166,14 @@ for (const clientSetup of [
       } else await expect(dialog).toHaveCount(0);
       expect(probedClients).toEqual(["qbit", "second"]);
       expect(activatedPreference).toBe(true);
-      await expect(page.getByText("Hardlinks verified")).toBeVisible();
+      await expect(
+        page.getByText(
+          clientSetup === "partial failure"
+            ? "Download folders need verification"
+            : "Download folders verified",
+          { exact: true },
+        ),
+      ).toBeVisible();
       return;
     }
     await expect(
@@ -163,7 +192,7 @@ for (const clientSetup of [
     });
     await expect(card.getByText("/data/ebooks", { exact: true })).toBeVisible();
     await expect(
-      card.getByText("Folder saved · verification required", { exact: true }),
+      card.getByText("Download folders need verification", { exact: true }),
     ).toBeVisible();
     await expect(
       card.getByText("No folder selected", { exact: true }),
@@ -191,28 +220,24 @@ for (const clientSetup of [
 
     clientReady = true;
     await page.reload();
+    const writesBeforeVerification = writes.length;
     await card
-      .getByRole("button", { name: "Verify folder", exact: true })
+      .getByRole("button", { name: "Verify ebooks download folders again" })
       .click();
-    const verification = page.getByRole("dialog", {
-      name: "Verify ebooks folder",
-    });
-    await expect(
-      verification.locator(".library-selection-summary"),
-    ).toContainText("/data/ebooks");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     const automatic = clientSetup !== "missing";
     await expect(
-      verification.getByRole("checkbox", { name: "Import on completion" }),
-    ).toBeChecked({ checked: automatic });
-    await verification
-      .getByRole("button", {
-        name: automatic ? "Verify & enable imports" : "Verify folder",
-        exact: true,
-      })
-      .click();
-    await expect(verification).toHaveCount(0);
-    expect(activatedPreference).toBe(automatic);
-    await expect(card.getByText("Hardlinks verified")).toBeVisible();
+      card.getByText("Download folders verified", { exact: true }),
+    ).toBeVisible();
+    expect(writes.slice(writesBeforeVerification)).toEqual([
+      "/api/organization/destinations/dest/setup-probe",
+    ]);
+    // Reverification stays available after success and does not resave preferences.
+    await expect(
+      card.getByRole("button", {
+        name: "Verify ebooks download folders again",
+      }),
+    ).toBeEnabled();
     await expect(
       card.getByText(
         automatic
@@ -307,7 +332,23 @@ for (const mode of ["hardlink", "copy"]) {
         ];
       else if (path === "/api/organization/destinations")
         data = destination
-          ? [{ ...destination, publication_available: !failure }]
+          ? [
+              {
+                ...destination,
+                publication_available: !failure,
+                client_routes: [
+                  {
+                    downloader_id: "qbit",
+                    name: "qBittorrent",
+                    download_path: "/downloads",
+                    status: failure ? "failed" : "verified",
+                    message: failure
+                      ? "Folder inaccessible"
+                      : "Download folder → library verified",
+                  },
+                ],
+              },
+            ]
           : [];
       else if (path === "/api/downloaders")
         data = [
@@ -494,11 +535,7 @@ for (const mode of ["hardlink", "copy"]) {
     }
     await expect(dialog).toHaveCount(0);
     await expect(
-      page.getByText(
-        mode === "copy"
-          ? "Copy mode · files are copied into this folder"
-          : "Hardlinks verified",
-      ),
+      page.getByText("Download folders verified", { exact: true }),
     ).toBeVisible();
     if (mode === "copy") {
       expect(

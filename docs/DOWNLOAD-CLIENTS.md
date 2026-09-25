@@ -11,9 +11,13 @@ shared destinations, independent of which client downloaded the content. Saving 
 verifying a library folder checks every ready client's download path and does not change
 client defaults. Each path must support safe hardlinking or copying into the library.
 If one path fails, its named error is shown while other verified paths remain usable.
-After connecting a new client or changing its download path, verify the library folder
-again to include that path. Completed downloads are inspected, then hardlinked or copied
-into the selected media folder; the client's download folder remains separate.
+Successful connection tests and saved download-folder mappings automatically queue checks
+for missing or outdated library routes. Settings → Libraries shows each client's path,
+verification result, and last successful check. **Verify again** remains available and
+rechecks the saved folders directly, without reopening setup or changing import preferences.
+A connected client is not marked as library-ready until its folder check succeeds.
+Completed downloads are inspected, then hardlinked or copied into the selected media folder;
+the client's download folder remains separate.
 
 | Capability | qBittorrent | Transmission | Deluge Web UI |
 | --- | --- | --- | --- |

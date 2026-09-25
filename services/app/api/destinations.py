@@ -17,7 +17,6 @@ from app.db.models import (
     Library,
     Operation,
 )
-from app.domain.downloaders import mapped_path, transfer_connection
 from app.domain.operations import transaction_lock
 from app.importing.destination_view import DestinationView, view
 from app.importing.destinations import destination_configuration, permitted
@@ -56,7 +55,7 @@ async def destination_roots(admin: Admin, db: Database):
 @router.get("/destinations", response_model=list[DestinationView])
 async def destinations(admin: Admin, db: Database):
     return [
-        await view(db, row)
+        await view(db, row, include_routes=True)
         for row in (
             await db.scalars(
                 select(ImportDestination)
@@ -133,45 +132,17 @@ async def setup_probe(
         ):
             raise HTTPException(409, "This operation key was already used for another command")
         return existing
-    row = await db.scalar(
-        select(ImportDestination).where(ImportDestination.id == destination_id).with_for_update()
-    )
-    if not row or row.deleted_at or not (await view(db, row)).configured:
-        raise HTTPException(422, "Configure destination and private staging roots first")
-    configuration = await destination_configuration(db, row)
-    if (await view(db, row)).revision != body.expected_revision:
-        raise HTTPException(409, "Destination settings changed; review them before probing")
-    downloader = await transfer_connection(db, body.downloader_id)
-    if not downloader.enabled or downloader.status != "connected":
-        raise HTTPException(409, "Enable and test the downloader before checking its save folder")
-    if downloader.credential_generation != body.downloader_generation:
-        raise HTTPException(409, "Downloader settings changed; reload before probing")
-    sources = await import_sources(db)
-    mapping = mapped_path(downloader, downloader.config["save_path"], sources)
-    operation = Operation(
-        owner_id=admin.id,
-        kind="organization.probe",
+    from app.importing.setup_verification import prepare_probe
+
+    operation = await prepare_probe(
+        db,
+        destination_id=destination_id,
+        downloader_id=body.downloader_id,
+        downloader_generation=body.downloader_generation,
+        expected_revision=body.expected_revision,
+        actor_id=admin.id,
         idempotency_key=idempotency_key,
-        message="Waiting to test the downloader save folder and library destination",
-        payload={
-            "destination_id": str(row.id),
-            "configuration": configuration,
-            "setup_command": command,
-            "previous_probe": (await view(db, row)).probe or {},
-            "setup_downloader": {
-                "id": str(downloader.id),
-                "generation": downloader.credential_generation,
-                "mapping": mapping,
-            },
-            "source_key": mapping["source_key"],
-            "source_path": str(sources[mapping["source_key"]]),
-        },
     )
-    if not await permitted(db, operation, row):
-        raise HTTPException(409, "Destination access or recovery mode prevents probing")
-    db.add(operation)
-    await db.flush()
-    row.probe_operation_id, row.probe_token, row.probe = operation.id, None, None
     operation.job_id = await enqueue(db, "organization.probe", operation_id=str(operation.id))
     await db.commit()
     await db.refresh(operation)

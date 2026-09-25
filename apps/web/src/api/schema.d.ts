@@ -6547,6 +6547,32 @@ export interface components {
        */
       evidence: "claimed";
     };
+    /** ClientRouteView */
+    ClientRouteView: {
+      /**
+       * Downloader Id
+       * Format: uuid
+       */
+      downloader_id: string;
+      /** Name */
+      name: string;
+      /** Download Path */
+      download_path: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status:
+        | "verified"
+        | "checking"
+        | "needs-verification"
+        | "unavailable"
+        | "failed";
+      /** Message */
+      message: string;
+      /** Checked At */
+      checked_at?: string | null;
+    };
     /** CollectionCard */
     CollectionCard: {
       /** Id */
@@ -7364,6 +7390,8 @@ export interface components {
       publication_available: boolean;
       /** Server Kind */
       server_kind: string;
+      /** Client Routes */
+      client_routes?: components["schemas"]["ClientRouteView"][];
     };
     /** DiscoverInput */
     DiscoverInput: {

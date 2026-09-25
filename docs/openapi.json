@@ -20170,6 +20170,59 @@
         ],
         "title": "ClaimedFile"
       },
+      "ClientRouteView": {
+        "properties": {
+          "downloader_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Downloader Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "download_path": {
+            "type": "string",
+            "title": "Download Path"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "checking",
+              "needs-verification",
+              "unavailable",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "downloader_id",
+          "name",
+          "download_path",
+          "status",
+          "message"
+        ],
+        "title": "ClientRouteView"
+      },
       "CollectionCard": {
         "properties": {
           "id": {
@@ -22340,6 +22393,13 @@
           "server_kind": {
             "type": "string",
             "title": "Server Kind"
+          },
+          "client_routes": {
+            "items": {
+              "$ref": "#/components/schemas/ClientRouteView"
+            },
+            "type": "array",
+            "title": "Client Routes"
           }
         },
         "additionalProperties": false,

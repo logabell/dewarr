@@ -37,13 +37,106 @@ function posixPath(path: string) {
 type Medium = "ebook" | "audio";
 const names = { ebook: "Ebooks", audio: "Audiobooks" };
 
+async function verifyLibraryFolder(
+  destination: Destination,
+  clients: components["schemas"]["DownloaderView"][],
+  setProgress: (message: string) => void,
+) {
+  let verified = destination;
+  let warnings: string[] = [];
+  // A copy fallback changes the destination revision. Recheck the other
+  // paths once under that final mode rather than retaining stale receipts.
+  for (let pass = 0; pass < 2; pass++) {
+    const revision = verified.revision;
+    warnings = [];
+    for (const client of clients) {
+      setProgress(`Checking ${client.name}'s download folder → library…`);
+      try {
+        const operation = result(
+          await api.POST(
+            "/api/organization/destinations/{destination_id}/setup-probe",
+            {
+              params: {
+                path: { destination_id: destination.id },
+                header: { "idempotency-key": randomUUID() },
+              },
+              body: {
+                downloader_id: client.id,
+                downloader_generation: client.generation,
+                expected_revision: verified.revision,
+              },
+            },
+          ),
+        );
+        let completed = false;
+        for (let attempt = 0; attempt < 80; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const activity = result(await api.GET("/api/activity"));
+          const status = activity.find((entry) => entry.id === operation.id);
+          if (
+            status &&
+            ["failed", "needs-review", "cancelled"].includes(status.status)
+          )
+            throw new Error(status.message || "Folder verification failed.");
+          if (status?.status === "completed") {
+            completed = true;
+            break;
+          }
+        }
+        if (!completed)
+          throw new Error(
+            "The worker has not finished checking this download folder.",
+          );
+      } catch (error) {
+        warnings.push(
+          `${client.name}: ${error instanceof Error ? error.message : "Folder verification failed."}`,
+        );
+      }
+      verified =
+        result(await api.GET("/api/organization/destinations")).find(
+          (item) => item.id === destination.id,
+        ) || verified;
+    }
+    if (verified.revision === revision) break;
+  }
+  return { verified, warnings };
+}
+
 export default function Destinations({
   embedded = false,
 }: {
   embedded?: boolean;
 }) {
   const [editing, setEditing] = useState<Medium | null>(null);
-  const [verifying, setVerifying] = useState(false);
+  const cache = useQueryClient();
+  const [verificationProgress, setVerificationProgress] = useState("");
+  const verification = useMutation({
+    mutationFn: async (destination: Destination) => {
+      const clients = result(await api.GET("/api/downloaders")).filter(
+        (client) =>
+          client.enabled &&
+          client.status === "connected" &&
+          client.mappings_current &&
+          (!destination.seeding_rename || client.kind === "qbittorrent"),
+      );
+      if (!clients.length)
+        throw new Error("Connect a download client and its folder first.");
+      const checked = await verifyLibraryFolder(
+        destination,
+        clients,
+        setVerificationProgress,
+      );
+      if (checked.warnings.length) throw new Error(checked.warnings.join(" "));
+    },
+    onSettled: async () => {
+      setVerificationProgress("");
+      await Promise.all([
+        cache.invalidateQueries({ queryKey: ["library-folder-settings"] }),
+        cache.invalidateQueries({ queryKey: ["automatic-import-policy"] }),
+        cache.invalidateQueries({ queryKey: ["selection-options"] }),
+      ]);
+    },
+  });
   const query = useLibraryFolderSettings();
   const downloaders = useQuery({
     queryKey: ["downloaders"],
@@ -54,8 +147,8 @@ export default function Destinations({
       item.enabled && item.status === "connected" && item.mappings_current,
   );
   const verifyFolder = (medium: Medium) => {
-    setVerifying(true);
-    setEditing(medium);
+    const destination = selected(medium);
+    if (destination) verification.mutate(destination);
   };
   const selected = (medium: Medium) =>
     selectLibraryDestination(
@@ -70,7 +163,8 @@ export default function Destinations({
         Choose where completed ebooks and audiobooks belong. Downloads stay
         available for seeding.
       </p>
-      <Notice error={query.error} />
+      <Notice error={query.error || verification.error} />
+      {verificationProgress && <p role="status">{verificationProgress}</p>}
       {query.isPending ? (
         <Loading />
       ) : (
@@ -81,6 +175,10 @@ export default function Destinations({
               const library = query.data.libraries.find(
                 (l) => l.id === destination?.library_id,
               );
+              const routes = destination?.client_routes || [];
+              const allVerified =
+                !!routes.length &&
+                routes.every((route) => route.status === "verified");
               return (
                 <section
                   className="media-folder-card"
@@ -103,27 +201,22 @@ export default function Destinations({
                       {destination && (
                         <small
                           className={
-                            destination.publication_available
+                            allVerified
                               ? "library-folder-status success"
                               : "library-folder-status muted"
                           }
                         >
-                          {destination.publication_available &&
-                          destination.seeding_rename ? (
+                          {allVerified ? (
                             <>
-                              <CheckCircle2 size={12} /> Renames the seeding
-                              copy
+                              <CheckCircle2 size={12} /> Download folders
+                              verified
                             </>
-                          ) : destination.publication_available &&
-                            destination.mode === "hardlink" ? (
-                            <>
-                              <CheckCircle2 size={12} /> Hardlinks verified
-                            </>
-                          ) : destination.publication_available &&
-                            destination.mode === "copy" ? (
-                            "Copy mode · files are copied into this folder"
+                          ) : routes.some(
+                              (route) => route.status === "checking",
+                            ) ? (
+                            "Checking download folders…"
                           ) : (
-                            "Folder saved · verification required"
+                            "Download folders need verification"
                           )}
                         </small>
                       )}
@@ -131,7 +224,6 @@ export default function Destinations({
                     <div className="media-folder-actions">
                       <button
                         onClick={() => {
-                          setVerifying(false);
                           setEditing(medium);
                         }}
                         aria-label={`${destination ? "Change" : "Choose"} ${names[medium].toLowerCase()} folder`}
@@ -187,51 +279,62 @@ export default function Destinations({
                             </div>
                           )}
                       </dl>
-                      {!destination.publication_available && (
-                        <section
-                          className="library-verification-next"
-                          aria-label="Folder verification"
-                        >
-                          <div>
-                            <strong>
-                              {readyClient
-                                ? "Ready to verify"
-                                : "Finish download setup"}
-                            </strong>
-                            <p>
-                              {downloaders.isPending
-                                ? "Checking download-client setup…"
-                                : downloaders.isError
-                                  ? "Could not check download-client setup. Try again to continue."
-                                  : readyClient
-                                    ? "Check file access before importing into this library."
-                                    : "Connect a download client and its download folder, then verify this library."}
-                            </p>
-                          </div>
-                          {downloaders.isError ? (
-                            <button onClick={() => downloaders.refetch()}>
-                              Retry setup check
-                            </button>
-                          ) : (
-                            !downloaders.isPending &&
-                            (readyClient ? (
-                              <button
-                                className="primary"
-                                onClick={() => verifyFolder(medium)}
-                              >
-                                <CheckCircle2 size={15} /> Verify folder
-                              </button>
-                            ) : (
-                              <Link
-                                className="library-setup-link"
-                                to="/settings#downloaders"
-                              >
-                                Set up download client
-                              </Link>
-                            ))
+                      <section
+                        className="library-verification-next"
+                        aria-label="Folder verification"
+                      >
+                        <div>
+                          <strong>Download folders</strong>
+                          <p>
+                            Checked automatically after download-client setup
+                            changes.
+                          </p>
+                          <ul className="library-client-routes">
+                            {(destination.client_routes || []).map((route) => (
+                              <li key={route.downloader_id}>
+                                <strong>{route.name}</strong>
+                                <span
+                                  className={
+                                    route.status === "verified"
+                                      ? "success"
+                                      : "muted"
+                                  }
+                                >
+                                  {route.status === "verified" && (
+                                    <CheckCircle2 size={12} aria-hidden />
+                                  )}
+                                  {route.message}
+                                </span>
+                                <code>{route.download_path}</code>
+                                {route.checked_at && (
+                                  <small>
+                                    Checked{" "}
+                                    {new Date(
+                                      route.checked_at,
+                                    ).toLocaleString()}
+                                  </small>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                          {!readyClient && (
+                            <Link to="/settings#downloaders">
+                              Set up download client
+                            </Link>
                           )}
-                        </section>
-                      )}
+                        </div>
+                        <button
+                          disabled={!readyClient || verification.isPending}
+                          onClick={() => verifyFolder(medium)}
+                          aria-label={`Verify ${names[medium].toLowerCase()} download folders again`}
+                        >
+                          <CheckCircle2 size={15} />
+                          {verification.isPending &&
+                          verification.variables?.id === destination.id
+                            ? "Verifying…"
+                            : "Verify again"}
+                        </button>
+                      </section>
                       <AutomaticImportPolicy
                         destinationId={destination.id}
                         revision={destination.revision}
@@ -251,7 +354,6 @@ export default function Destinations({
         <FolderPicker
           medium={editing}
           saved={selected(editing)}
-          verifying={verifying}
           close={() => setEditing(null)}
         />
       )}
@@ -262,12 +364,10 @@ export default function Destinations({
 function FolderPicker({
   medium,
   saved,
-  verifying = false,
   close,
 }: {
   medium: Medium;
   saved?: Destination;
-  verifying?: boolean;
   close: () => void;
 }) {
   const cache = useQueryClient();
@@ -405,70 +505,12 @@ function FolderPicker({
       );
       current.current = destination;
       if (!canVerify) return { ...destination, warnings: [] as string[] };
-      let verified = destination;
-      let warnings: string[] = [];
-      // A copy fallback changes the destination revision. Recheck the other
-      // paths once under that final mode rather than retaining stale receipts.
-      for (let pass = 0; pass < 2; pass++) {
-        const revision = verified.revision;
-        warnings = [];
-        for (const client of verificationClients) {
-          setProgress(
-            `Checking ${client.name}'s download folder → ${library.library_name}…`,
-          );
-          try {
-            const operation = result(
-              await api.POST(
-                "/api/organization/destinations/{destination_id}/setup-probe",
-                {
-                  params: {
-                    path: { destination_id: destination.id },
-                    header: { "idempotency-key": randomUUID() },
-                  },
-                  body: {
-                    downloader_id: client.id,
-                    downloader_generation: client.generation,
-                    expected_revision: verified.revision,
-                  },
-                },
-              ),
-            );
-            let completed = false;
-            for (let attempt = 0; attempt < 80; attempt++) {
-              await new Promise((resolve) => setTimeout(resolve, 1500));
-              const activity = result(await api.GET("/api/activity"));
-              const status = activity.find(
-                (entry) => entry.id === operation.id,
-              );
-              if (
-                status &&
-                ["failed", "needs-review", "cancelled"].includes(status.status)
-              )
-                throw new Error(
-                  status.message || "Folder verification failed.",
-                );
-              if (status?.status === "completed") {
-                completed = true;
-                break;
-              }
-            }
-            if (!completed)
-              throw new Error(
-                "The worker has not finished checking this download folder.",
-              );
-          } catch (error) {
-            warnings.push(
-              `${client.name}: ${error instanceof Error ? error.message : "Folder verification failed."}`,
-            );
-          }
-          verified =
-            result(await api.GET("/api/organization/destinations")).find(
-              (item) => item.id === destination.id,
-            ) || verified;
-          current.current = verified;
-        }
-        if (verified.revision === revision) break;
-      }
+      const { verified, warnings } = await verifyLibraryFolder(
+        destination,
+        verificationClients,
+        setProgress,
+      );
+      current.current = verified;
       if (!verified.publication_available)
         throw new Error(warnings.join(" ") || "Folder verification failed.");
       setProgress("Setting your library destination…");
@@ -501,7 +543,7 @@ function FolderPicker({
   });
   return (
     <BookDialog
-      title={`${verifying ? "Verify" : "Choose"} ${names[medium].toLowerCase()} folder`}
+      title={`Choose ${names[medium].toLowerCase()} folder`}
       close={() => {
         if (!save.isPending) close();
       }}
@@ -533,9 +575,8 @@ function FolderPicker({
         ) : (
           <>
             <p className="library-setup-intro">
-              {verifying
-                ? "Confirm these paths, then run verification to check file access and finish setting up imports."
-                : "Choose the library for completed downloads. Use its default folder path or a custom path for your mount."}
+              Choose the library for completed downloads. Use its default folder
+              path or a custom path for your mount.
             </p>
             <Notice error={options.error} />
             {options.isError && (
@@ -865,11 +906,7 @@ function FolderPicker({
                   ? "Checking…"
                   : "Saving…"
                 : canVerify
-                  ? verifying
-                    ? automatic
-                      ? "Verify & enable imports"
-                      : "Verify folder"
-                    : "Save & verify folder"
+                  ? "Save & verify folder"
                   : "Save folder"}
             </button>
           </div>
