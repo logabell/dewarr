@@ -29,11 +29,12 @@ test("linked downloads resume their saved import instead of asking for catalog m
             title: "Project Hail Mary",
             medium: "audio",
             state: "ready",
-            folder: "Andy Weir/Project Hail Mary",
+            folder: "audiobooks/Andy Weir/Project Hail Mary",
             files: [
               {
                 source: "Project Hail Mary.m4b",
-                destination: "Project Hail Mary - Ray Porter.m4b",
+                destination:
+                  "audiobooks/Andy Weir/Project Hail Mary/Project Hail Mary - Ray Porter.m4b",
               },
             ],
           },
@@ -156,7 +157,9 @@ test("linked downloads resume their saved import instead of asking for catalog m
   });
   await page.getByText("Files & naming", { exact: true }).click();
   await expect(
-    page.getByText("→ Project Hail Mary - Ray Porter.m4b"),
+    page.getByText(
+      "→ Andy Weir/Project Hail Mary/Project Hail Mary - Ray Porter.m4b",
+    ),
   ).toBeVisible();
   await page.getByRole("button", { name: "Retry import", exact: true }).click();
   await expect(

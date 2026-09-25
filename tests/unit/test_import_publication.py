@@ -947,3 +947,101 @@ def test_copy_publication_with_path_bound_handles_preserves_download(specificati
     assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == before
     assert original.read_bytes() == before
     assert publish_item(spec)["state"] == "published"
+
+
+@pytest.mark.parametrize(
+    "mode,point",
+    [
+        ("hardlink", "stage-created"),
+        ("hardlink", "file-staged"),
+        ("hardlink", "prepared"),
+        ("copy", "copy-created"),
+        ("copy", "prepared"),
+    ],
+)
+def test_staging_inode_change_resumes_only_marked_verified_files(specification, mode, point):
+    spec = specification.model_copy(update={"mode": mode})
+    original = spec.source_root / "pack/book.epub"
+    original_bytes = original.read_bytes()
+
+    def crash(phase):
+        if phase == point:
+            raise RuntimeError("interrupted staging")
+
+    with pytest.raises(RuntimeError, match="interrupted staging"):
+        publish_item(spec, checkpoint=crash)
+    journal = spec.staging_root / f"{spec.entry_id}.json"
+    receipt = json.loads(journal.read_text())
+    receipt["stage_identity"]["inode"] += 100
+    journal.write_text(json.dumps(receipt))
+    if point == "prepared":
+        assert publication.remaining_import_bytes(spec) == 0
+    result = publish_item(spec)
+    published = spec.destination_root / spec.folder / "First Harbor.epub"
+    assert result["state"] == "published"
+    assert published.read_bytes() == original.read_bytes() == original_bytes
+    assert (published.stat().st_ino == original.stat().st_ino) == (mode == "hardlink")
+    assert publish_item(spec)["state"] == "published"
+
+
+def test_directory_inode_changes_during_staging_are_verified_before_rename(
+    specification, monkeypatch
+):
+    spec = specification
+    actual = publication.object_id
+    remapped = None
+
+    def identity(fd):
+        value = actual(fd)
+        if value == remapped:
+            return {**value, "inode": value["inode"] + 100}
+        return value
+
+    def changed(phase):
+        nonlocal remapped
+        if phase == "file-staged":
+            journal = json.loads((spec.staging_root / f"{spec.entry_id}.json").read_text())
+            remapped = journal["stage_identity"]
+
+    monkeypatch.setattr(publication, "object_id", identity)
+    result = publish_item(spec, checkpoint=changed)
+    assert result["state"] == "published"
+    assert result["stage_identity"]["inode"] == remapped["inode"] + 100
+    published = spec.destination_root / spec.folder / "First Harbor.epub"
+    assert published.stat().st_ino == (spec.source_root / "pack/book.epub").stat().st_ino
+
+
+@pytest.mark.parametrize(
+    "change", ["marker-missing", "marker-foreign", "extra-file", "media-replaced"]
+)
+def test_staging_rebind_preserves_unrecognized_or_conflicting_files(specification, change):
+    spec = specification
+
+    def crash(phase):
+        if phase == "prepared":
+            raise RuntimeError("interrupted staging")
+
+    with pytest.raises(RuntimeError, match="interrupted staging"):
+        publish_item(spec, checkpoint=crash)
+    journal = spec.staging_root / f"{spec.entry_id}.json"
+    receipt = json.loads(journal.read_text())
+    stage = spec.staging_root / receipt["stage_name"]
+    receipt["stage_identity"]["inode"] += 100
+    journal.write_text(json.dumps(receipt))
+    if change == "marker-missing":
+        (stage / publication.PUBLICATION_MARKER).unlink()
+    elif change == "marker-foreign":
+        (stage / publication.PUBLICATION_MARKER).write_text("another import")
+    elif change == "extra-file":
+        (stage / "unrelated.txt").write_text("preserve me")
+    else:
+        media = stage / "First Harbor.epub"
+        content = media.read_bytes()
+        media.unlink()
+        media.write_bytes(content)  # Same bytes alone cannot prove the requested hardlink.
+    before = {file.name: file.read_bytes() for file in stage.iterdir()}
+    with pytest.raises(PublicationError):
+        publish_item(spec)
+    assert {file.name: file.read_bytes() for file in stage.iterdir()} == before
+    assert not (spec.destination_root / spec.folder).exists()
+    assert json.loads(journal.read_text())["stage_identity"] == receipt["stage_identity"]

@@ -14,6 +14,7 @@ import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import ImportExecution from "./ImportExecution";
+import { libraryRelativePath } from "./importPaths";
 
 type Inspection = components["schemas"]["InspectionView"];
 
@@ -170,13 +171,16 @@ export default function DownloadImportReview({
       {plan.data && <ImportExecution plan={plan.data} compact />}
       <details className="download-import-files">
         <summary>Files &amp; naming</summary>
+        <p className="muted">
+          Paths below are relative to your library folder.
+        </p>
         {plan.data?.document.plan.items.map((item) => (
           <div className="download-import-file" key={item.group_id}>
-            <strong>{item.folder}</strong>
+            <strong>{libraryRelativePath(item.folder)}</strong>
             {(item.files || []).map((file) => (
               <div key={file.source}>
                 <span className="muted">{file.source}</span>
-                <span>→ {file.destination}</span>
+                <span>→ {libraryRelativePath(file.destination)}</span>
               </div>
             ))}
           </div>

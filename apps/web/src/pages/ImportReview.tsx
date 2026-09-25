@@ -6,6 +6,7 @@ import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import DownloadImportReview from "../components/DownloadImportReview";
 import ImportExecution from "../components/ImportExecution";
+import { libraryRelativePath } from "../components/importPaths";
 import GroupingEditor from "../components/GroupingEditor";
 import ImportCollectionContents from "../components/ImportCollectionContents";
 import { randomUUID } from "../randomUUID";
@@ -564,9 +565,11 @@ function Review({ inspection }: { inspection: Inspection }) {
               {(item.conversion?.sources ?? []).map((source) => (
                 <span key={source}>
                   {source} →{" "}
-                  {item.files?.find((file) =>
-                    item.conversion?.sources?.includes(file.source),
-                  )?.destination ?? item.conversion?.output_name}
+                  {libraryRelativePath(
+                    item.files?.find((file) =>
+                      item.conversion?.sources?.includes(file.source),
+                    )?.destination ?? item.conversion?.output_name,
+                  )}
                 </span>
               ))}
               {(item.files || [])
@@ -575,7 +578,7 @@ function Review({ inspection }: { inspection: Inspection }) {
                 )
                 .map((file) => (
                   <span key={file.source}>
-                    {file.source} → {file.destination}
+                    {file.source} → {libraryRelativePath(file.destination)}
                   </span>
                 ))}
             </div>

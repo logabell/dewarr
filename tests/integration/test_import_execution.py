@@ -1,5 +1,7 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -400,3 +402,39 @@ async def test_persisted_library_mount_publishes_without_destination_environment
     published = next(ready_route["target"].rglob("*.epub"))
     assert published.stat().st_ino == original.stat().st_ino
     assert original.read_bytes() == before
+
+
+async def test_retry_rebinds_staging_after_filesystem_identity_change(
+    client, admin, database, ready_route
+):
+    result = await start(client, ready_route)
+    run = result.json()
+    entry = run["entries"][0]
+
+    def interrupted(phase):
+        if phase == "prepared":
+            raise execution.PublicationError("Staged item identity changed")
+
+    await execution.execute(UUID(entry["operation_id"]), checkpoint=interrupted)
+    # Complete the queued job just as the worker does after recording a held import.
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    async with database() as db:
+        held = await db.get(ImportEntry, UUID(entry["id"]))
+        assert held.state == "held"
+        journal = Path(held.specification["staging_root"]) / f"{held.id}.json"
+    receipt = json.loads(journal.read_text())
+    receipt["stage_identity"]["inode"] += 100
+    journal.write_text(json.dumps(receipt))
+    retried = await client.post(
+        f"/api/organization/imports/{run['id']}/entries/{entry['id']}/retry"
+    )
+    assert retried.status_code == 202, retried.text
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    current = (await client.get(f"/api/organization/imports/{run['id']}")).json()["entries"][0]
+    assert current["state"] == "confirmed", current["message"]
+    original = ready_route["source"] / "pack/book.epub"
+    published = list(ready_route["target"].rglob("*.epub"))
+    assert len(published) == 1 and published[0].stat().st_ino == original.stat().st_ino
+    assert (
+        await client.get(f"/api/organization/inspections/{ready_route['plan']['inspection_id']}")
+    ).json()["plan_id"] == run["plan_id"]

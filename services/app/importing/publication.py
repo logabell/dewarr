@@ -594,12 +594,58 @@ def destination_parent(root, relative):
         os.close(fd)
 
 
-def prepare_stage(staging, receipt_name, receipt, spec):
+def verify_resumable_stage(folder, receipt, spec, deadline):
+    """Rebind a remapped staging directory only to its marked, verified contents.
+
+    Union/network filesystems can change a directory inode when populating it.
+    The private journal's random marker and each existing file still have to agree;
+    a directory name or identical-looking replacement never establishes ownership.
+    """
+    if not has_publication_marker(folder, receipt):
+        raise PublicationError(
+            "Staged item identity changed; its ownership marker is missing or differs"
+        )
+    generated = generated_files(spec)
+    media = {file.name: file for file in spec.files}
+    present = leaf_names(folder, spec) - {PUBLICATION_MARKER}
+    if present - (published_names(spec) | set(generated)):
+        raise PublicationError("Staged item contains unplanned files; review before retrying")
+    for name in present:
+        with beneath(folder, name) as fd:
+            info = os.fstat(fd)
+            if name in media:
+                file = media[name]
+                matched = (
+                    info.st_size == file.identity["size"] and digest(fd, deadline) == file.sha256
+                )
+                if spec.mode == "hardlink":
+                    if not matched or not same_object(fd, file.identity):
+                        raise PublicationError("Staged media is not the expected hardlink")
+                    continue
+            elif name in generated:
+                matched = digest(fd, deadline) == hashlib.sha256(generated[name]).hexdigest()
+            else:
+                derived = receipt.get("derived", {}).get(name)
+                matched = bool(
+                    derived
+                    and info.st_size == derived["size"]
+                    and digest(fd, deadline) == derived["sha256"]
+                )
+            if not matched:
+                # The existing resume path can restart only its own unfinished writes.
+                partial = receipt.get("partial_files", {}).get(name)
+                if not partial or not same_object(fd, partial) or info.st_nlink != 1:
+                    raise PublicationError("Staged file differs from its import journal")
+
+
+def prepare_stage(staging, receipt_name, receipt, spec, deadline):
     name = receipt["stage_name"]
     if receipt.get("stage_identity"):
         with beneath(staging, name, folder=True) as fd:
             if not same_object(fd, receipt["stage_identity"]):
-                raise PublicationError("Staged item identity changed")
+                verify_resumable_stage(fd, receipt, spec, deadline)
+                receipt["stage_identity"] = object_id(fd)
+                write_receipt(staging, receipt_name, receipt)
             ensure_publication_marker(fd, staging, receipt_name, receipt)
         return
     # A crash between mkdir and identity journaling leaves an unconfirmed, unwatched orphan.
@@ -853,7 +899,9 @@ def remaining_stage_bytes(staging, receipt, spec, deadline):
     if receipt and receipt.get("stage_identity"):
         try:
             with beneath(staging, receipt["stage_name"], folder=True) as stage:
-                if same_object(stage, receipt["stage_identity"]):
+                if same_object(stage, receipt["stage_identity"]) or has_publication_marker(
+                    stage, receipt
+                ):
                     verify_item(stage, spec, deadline, receipt.get("derived"), receipt)
                     return 0
         except (FileNotFoundError, PublicationError):
@@ -1168,7 +1216,7 @@ def publish_item(
                     checked_source(source, file, deadline)
                 needed = remaining_stage_bytes(staging, receipt, spec, deadline)
                 _require_free_space(staging, needed)
-                prepare_stage(staging, receipt_name, receipt, spec)
+                prepare_stage(staging, receipt_name, receipt, spec, deadline)
                 checkpoint("stage-created")
                 with beneath(staging, receipt["stage_name"], folder=True) as stage:
                     stage_files(
@@ -1218,9 +1266,16 @@ def publish_item(
                                     beneath(staging, receipt["stage_name"], folder=True)
                                 )
                                 if not same_object(current_stage, receipt["stage_identity"]):
-                                    raise PublicationError(
-                                        "Staged directory changed before publication"
+                                    verify_resumable_stage(current_stage, receipt, spec, deadline)
+                                    verify_item(
+                                        current_stage,
+                                        spec,
+                                        deadline,
+                                        receipt.get("derived"),
+                                        receipt,
                                     )
+                                    receipt["stage_identity"] = object_id(current_stage)
+                                    write_receipt(staging, receipt_name, receipt)
                             no_replace(staging, receipt["stage_name"], parent, leaf)
                             sync_directory(parent)
                             sync_directory(staging)
