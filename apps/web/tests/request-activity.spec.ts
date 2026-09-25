@@ -50,6 +50,33 @@ test("activity requests preserve independent reasons and route missing media to 
     work_id: work.id,
     specification: { mode: "audio" },
   });
+  // Exercise receipt cache invalidation without requiring a real download route.
+  // The API integration suite separately checks withdrawal of persisted receipts.
+  await page.route(
+    `**/api/requests/quick-add/latest/${work.id}`,
+    async (route) => {
+      const request = await (
+        await page.request.get(`/api/requests/${saved.request.id}`)
+      ).json();
+      await route.fulfill({
+        json: request.reasons.some(
+          (reason: { active: boolean }) => reason.active,
+        )
+          ? {
+              id: "withdrawal-receipt",
+              request_id: saved.request.id,
+              status: "held",
+              message: "No ready torrent download route",
+              source_checks: [],
+            }
+          : null,
+      });
+    },
+  );
+  await page.goto(`/books/${work.id}`);
+  await expect(
+    page.getByRole("region", { name: "Quick add progress" }),
+  ).toBeVisible();
   const list = await post("/api/lists", { name: "Activity follow list" });
   // Entry creation returns a normal list response and does not activate automation.
   const entry = await page.request.post(`/api/lists/${list.id}/entries`, {
@@ -166,6 +193,18 @@ test("activity requests preserve independent reasons and route missing media to 
   await expect(
     card.getByRole("link", { name: "Choose release", exact: true }),
   ).toHaveCount(0);
+  await card
+    .getByRole("link", { name: "Activity Journey Alpha", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Quick add", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Quick add progress" }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "Requests", exact: true }).click();
+  await page.getByRole("link", { name: "Withdrawn", exact: true }).click();
+  await expect(card).toBeVisible();
   await page.route("**/api/requests?*", (route) =>
     route.fulfill({
       status: 503,

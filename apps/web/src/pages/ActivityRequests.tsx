@@ -270,6 +270,7 @@ export default function ActivityRequests({
         "list-monitor",
         "book-sources",
         "source-request",
+        "quick-add",
       ].map((key) => cache.invalidateQueries({ queryKey: [key] })),
     );
   };

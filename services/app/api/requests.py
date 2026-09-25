@@ -940,6 +940,19 @@ async def latest_quick_add(work_id: UUID, user: Member, db: Database):
         .with_for_update()
     )
     if operation:
+        intent_id = operation.payload.get("intent_id")
+        if intent_id and not await db.scalar(
+            select(AcquisitionReason.id)
+            .join(AcquisitionIntent)
+            .where(
+                AcquisitionReason.intent_id == UUID(intent_id),
+                AcquisitionIntent.owner_id == user.id,
+                AcquisitionReason.active.is_(True),
+            )
+            .limit(1)
+        ):
+            # Keep the receipt in history, but a withdrawn request has no book-page action.
+            return None
         await repair(db, operation)
         await db.commit()
         await db.refresh(operation)

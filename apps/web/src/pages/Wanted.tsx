@@ -133,6 +133,7 @@ export default function Wanted({
         "activity",
         "book-sources",
         "source-request",
+        "quick-add",
       ].map((name) => cache.invalidateQueries({ queryKey: [name] })),
     );
   };

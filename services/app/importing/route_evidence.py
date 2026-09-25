@@ -23,10 +23,17 @@ def approval(probe):
 
 
 def approved(configuration, probe, mapping=None):
-    allowed = configuration.get("download_routes")
-    if allowed is None:
-        allowed = [{key: configuration.get(key) for key in ("source_key", "source_path")}]
+    """An enabled library policy covers every currently verified download folder.
+
+    Saved source scopes describe the original approval, not a second client allowlist.
+    Callers validate the policy's owner, enabled state, generation and destination;
+    current probe receipts still bind each client's path and configuration.
+    """
     for receipt in receipts(probe):
+        if receipt.get("status") != "verified" or receipt.get(
+            "configuration_revision"
+        ) != configuration.get("destination_revision"):
+            continue
         current = scope(receipt)
         if mapping and (
             current["source_key"] != mapping["source_key"]
@@ -36,6 +43,5 @@ def approved(configuration, probe, mapping=None):
             )
         ):
             continue
-        if any(all(current.get(key) == value for key, value in item.items()) for item in allowed):
-            return True
+        return True
     return False

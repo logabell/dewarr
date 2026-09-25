@@ -182,6 +182,38 @@ async def test_quick_add_feedback_explains_older_candidate_rejections(
     assert "inspection budget" not in check["message"]
 
 
+@pytest.mark.parametrize("status", ["queued", "running", "held", "failed", "completed"])
+async def test_withdrawn_request_clears_latest_quick_add_but_preserves_history(
+    client, database, authorized, catalog, status
+):
+    await defaults(client, authorized)
+    response = await add(client, catalog["work"])
+    receipt = response.json()
+    request_id = receipt["request_id"]
+    async with database() as db, db.begin():
+        operation = await db.get(Operation, UUID(receipt["id"]))
+        operation.status = status
+        operation.message = "No ready torrent download route"
+        extra = AcquisitionReason(
+            intent_id=UUID(request_id), kind="manual", reference="independent-request", active=True
+        )
+        db.add(extra)
+        await db.flush()
+        extra_id = str(extra.id)
+    request = (await client.get(f"/api/requests/{request_id}")).json()
+    for reason in request["reasons"]:
+        if reason["id"] != extra_id:
+            withdrawn = await client.delete(f"/api/requests/{request_id}/reasons/{reason['id']}")
+            assert withdrawn.status_code == 200, withdrawn.text
+    endpoint = f"/api/requests/quick-add/latest/{catalog['work']}"
+    assert (await client.get(endpoint)).json()["id"] == receipt["id"]
+    withdrawn = await client.delete(f"/api/requests/{request_id}/reasons/{extra_id}")
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert (await client.get(endpoint)).json() is None
+    async with database() as db:
+        assert await db.get(Operation, UUID(receipt["id"]))
+
+
 async def test_quick_add_explicit_medium_overrides_default_without_changing_it(
     client, database, authorized, catalog
 ):

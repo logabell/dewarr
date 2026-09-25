@@ -154,7 +154,7 @@ async def test_empty_folder_can_qualify_before_any_plan_or_download(
     policy = (
         await client.get(f"/api/organization/destinations/{checked['id']}/automatic-import")
     ).json()
-    assert policy["can_enable"] and not policy["enabled"]
+    assert policy["can_enable"] and policy["enabled"] and policy["ready"]
     async with database() as db:
         assert await db.scalar(select(func.count()).select_from(FrozenImportPlan)) == 0
         assert await db.scalar(select(func.count()).select_from(Operation)) == 1
@@ -436,10 +436,25 @@ async def test_clients_share_library_without_replacing_defaults_or_each_others_v
             client_ids.append(row.id)
     monkeypatch.setattr(settings, "import_sources", sources)
     await save(client, {"downloader_id": str(client_ids[0])}, "installation")
+    monkeypatch.setattr(settings, "download_dispatch_enabled", True)
+    initial_generation = None
     for index, client_id in enumerate(client_ids):
         response = await start(client, route, key=f"client-{index}", downloader_id=str(client_id))
         assert response.status_code == 202, response.text
         await get_queue().run_worker_async(wait=False, concurrency=1)
+        # Each verified client works immediately, without enabling imports again
+        # or invalidating downloads authorized before this client was added.
+        from app.domain.automatic_dispatch import approve_route
+
+        checked = await current(client)
+        async with database() as db:
+            policy = await db.scalar(select(AutomaticImportPolicy))
+            initial_generation = initial_generation or policy.generation
+            assert policy.enabled and policy.generation == initial_generation
+            mapping = checked["probe"]["setup_downloader"]["mapping"]
+            await approve_route(
+                db, UUID(admin["id"]), UUID(checked["id"]), checked["revision"], mapping=mapping
+            )
     checked = await current(client)
     assert checked["publication_available"]
     assert len(checked["probe"]["download_routes"]) == 3
@@ -488,3 +503,28 @@ async def test_clients_share_library_without_replacing_defaults_or_each_others_v
         await client.get(f"/api/organization/destinations/{checked['id']}/automatic-import")
     ).json()
     assert policy["ready"], policy
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_setup_verification_honors_saved_import_preference(
+    client, admin, database, empty_route, enabled
+):
+    destination = empty_route["destination"]
+    endpoint = f"/api/organization/destinations/{destination['id']}/automatic-import"
+    # Save the choice while verification is queued; the worker must use the latest choice.
+    assert (await start(client, empty_route)).status_code == 202
+    response = await client.put(
+        endpoint,
+        json={
+            "enabled": enabled,
+            "defer_until_verified": True,
+            "expected_generation": 0,
+            "destination_revision": destination["revision"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    assert (await current(client))["publication_available"]
+    policy = (await client.get(endpoint)).json()
+    assert policy["enabled"] is enabled
+    assert policy["ready"] is enabled

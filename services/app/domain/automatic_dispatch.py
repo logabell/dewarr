@@ -133,7 +133,11 @@ async def approve_route(
         from app.importing.route_evidence import approved
 
         if not approved(policy.configuration, current.probe, mapping):
-            raise HTTPException(409, "Verify and enable imports from this client’s download folder")
+            raise HTTPException(
+                409,
+                "This download client's folder is not verified for the library. "
+                "Check its folder mapping in Settings → Download clients.",
+            )
     return snapshot
 
 

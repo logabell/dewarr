@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.db.models import AuditEvent, ImportDestination, Integration, Library, Operation, User
 from app.db.session import session_factory
 from app.domain.downloaders import TRANSFER_KINDS, mapped_path
+from app.domain.operations import transaction_lock
 from app.importing.backend import verify_backend
 from app.importing.filesystem import InspectionError, describe_os_error, directory
 from app.importing.naming import fingerprint
@@ -320,6 +321,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             message = "Destination probe failed; check paths, permissions and filesystem support"
     async with session_factory()() as db, db.begin():
         operation = await db.get(Operation, operation_id)
+        await transaction_lock(db, f"automatic-policy:{payload['destination_id']}")
         destination = await db.scalar(
             select(ImportDestination)
             .where(ImportDestination.id == UUID(payload["destination_id"]))
@@ -380,6 +382,10 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         )
         destination.probe_token = None
         operation.status, operation.message = "completed" if ok else "failed", message
+        if ok and binding:
+            from app.importing.policy_defaults import enable_verified_imports
+
+            await enable_verified_imports(db, destination, operation.owner_id)
         db.add(
             AuditEvent(
                 actor_id=operation.owner_id,
