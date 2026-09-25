@@ -97,8 +97,8 @@ at its reported staging mode `0777`, before reaching cleanup; that was not an NF
 interoperability test. No existing library files were touched.
 
 This is a confirmed code defect at the reported failure location, not proof of
-the reporter's exact mount behavior. NOR-61 still needs their mount details or a
-successful retest of the updated build before being called confirmed resolved.
+the reporter's exact mount behavior. At that stage, NOR-61 still needed their mount details or a
+successful retest before being called confirmed resolved.
 
 ### Follow-up evidence after v0.3.1
 
@@ -128,7 +128,12 @@ by download-selection and UI problems. These are separate from the cleanup bug:
 The displayed "No eligible release" message is an automatic-selection hold,
 not evidence of another missing filesystem path. Its specific rejection reasons
 were not provided by the reporter. Eligibility rules and mount mappings are not
-changed to guess around missing evidence; NOR-61 remains open pending retesting.
+changed to guess around missing evidence.
+
+The reporter [confirmed on September 25](https://github.com/logabell/dewarr/issues/22#issuecomment-5833823239)
+that library saving now works and said the remaining download failures would be
+reported separately. NOR-61 / GitHub #22 can therefore be closed for the original
+folder-save defect; Soulseek selection is tracked separately in NOR-65 / GitHub #28.
 
 Validation: 55 focused setup, Soulseek-connection and filesystem tests, plus nine
 browser journeys. Regression checks cover real pointer selection in a modal,

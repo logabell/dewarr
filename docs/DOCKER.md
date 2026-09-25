@@ -150,9 +150,8 @@ Without trusted client-IP configuration, everyone behind the same proxy shares
 its 15-attempt/10-minute password sign-in budget. Successful attempts also count.
 A 429 response includes `Retry-After`; a 403 origin rejection is a different problem.
 
-The proxy-token setup above is supported in v0.3.2. The following IP/CIDR option
-and diagnostic command are development changes after v0.3.2; they are not available
-in that public release yet.
+The proxy-token setup is supported from v0.3.2. The following IP/CIDR option
+and diagnostic command are available from v0.3.3.
 
 If your proxy cannot inject `X-Dewarr-Proxy-Token`, explicitly trust only its
 connection address (or a dedicated proxy network):
@@ -190,7 +189,7 @@ docker compose up -d --no-deps --force-recreate dewarr
 `docker compose restart` does not apply environment changes. For an image upgrade,
 pull the intended release as well. Native installations require a process restart.
 
-On builds after v0.3.2, this operator-only command applies the same Docker aliases
+From v0.3.3, this operator-only command applies the same Docker aliases
 as startup and prints selected configuration without passwords, cookies or tokens:
 
 ```sh

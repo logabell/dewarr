@@ -160,9 +160,7 @@ test("release view sorting and filters compare every loaded result without chang
       .getByRole("button", { name: `Details for ${title}`, exact: true })
       .click();
     await expect(
-      page
-        .getByRole("dialog")
-        .getByRole("button", { name: /^Download / }),
+      page.getByRole("dialog").getByRole("button", { name: /^Download / }),
     ).toBeDisabled();
     await page.keyboard.press("Escape");
   }
