@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import errno
 import os
 import re
@@ -14,7 +15,10 @@ from app.importing.destinations import (
     holds_journals,
 )
 from app.importing.filesystem import InspectionError, describe_os_error
-from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
+from tests.filesystem_fixtures import (
+    path_bound_directory_handles,  # noqa: F401
+    read_only_downloads,  # noqa: F401
+)
 
 
 @pytest.fixture
@@ -167,6 +171,70 @@ def test_overlap_rejected_before_a_temporary_source_is_created(roots):
     with pytest.raises(publication.PublicationError, match="overlap"):
         publication.probe_download_folder(source, "", source, stage)
     assert not list(source.iterdir())
+
+
+@pytest.mark.parametrize("code", [errno.EROFS, errno.EACCES, errno.EPERM])
+@pytest.mark.parametrize("relative", ["", "completed"])
+def test_readable_only_download_folder_qualifies_copy_without_touching_files(
+    roots, read_only_downloads, code, relative
+):
+    source, library, staging = roots
+    folder = source / relative
+    if relative:
+        folder.mkdir()
+    original = folder / "existing.epub"
+    original.write_bytes(b"existing download")
+    before = original.stat()
+    read_only_downloads(folder, code)
+    report = publication.probe_download_folder(source, relative, library, staging)
+    assert report["source_readable"] and not report["source_writable"]
+    assert report["source_write_error"] == errno.errorcode[code]
+    assert report["copy"] and report["no_replace"] and not report["hardlink"]
+    assert report["hardlink_error"] == "UNTESTED_READ_ONLY_SOURCE"
+    assert original.stat() == before and original.read_bytes() == b"existing download"
+    assert list(folder.iterdir()) == [original]
+    assert not list(library.iterdir()) and not list(staging.iterdir())
+
+
+def test_empty_read_only_folder_can_qualify_for_future_downloads(roots, read_only_downloads):
+    source, library, staging = roots
+    read_only_downloads(source)
+    report = publication.probe_download_folder(source, "", library, staging)
+    assert report["copy"] and report["no_replace"] and not report["source_writable"]
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_read_only_fallback_does_not_accept_unreadable_source(
+    roots, read_only_downloads, monkeypatch
+):
+    source, library, staging = roots
+    read_only_downloads(source)
+    original = os.scandir
+    source_info = source.stat()
+
+    def denied(path):
+        if isinstance(path, int):
+            info = os.fstat(path)
+            if (info.st_dev, info.st_ino) == (source_info.st_dev, source_info.st_ino):
+                raise PermissionError(errno.EACCES, "Cannot list download folder")
+        return original(path)
+
+    monkeypatch.setattr(os, "scandir", denied)
+    with pytest.raises(PermissionError) as caught:
+        publication.probe_download_folder(source, "", library, staging)
+    assert caught.value.probe_report["failure_step"] == "reading the download folder"
+    assert caught.value.probe_report["path"] == str(source)
+    assert all(not list(root.iterdir()) for root in roots)
+
+
+def test_source_mutating_route_still_requires_write_access(roots, read_only_downloads):
+    source, library, staging = roots
+    read_only_downloads(source)
+    with pytest.raises(OSError) as caught:
+        publication.probe_download_folder(source, "", library, staging, allow_read_only=False)
+    assert caught.value.errno == errno.EROFS
+    assert caught.value.probe_report["failure_step"] == "creating a temporary download file"
+    assert all(not list(root.iterdir()) for root in roots)
 
 
 @pytest.fixture

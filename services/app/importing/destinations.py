@@ -249,6 +249,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                 Path(configuration["root_path"]),
                 Path(configuration["staging_path"]),
                 journal_root=journals,
+                allow_read_only=not seeding_rename,
             )
         else:
             report = await asyncio.to_thread(
@@ -310,6 +311,9 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             "qBittorrent will rename completed downloads into this folder. "
             "The seeding file and the library file are the same copy."
             if ok and seeding_rename
+            else "The download folder is read-only to Dewarr. "
+            "Downloads will be copied into the library."
+            if ok and report.get("source_writable") is False
             else "Hardlinks are unavailable for these folders. "
             "Downloads will be copied into the library."
             if uses_copy

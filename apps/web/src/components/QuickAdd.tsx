@@ -87,11 +87,16 @@ export default function QuickAdd({
           params: { path: { work_id: id! } },
         }),
       ),
-    refetchInterval: (query) =>
-      query.state.data &&
-      ["queued", "running"].includes(query.state.data.status)
-        ? 1500
-        : false,
+    refetchInterval: (query) => {
+      const receipt = query.state.data;
+      if (!receipt) return false;
+      if (["queued", "running"].includes(receipt.status)) return 1500;
+      // A completed Quick Add has only queued the download. Keep checking until
+      // inventory confirms the requested files and the API retires the banner.
+      return receipt.status === "completed" && receipt.request_id
+        ? 5000
+        : false;
+    },
   });
   const add = useMutation({
     mutationFn: async (mode: Mode) => {

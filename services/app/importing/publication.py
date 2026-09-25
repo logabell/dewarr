@@ -1415,8 +1415,9 @@ def probe_download_folder(
     staging_root: Path,
     *,
     journal_root: Path | None = None,
+    allow_read_only: bool = True,
 ):
-    """Use an owned temporary file to qualify an empty downloader save folder."""
+    """Qualify a save folder; readable-only sources can qualify for copy mode."""
     if unsafe_roots(source_root, destination_root, staging_root):
         raise PublicationError("Source, staging and library roots must not overlap")
     if journal_root is not None and any(
@@ -1441,7 +1442,31 @@ def probe_download_folder(
                 "path": str(source_root / relative),
             }
             raise
-        fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        try:
+            fd = os.open(
+                name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent
+            )
+        except OSError as error:
+            if not allow_read_only or error.errno not in {errno.EROFS, errno.EACCES, errno.EPERM}:
+                error.probe_report = {
+                    "failure_step": "creating a temporary download file",
+                    "error_code": errno.errorcode.get(error.errno, "IO_ERROR"),
+                    "folder_kind": "download",
+                    "path": str(source_root / relative),
+                }
+                raise
+            # A downloader may have write access through its own mount while Dewarr
+            # intentionally sees only completed files read-only. Do not require write
+            # access or guess at hardlink support; qualify destination copy/publication.
+            report = probe_destination(
+                source_root,
+                relative,
+                None,
+                destination_root,
+                staging_root,
+                journal_root=journal_root,
+            )
+            return {**report, "source_write_error": errno.errorcode[error.errno]}
         try:
             owned = object_id(fd)
             try:
@@ -1456,7 +1481,7 @@ def probe_download_folder(
                 writer, fd = fd, None
                 os.close(writer)
                 source = f"{relative}/{name}" if relative else name
-                return probe_destination(
+                report = probe_destination(
                     source_root,
                     source,
                     PublishFile(
@@ -1470,6 +1495,7 @@ def probe_download_folder(
                     source_kind="file",
                     journal_root=journal_root,
                 )
+                return {**report, "source_readable": True, "source_writable": True}
             finally:
                 try:
                     observed = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -1490,15 +1516,21 @@ def probe_download_folder(
 def probe_destination(
     source_root: Path,
     source_relative: str,
-    file: PublishFile,
+    file: PublishFile | None,
     destination_root: Path,
     staging_root: Path,
     *,
     source_kind: Literal["directory", "file"] = "directory",
     journal_root: Path | None = None,
 ):
-    """Probe an actual selected file's link route, no-replace renames and staging locks."""
-    if source_kind == "file" and file.source != relative_parts(source_relative)[-1]:
+    """Probe publication and locks; only a selected file can qualify hardlinks.
+
+    Without a sample, check folder readability and qualify copy mode. Actual
+    download files still undergo inspection and byte verification before import.
+    """
+    if source_kind == "file" and (
+        file is None or file.source != relative_parts(source_relative)[-1]
+    ):
         raise PublicationError("A single-file probe must use its selected file")
     if unsafe_roots(source_root, destination_root, staging_root):
         raise PublicationError("Source, staging and library roots must not overlap")
@@ -1516,6 +1548,7 @@ def probe_destination(
     marker_content = f"book-search destination probe {token}\n".encode()
     claim_name, claimed_name = "publish-" + token, "published-" + token
     target_handle = None
+    marker_pinned = False
     exclusive = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 
     def refused(operation):
@@ -1540,7 +1573,11 @@ def probe_destination(
 
     with (
         directory(source_root) as source_mount,
-        source_scope(source_mount, source_relative, source_kind) as source,
+        (
+            nullcontext(source_mount)
+            if file is None and not source_relative
+            else source_scope(source_mount, source_relative, source_kind)
+        ) as source,
         private_staging(staging_root, journal_root) as staging,
         directory(destination_root) as destination,
         ExitStack() as handles,
@@ -1549,7 +1586,27 @@ def probe_destination(
         retained_files = {
             name: handles.enter_context(ExitStack()) for name in ("write", "marker", "lock")
         }
-        checked_source(source, file, time.monotonic() + 120)
+        if file is not None:
+            checked_source(source, file, time.monotonic() + 120)
+        else:
+            try:
+                # Bounded directory read, including an empty download folder. Do not
+                # scan/hash unrelated downloads just to prove the folder is readable.
+                with os.scandir(source) as entries:
+                    next(entries, None)
+            except OSError as error:
+                error.probe_report = {
+                    "failure_step": "reading the download folder",
+                    "error_code": errno.errorcode.get(error.errno, "IO_ERROR"),
+                    "folder_kind": "download",
+                    "path": str(source_root / source_relative),
+                }
+                raise
+            report.update(
+                source_readable=True,
+                source_writable=False,
+                hardlink_error="UNTESTED_READ_ONLY_SOURCE",
+            )
         if same_object(staging, object_id(destination)):
             raise PublicationError("Staging and library refer to the same directory")
         report.update(
@@ -1573,28 +1630,31 @@ def probe_destination(
                 os.close(output)
             with beneath(staging, write_name) as checked:
                 report["copy"] = os.read(checked, 100) == b"book-search destination probe\n"
-            parent, _, name = file.source.rpartition("/")
-            with ExitStack() as stack:
-                source_parent = (
-                    stack.enter_context(beneath(source, parent, folder=True)) if parent else source
-                )
-                try:
-                    os.link(
-                        name,
-                        linked,
-                        src_dir_fd=source_parent,
-                        dst_dir_fd=staging,
-                        follow_symlinks=False,
+            if file is not None:
+                parent, _, name = file.source.rpartition("/")
+                with ExitStack() as stack:
+                    source_parent = (
+                        stack.enter_context(beneath(source, parent, folder=True))
+                        if parent
+                        else source
                     )
-                    linked_info = os.stat(linked, dir_fd=staging, follow_symlinks=False)
-                    created["link"] = {
-                        "device": linked_info.st_dev,
-                        "inode": linked_info.st_ino,
-                    }
-                    with beneath(staging, linked) as fd:
-                        report["hardlink"] = same_object(fd, file.identity)
-                except OSError as error:
-                    report["hardlink_error"] = errno.errorcode.get(error.errno, "IO_ERROR")
+                    try:
+                        os.link(
+                            name,
+                            linked,
+                            src_dir_fd=source_parent,
+                            dst_dir_fd=staging,
+                            follow_symlinks=False,
+                        )
+                        linked_info = os.stat(linked, dir_fd=staging, follow_symlinks=False)
+                        created["link"] = {
+                            "device": linked_info.st_dev,
+                            "inode": linked_info.st_ino,
+                        }
+                        with beneath(staging, linked) as fd:
+                            report["hardlink"] = same_object(fd, file.identity)
+                    except OSError as error:
+                        report["hardlink_error"] = errno.errorcode.get(error.errno, "IO_ERROR")
             phase = "checking safe journal creation"
             # Journals use file no-replace rename inside protected storage.
             claim = os.open(claim_name, exclusive, 0o600, dir_fd=control)
@@ -1627,11 +1687,17 @@ def probe_destination(
             output = os.open(marker, exclusive, 0o600, dir_fd=stage_handle)
             created["marker"] = object_id(output)
             retained_files["marker"].callback(os.close, os.dup(output))
+            marker_pinned = True
             try:
                 write_all(output, marker_content)
                 os.fsync(output)
             finally:
                 os.close(output)
+            # Windows SMB refuses a directory rename while a child file is open.
+            # Keep the pin for failed/incomplete writes only. After this point,
+            # cleanup must recognize the random marker rather than just its inode.
+            marker_pinned = False
+            retained_files["marker"].close()
             report["no_replace_mode"] = no_replace(staging, staged, destination, target)
             created["target"], created["stage"] = created["stage"], None
             # Some FUSE and network filesystems report a different inode for a directory
@@ -1647,7 +1713,7 @@ def probe_destination(
             stage_handle = handles.enter_context(beneath(staging, staged, folder=True))
             created["stage"] = object_id(stage_handle)
             report["no_replace"] = refused(lambda: no_replace(staging, staged, destination, target))
-            if report["no_replace"]:
+            if report["no_replace"] and report["no_replace_mode"] == "fallback":
                 # The fallback relies on rename(2) refusing a non-empty directory.
                 with beneath(destination, target, folder=True) as current_target:
                     if not has_marker(current_target):
@@ -1698,9 +1764,10 @@ def probe_destination(
                 try:
                     with beneath(staging, staged, folder=True) as original_stage:
                         with beneath(original_stage, marker) as original_marker:
-                            owned = (
-                                object_id(original_stage) == created["stage"]
-                                and object_id(original_marker) == created["marker"]
+                            owned = object_id(original_stage) == created["stage"] and (
+                                object_id(original_marker) == created["marker"]
+                                if marker_pinned
+                                else has_marker(original_stage)
                             )
                         if owned:
                             # A failed write may leave our marker incomplete. Its

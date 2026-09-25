@@ -392,7 +392,7 @@ async def test_source_search_migration_guards_saved_profile_history(client, admi
 
 @pytest.mark.parametrize("source", ["mam", "prowlarr"])
 @pytest.mark.parametrize(
-    "scenario", ["broaden", "precise", "custom", "page", "retry", "retry-page", "empty"]
+    "scenario", ["default", "broaden", "precise", "custom", "page", "retry", "retry-page", "empty"]
 )
 async def test_empty_default_search_broadens_and_preserves_matching_and_pagination(
     client, admin, database, catalog, source_http, prowlarr_http, monkeypatch, source, scenario
@@ -451,7 +451,7 @@ async def test_empty_default_search_broadens_and_preserves_matching_and_paginati
     saved = await begin(
         client,
         catalog,
-        q="custom m4b" if scenario == "custom" else primary,
+        q=None if scenario == "default" else "custom m4b" if scenario == "custom" else primary,
         medium="audio",
         offset=50 if scenario in {"page", "retry-page"} else 0,
     )
@@ -472,10 +472,21 @@ async def test_empty_default_search_broadens_and_preserves_matching_and_paginati
         expected = [(primary, 0)]
     elif scenario == "custom":
         expected = [("custom m4b", 0)]
+    elif scenario == "default":
+        expected = [("Atmosphere", 0)]
     assert calls == expected
-    if scenario in {"broaden", "precise", "retry"}:
+    if scenario in {"default", "broaden", "precise", "retry"}:
         assert len(observed["items"]) == 1
         assert observed["items"][0]["assessment"]["identity"] == "corroborated"
+        if source == "prowlarr":
+            item = observed["items"][0]
+            assert item["release"]["authors"] == ["Taylor Jenkins Reid"]
+            assert item["release"]["formats"] == ["m4b"]
+            assert item["release"]["details"]["author_basis"] == "release_title"
+            assert item["release"]["details"]["format_basis"] == "release_title"
+            async with database() as db:
+                row = await db.get(SourceResult, UUID(item["id"]))
+                assert row.release_snapshot["authors"] == []
     else:
         assert not observed["items"]
     unit = next(

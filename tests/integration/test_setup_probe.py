@@ -13,7 +13,11 @@ from app.importing.filesystem import identity
 from app.jobs.queue import get_queue
 from app.security import encrypt_secrets
 from tests.abs_import_fixture import ImportBackendFixture
-from tests.filesystem_fixtures import path_bound_directory_handles  # noqa: F401
+from tests.filesystem_fixtures import (
+    path_bound_directory_handles,  # noqa: F401
+    read_only_downloads,  # noqa: F401
+    smb_open_children,  # noqa: F401
+)
 
 pytestmark = pytest.mark.integration
 
@@ -134,9 +138,14 @@ async def test_missing_soulseek_download_folder_reports_mapped_path(
 
 
 @pytest.mark.parametrize("kind", ["qbittorrent", "slskd"])
+@pytest.mark.parametrize("filesystem", ["local", "smb", "read-only"])
 async def test_empty_folder_can_qualify_before_any_plan_or_download(
-    client, admin, database, empty_route, kind
+    client, admin, database, empty_route, kind, filesystem, request
 ):
+    if filesystem == "smb":
+        request.getfixturevalue("smb_open_children")
+    elif filesystem == "read-only":
+        request.getfixturevalue("read_only_downloads")(empty_route["source"] / "books")
     async with database() as db, db.begin():
         (await db.get(Integration, empty_route["downloader"])).kind = kind
     responses = await asyncio.gather(*(start(client, empty_route) for _ in range(3)))
@@ -145,7 +154,12 @@ async def test_empty_folder_can_qualify_before_any_plan_or_download(
     await get_queue().run_worker_async(wait=False, concurrency=1)
     checked = await current(client)
     assert checked["publication_available"]
-    assert checked["probe"]["hardlink"] and checked["probe"]["backend"]["root_mapping"]
+    assert checked["probe"]["hardlink"] is (filesystem != "read-only")
+    assert checked["probe"]["backend"]["root_mapping"]
+    if filesystem == "read-only":
+        assert checked["mode"] == "copy" and checked["probe"]["copy"]
+        assert checked["probe"]["source_readable"] and not checked["probe"]["source_writable"]
+        assert "read-only to Dewarr" in checked["probe"]["message"]
     assert checked["probe"]["setup_downloader"]["mapping"]["relative_path"] == "books"
     assert not list((empty_route["source"] / "books").iterdir())
     assert not list(empty_route["staging"].iterdir()) and not list(empty_route["target"].iterdir())

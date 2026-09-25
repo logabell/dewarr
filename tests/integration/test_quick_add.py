@@ -8,8 +8,10 @@ from sqlalchemy import func, select, update
 from app.db.models import (
     AcquisitionIntent,
     AcquisitionReason,
+    AssetContains,
     DownloadAttempt,
     Integration,
+    LibraryAsset,
     Operation,
     SourceResult,
     Work,
@@ -118,6 +120,53 @@ async def test_quick_add_inherits_preferences_and_downloads_once(
         assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 1
     latest = await client.get(f"/api/requests/quick-add/latest/{catalog['work']}")
     assert latest.json()["status"] == "completed"
+
+
+@pytest.mark.parametrize("mode", ["audio", "both"])
+async def test_quick_add_banner_retires_only_after_confirmed_requested_inventory(
+    client, database, authorized, catalog, mode
+):
+    await defaults(client, authorized)
+    response = await add(client, catalog["work"], mode)
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    url = f"/api/requests/quick-add/latest/{catalog['work']}"
+    async with database() as db, db.begin():
+        operation = await db.get(Operation, identifier)
+        operation.status = "completed"
+        operation.message = "Automatic download queued"
+    # The existing ebook cannot satisfy an audio or both-formats request.
+    assert (await client.get(url)).json()["id"] == str(identifier)
+    async with database() as db, db.begin():
+        asset = LibraryAsset(
+            library_id=catalog["library"],
+            external_id="confirmed-audio",
+            version_id=catalog["versions"][1],
+            medium="audio",
+            state="present",
+            full_content=False,
+        )
+        db.add(asset)
+        await db.flush()
+        db.add(AssetContains(asset_id=asset.id, work_id=catalog["work"], verified=True))
+        asset_id = asset.id
+    assert (await client.get(url)).json()["id"] == str(identifier)
+    async with database() as db, db.begin():
+        asset = await db.get(LibraryAsset, asset_id)
+        asset.full_content = True
+        asset.state = "stale"
+    assert (await client.get(url)).json()["id"] == str(identifier)
+    async with database() as db, db.begin():
+        (await db.get(LibraryAsset, asset_id)).state = "present"
+        if mode == "both":
+            (await db.get(LibraryAsset, catalog["asset"])).state = "stale"
+    if mode == "both":
+        assert (await client.get(url)).json()["id"] == str(identifier)
+        async with database() as db, db.begin():
+            (await db.get(LibraryAsset, catalog["asset"])).state = "present"
+    assert (await client.get(url)).json() is None
+    async with database() as db:
+        assert (await db.get(Operation, identifier)).status == "completed"
 
 
 async def test_quick_add_uses_torrent_default_despite_legacy_usenet_primary(
@@ -621,7 +670,7 @@ async def test_clicked_release_missing_torrent_route_explains_the_required_setup
     assert authorized["resolver"].calls == []
 
 
-async def test_quick_add_broadens_empty_search_and_downloads_title_without_subtitle(
+async def test_quick_add_searches_short_title_first_and_downloads_without_subtitle(
     client, database, authorized, catalog, monkeypatch
 ):
     from app.adapters.mam import ReleasePage
@@ -646,7 +695,7 @@ async def test_quick_add_broadens_empty_search_and_downloads_title_without_subti
         parent = await db.get(Operation, identifier)
         search_id = UUID(parent.payload["search_id"])
     await book_sources.run(search_id, "mam")
-    assert queries == ["Harbor: A Love Story Writer", "Harbor Writer", "Harbor"]
+    assert queries == ["Harbor"]
     await quick_add.run(identifier)
     async with database() as db:
         parent = await db.get(Operation, identifier)

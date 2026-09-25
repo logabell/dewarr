@@ -377,14 +377,15 @@ def identifier_values(value):
     )
 
 
-def indexer_title_identity(release, work):
+def indexer_title_authors(release, work):
     """An exact author/title pair can supply the missing structured indexer fields.
 
-    Only remove explicit media labels. Extra titles, archive/repair filenames,
-    partial releases and conflicting structured authors still require review.
+    Allow explicit media labels and trailing publication/release labels after
+    the complete pair. Extra titles, archive/repair filenames, partial releases
+    and conflicting structured authors still require review.
     """
     if release.source != "prowlarr" or release.authors:
-        return False
+        return []
     title = re.sub(
         r"\[(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)\]",
         " ",
@@ -397,13 +398,26 @@ def indexer_title_identity(release, work):
         normalized(parse_title_labels(work["title"]).title),
         normalized(optional_subtitle_base(work["title"])),
     }
-    return any(
-        actual in {f"{author} {expected}", f"{expected} {author}", f"{expected} by {author}"}
-        for expected in expected_titles
-        if expected
-        for value in work["authors"]
-        if (author := normalized(value))
-    )
+    authors = {}
+    for value in work["authors"]:
+        if author := normalized(value):
+            authors[author] = value
+        # Inverted credits must carry the comma: don't accept arbitrary word
+        # permutations as an author match. Splits also cover compound surnames.
+        words = value.split()
+        for split in range(1, len(words)):
+            given, surname = " ".join(words[:split]), " ".join(words[split:])
+            if re.search(rf"\b{re.escape(surname)},\s*{re.escape(given)}\b", title, re.I):
+                authors[normalized(f"{surname} {given}")] = value
+    matched = set()
+    for expected in expected_titles - {""}:
+        for author in authors:
+            for pair in (f"{author} {expected}", f"{expected} {author}", f"{expected} by {author}"):
+                # Match the book first so a year or "Retail" in its actual title
+                # is never stripped away. Unknown suffixes still need review.
+                if re.fullmatch(rf"{re.escape(pair)}(?: (?:19|20)\d{{2}})?(?: retail)?", actual):
+                    matched.add(authors[author])
+    return sorted(matched)
 
 
 def assess_release(release, work, preferences, medium="all"):
@@ -417,10 +431,10 @@ def assess_release(release, work, preferences, medium="all"):
     work_authors = {normalized(a) for a in work["authors"]}
     known = set().union(*(identifier_values(value) for value in work.get("identifiers") or []))
     same_edition = bool(known & identifier_values(getattr(release, "isbn", None)))
+    parsed_authors = indexer_title_authors(release, work)
     identity = (
         "corroborated"
-        if ((title_agrees or same_edition) and authors & work_authors)
-        or indexer_title_identity(release, work)
+        if ((title_agrees or same_edition) and authors & work_authors) or parsed_authors
         else "possible"
         if title_agrees or same_edition or (expected and expected in title)
         else "unmatched"
@@ -440,6 +454,12 @@ def assess_release(release, work, preferences, medium="all"):
     else:
         explanation.append(
             "Source title and author agree with the catalog; file identity still needs inspection"
+        )
+    if parsed_authors:
+        explanation.append("Author parsed from the release name and matched to the catalog")
+    if release.details.get("format_basis") == "release_title":
+        explanation.append(
+            "Format reported in the release name; downloaded files still need inspection"
         )
     if same_edition:
         explanation.append("The source's ISBN or ASIN matches an edition of this book")

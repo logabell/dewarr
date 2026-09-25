@@ -22,6 +22,7 @@ from app.domain.release_profiles import (
     ProfileSnapshot,
     ReleaseAssessment,
     assess_release,
+    indexer_title_authors,
     ranking_key,
 )
 from app.domain.request_constraints import constrained_preferences
@@ -132,13 +133,23 @@ async def view(db, user, operation_id):
     work = {**payload["work"], "identifiers": payload.get("identifiers", [])}
     for row in rows:
         release = parse_release(row.source_key, row.release_snapshot)
+        assessment = assess_release(release, work, preferences, payload["medium"])
+        if not changed and (authors := indexer_title_authors(release, work)):
+            # Display parsed credits without rewriting the saved source evidence.
+            # Acquisition continues to assess the original name and source facts.
+            release = release.model_copy(
+                update={
+                    "authors": authors,
+                    "details": {**release.details, "author_basis": "release_title"},
+                }
+            )
         connection = connections.get(row.source_key)
         ranked.append(
             RankedReleaseView(
                 id=row.id,
                 release=release,
                 download=downloads.get(release_download_status.identity(release)),
-                assessment=assess_release(release, work, preferences, payload["medium"]),
+                assessment=assessment,
                 expires_at=row.expires_at,
                 query_keys=row.query_keys if not changed else [],
                 current_connection=bool(

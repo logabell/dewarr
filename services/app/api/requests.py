@@ -1036,6 +1036,16 @@ async def latest_quick_add(work_id: UUID, user: Member, db: Database):
         ):
             # Keep the receipt in history, but a withdrawn request has no book-page action.
             return None
+        if intent_id and operation.status not in {"queued", "running"}:
+            intent = await db.get(AcquisitionIntent, UUID(intent_id))
+            if intent and intent.owner_id == user.id:
+                targets = await assess(
+                    db, user, intent.work_id, RequestSpec.model_validate(intent.specification)
+                )
+                if targets and all(target["state"] == "satisfied" for target in targets):
+                    # Dispatch completion is not library confirmation. Retire the
+                    # banner only once every requested format has a verified copy.
+                    return None
         if intent_id and operation.status in {"held", "failed"}:
             covered = exists().where(
                 AcquisitionSelection.target_id == AcquisitionTarget.id,

@@ -69,6 +69,57 @@ def test_unknown_or_conflicting_source_facts_do_not_become_eligible(change, reas
 
 
 @pytest.mark.parametrize(
+    ("title", "authors", "allowed"),
+    [
+        (
+            "Cory.Doctorow-Enshittification.Why.Everything.Suddenly.Got.Worse."
+            "And.What.To.Do.About.It.2025.RETAIL.EPUB",
+            [],
+            True,
+        ),
+        (
+            "Doctorow, Cory - Enshittification- Why Everything Suddenly Got Worse "
+            "and What to Do About It (2025)",
+            [],
+            True,
+        ),
+        ("Cory Doctorow - Enshittification (2025) [EPUB]", [], True),
+        ("Cory Doctorow - Enshittification.RETAIL.EPUB", [], True),
+        ("Other Writer - Enshittification.2025.RETAIL.EPUB", [], False),
+        ("Doctorow Cory - Enshittification (2025)", [], False),
+        ("Cory Doctorow - Enshittification.2025.RETAIL.EPUB", ["Other Writer"], False),
+        ("Cory Doctorow - Enshittification summary.2025.RETAIL.EPUB", [], False),
+        ("Cory Doctorow - Enshittification sample.2025.RETAIL.EPUB", [], False),
+        ("Cory Doctorow - Enshittification and Another Book (2025)", [], False),
+        ("Cory Doctorow - Enshittification.2025.RETAIL.part01.rar", [], False),
+        ("Cory Doctorow - Enshittification.2025.RETAIL.par2", [], False),
+    ],
+)
+def test_indexer_ebook_labels_preserve_complete_author_title_evidence(title, authors, allowed):
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    value = ProwlarrRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        authors=authors,
+        medium="ebook",
+        language="en",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[7020],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+    work = {
+        "title": "Enshittification: Why Everything Suddenly Got Worse and What to Do About It",
+        "authors": ["Cory Doctorow"],
+    }
+    reasons = eligibility(value, work, {**RULE, "medium": "ebook"}, ReleasePreferences())
+    assert (not reasons) is allowed, reasons
+
+
+@pytest.mark.parametrize(
     ("paths", "allowed"),
     [
         (["Harbor.m4b"], True),

@@ -40,7 +40,8 @@ export default function BookSources({
   const cache = useQueryClient();
   const canDownload = useCanDownloadRelease();
   const [params] = useSearchParams();
-  const [q, setQ] = useState(work.title.slice(0, 300));
+  // Let the API choose the same short-title default used by Quick Add.
+  const [q, setQ] = useState("");
   const [medium, setMedium] = useState("all");
 
   const initial = useRef(false);
@@ -106,7 +107,7 @@ export default function BookSources({
             header: { "idempotency-key": key.current },
           },
           body: {
-            q,
+            q: q || undefined,
             request_id: requestId,
             medium,
             offset,
@@ -118,6 +119,7 @@ export default function BookSources({
       ),
     onSuccess: (value) => {
       key.current = randomUUID();
+      setQ(value.query);
       cache.setQueryData(queryKey, value);
     },
   });

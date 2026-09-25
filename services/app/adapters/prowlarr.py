@@ -11,7 +11,7 @@ from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.adapters.contracts import AdapterError, FailureKind, Release
 from app.adapters.http import configured_url
@@ -65,6 +65,18 @@ class ProwlarrRelease(Release):
     observed_at: datetime
     acquisition_supported: bool
     limitation: str | None = None
+
+    @model_validator(mode="after")
+    def explicit_formats(self):
+        if not self.formats:
+            formats = r"m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi|azw|cbz|cbr"
+            labels = re.findall(rf"\[({formats})\]", self.title, re.I)
+            if suffix := re.search(rf"\.({formats})$", self.title, re.I):
+                labels.append(suffix[1])
+            self.formats = list(dict.fromkeys(label.lower() for label in labels))
+            if self.formats:
+                self.details = {**self.details, "format_basis": "release_title"}
+        return self
 
 
 @dataclass(frozen=True)

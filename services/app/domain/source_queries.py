@@ -19,7 +19,16 @@ def normalized_query(value):
 
 
 def default_query(work):
-    """Base title plus the first author's surname.
+    """Discover by short title; verify authors and full identity on the results.
+
+    Subtitles and author fields vary between trackers. Requiring them in the
+    search can hide the right release before matching ever gets to inspect it.
+    """
+    return optional_subtitle_base(work.title)[:300]
+
+
+def _title_author_query(work):
+    """Previous default, retained for in-flight search checkpoints.
 
     Recording labels like "(1 of 3)" are not in release names, and a surname
     survives "J.K." versus "J. K." spellings that a full name would not.
@@ -40,10 +49,10 @@ def book_queries(work, query):
     content-bearing subtitles (volumes, summaries, etc.) even in the broad query.
     """
     work = SimpleNamespace(**work)
-    if normalized_query(query) != normalized_query(default_query(work)):
+    if normalized_query(query) != normalized_query(_title_author_query(work)):
         return [query]
     title = optional_subtitle_base(work.title)
-    shortened = default_query(SimpleNamespace(title=title, authors=work.authors))
+    shortened = _title_author_query(SimpleNamespace(title=title, authors=work.authors))
     candidates, seen = [], set()
     for value in (query, shortened, title[:300]):
         key = normalized_query(value)

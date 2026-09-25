@@ -10,6 +10,28 @@ from tests.torrent_fixture import torrent_bytes
 
 
 @pytest.mark.parametrize(
+    ("title", "formats"),
+    [
+        ("Cory.Doctorow-Enshittification.2025.RETAIL.EPUB", ["epub"]),
+        ("[M4B] Writer - Book", ["m4b"]),
+        ("Writer - Book [EPUB] [PDF]", ["epub", "pdf"]),
+        ("Writer - Book.epub.part01.rar", []),
+        ("Writer - Book.epub.par2", []),
+        ("Writer - The EPUB Handbook (2025)", []),
+    ],
+)
+async def test_only_explicit_media_labels_supply_format_metadata(title, formats):
+    async with ProwlarrClient(
+        "https://prowlarr.test/base",
+        "secret",
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=[release(title=title)])),
+    ) as client:
+        item = (await client.search(ProwlarrSearch(q="Book", indexer_id=7))).hits[0].release
+    assert item.formats == formats
+    assert item.authors == [] and item.narrators == [] and item.language is None
+
+
+@pytest.mark.parametrize(
     "bad_url",
     [
         "https://evil.test/7/download?link=secret",
@@ -66,7 +88,8 @@ async def test_fields_query_proxy_and_log_privacy(caplog):
         assert len(hits) == 1
         hit = hits[0]
         assert hit.release.seeders == 0 and hit.release.language is None
-        assert hit.release.narrators == [] and hit.release.formats == []
+        assert hit.release.narrators == [] and hit.release.formats == ["m4b"]
+        assert hit.release.details["format_basis"] == "release_title"
         assert hit.release.medium == "audio"
         artifact = await client.resolve((hit.release, hit.reference))
         assert artifact.content == torrent_bytes()

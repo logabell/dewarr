@@ -36,6 +36,7 @@ Source: [NFS export identity mapping](https://man7.org/linux/man-pages/man5/expo
 | Numeric ownership | Staging and lock files previously had to match the worker uid. | Fixed: the filesystem authorizes access; lock owners are checked against the staging folder's server-side owner. |
 | Saving a folder | The UI previously required a ready downloader before saving. | Fixed in the folder workflow: save first; verify and activate once a client is ready. |
 | Download filesystem | Verification attempts hardlinks and falls back to copies. | Already supports downloads on a separate filesystem when publication checks pass. |
+| Read-only downloads | Setup checks folder readability and destination publication when source writes are denied. | Qualifies copy mode without requiring write access to completed downloads; actual files are checked at import. Seeding renames still require source write access. |
 | Staging permissions | New routes use normal media permissions and protected app journals. | Synthetic SMB modes no longer need to provide private media staging. Legacy journals keep their original privacy contract. |
 | Multiple library mounts | Per-destination staging, with retained historical locations. | Independent shares are supported; each destination tests its own publication route. |
 | Mounting only a library | Use a hidden `.book-search-staging` child when sibling staging cannot share the mount. | Supported for Audiobookshelf and Grimmory with watcher disabled plus scan permission. |
@@ -133,7 +134,7 @@ Validation: 55 focused setup, Soulseek-connection and filesystem tests, plus nin
 browser journeys. Regression checks cover real pointer selection in a modal,
 missing source roots/save subfolders, and readable feedback at 1236px and 390px.
 
-## Proposed storage model — not implemented yet
+## Storage design and remaining compatibility work
 
 1. Keep authoritative recovery journals in Dewarr's protected application data
    or database. Media-share directory modes should not determine journal trust.
@@ -151,11 +152,11 @@ missing source roots/save subfolders, and readable feedback at 1236px and 390px.
    Discover staging automatically, keep advanced paths optional, and preserve
    saved configuration when a connection or capability test fails.
 
-The first two changes must cover planning, publication, cancellation, conversion,
-backup/restore, and recovery together. Existing receipts and unfinished imports
-must remain recoverable through migration. Removing the current permission or
-filesystem checks in isolation would leave the journal design unchanged and
-would not provide reliable support for these layouts.
+The first two changes are implemented for new routes by the independent storage
+work described below. Legacy receipts retain their original paths and privacy
+contract across planning, publication, cancellation, conversion, backup/restore,
+and recovery. Backend watcher support and live NAS interoperability still need
+case-by-case validation.
 
 Acceptance coverage for that redesign should include a Docker worker on NFS4
 with server-side uid mapping, group-shared NFS directories, SMB with synthetic
@@ -228,3 +229,46 @@ publication ownership, no-overwrite, source preservation, and backend confirmati
 Automated checks use real local files with injected mount boundaries and network-style
 identity behavior. They are regression coverage, not certification of every NAS export,
 CIFS option, or library-server release. The setup probe validates the installed stack.
+
+## NOR-67: Windows SMB publication verification
+
+[NOR-67 / GitHub #30](https://github.com/logabell/dewarr/issues/30) reported that
+native no-replace directory rename succeeded with a closed marker file and failed
+with `EACCES` when that child file was open. The probe retained a duplicate marker
+handle until cleanup, so closing the original writer did not make publication
+possible. This is separate from NOR-66's library-only mount support.
+
+The probe now releases the marker pin after a successful write and flush, before
+renaming its directory. It reopens through the destination name and validates the
+random marker before accepting a post-rename identity. Failed incomplete writes
+retain their pin for cleanup; after release, cleanup requires the random marker
+instead of trusting a potentially reused file inode. Source and destination parent
+handles and the moved directory handle remain anchored for replacement detection.
+Copy/hardlink import writers already close child files before publication.
+
+A native-capable route tests native collision refusal without also requiring the
+fallback's ordinary directory-replacement behavior. Fallback routes still test
+that non-empty destinations cannot be replaced. `EACCES` and `EBUSY` remain errors,
+not signals to switch publication strategies. Native no-replace support varies;
+[NFS/SMB cannot be classified as universally lacking it](https://github.com/torvalds/linux/blob/v6.8/fs/smb/client/inode.c#L2359-L2364).
+
+Automatic source checks now permit readable-only download folders in copy mode.
+If creating the source test file is denied, a bounded directory read establishes
+folder access and the normal staging/publication test still runs. This can verify
+an empty save folder without scanning unrelated downloads. No hardlink capability
+is claimed without a sample file; actual files remain subject to normal inspection
+and manifest verification. Source-mutating seeding-rename routes do not use this
+fallback, and destination permission failures continue to block activation.
+
+Regression coverage models SMB open-child rename refusal for native and fallback
+publication with separate and legacy journals, preserves foreign rewritten markers,
+checks ordinary copy/hardlink imports, and rejects genuine access/busy failures.
+Read-only-source checks cover empty and populated roots/subfolders, unreadable
+folders, and source-mutating routes. These filesystem simulations do not replace
+validation against the reporter's Windows SMB server and CIFS mount options.
+
+Validation on 2026-09-25: 186 focused publication/setup/staging unit checks and six
+API/worker activation journeys passed through `scripts/check.py`. The latter cover
+qBittorrent and slskd on local, simulated SMB, and read-only sources, including
+copy selection, backend mapping, and import readiness. They used an isolated
+PostgreSQL database that was removed afterward. Lint and formatting checks passed.
