@@ -60,7 +60,7 @@ async def test_title_and_series_queries_merge_results_and_keep_provenance(
     await configure_prowlarr(client)
     saved = await begin(client, series)
     assert [q["query"] for q in saved["query_plan"]["queries"]] == [
-        "Harbor Writer",
+        "Harbor",
         "Harbor Cycle",
         "Harbor Stories",
     ]
@@ -71,13 +71,13 @@ async def test_title_and_series_queries_merge_results_and_keep_provenance(
     assert len(result["items"]) == 2
     assert all(r["query_keys"] == ["book", "series:0", "series:1"] for r in result["items"])
     assert {json.loads(r.content)["tor"]["text"] for r in source_http["calls"]} == {
-        "Harbor Writer",
+        "Harbor",
         "Harbor Cycle",
         "Harbor Stories",
     }
     assert {
         r.url.params["query"] for r in prowlarr_http["calls"] if r.url.path.endswith("/search")
-    } == {"Harbor Writer", "Harbor Cycle", "Harbor Stories"}
+    } == {"Harbor", "Harbor Cycle", "Harbor Stories"}
     async with database() as db:
         assert await db.scalar(select(func.count()).select_from(SourceResult)) == 2
         assert await db.scalar(select(func.count()).select_from(AcquisitionIntent)) == 0
@@ -96,7 +96,7 @@ async def test_query_plan_is_bounded_deduplicated_and_skips_unsupported_names(
     )
     saved = await begin(client, catalog)
     terms = saved["query_plan"]["queries"]
-    assert [q["query"] for q in terms] == ["Harbor Writer", "A", "B", "C"]
+    assert [q["query"] for q in terms] == ["Harbor", "A", "B", "C"]
     assert len(saved["query_plan"]["warnings"]) == 2
     await names(database, catalog, ["  Harbor   Stories ", "harbor stories"])
     deduped = await begin(client, catalog, key="same-series-names")
@@ -144,10 +144,10 @@ async def test_independent_queries_resume_without_repeating_completed_results(
         partial = (await read(client, saved["id"])).json()
         assert len(partial["items"]) == 1 and partial["sources"][0]["state"] == "completed"
         await book_sources.run(UUID(saved["id"]), "mam")
-        assert calls == ["Harbor Writer", "Harbor Cycle", "Harbor Cycle", "Harbor Stories"]
+        assert calls == ["Harbor", "Harbor Cycle", "Harbor Cycle", "Harbor Stories"]
     else:
         await book_sources.run(UUID(saved["id"]), "mam")
-        assert calls == ["Harbor Writer", "Harbor Cycle", "Harbor Stories"]
+        assert calls == ["Harbor", "Harbor Cycle", "Harbor Stories"]
     result = (await read(client, saved["id"])).json()
     assert result["status"] == "completed" and len(result["items"]) == 1
     assert result["items"][0]["query_keys"] == (
@@ -307,7 +307,7 @@ async def test_prowlarr_series_retry_keeps_title_and_same_indexer_deduplicated(
     with pytest.raises(SourceSearchRetry):
         await book_sources.run(UUID(saved["id"]), "prowlarr")
     await book_sources.run(UUID(saved["id"]), "prowlarr")
-    assert calls == ["Harbor Writer", "Harbor Cycle", "Harbor Cycle", "Harbor Stories"]
+    assert calls == ["Harbor", "Harbor Cycle", "Harbor Cycle", "Harbor Stories"]
     result = (await read(client, saved["id"])).json()
     assert len(result["items"]) == 1 and result["items"][0]["query_keys"] == [
         "book",

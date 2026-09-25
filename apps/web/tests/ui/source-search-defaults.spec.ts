@@ -79,6 +79,7 @@ test("manual search shares defaults and confirmed Quick Add feedback retires", a
       data = { items: [], total: 0 };
     await route.fulfill({ json: data });
   });
+  await page.clock.install();
   await page.goto("/books/work-1?tab=sources");
   const query = page.getByRole("textbox", { name: "Release search query" });
   await expect(query).toHaveValue("Enshittification");
@@ -92,7 +93,6 @@ test("manual search shares defaults and confirmed Quick Add feedback retires", a
   expect(searches[1].q).toBe("Enshittification Cory Doctorow epub");
   // The API returns no current receipt after inventory confirms every format.
   // The banner must disappear on the open page, without a manual reload.
-  await page.clock.install();
   receipt = null;
   await page.clock.fastForward(5000);
   await expect(feedback).toHaveCount(0);

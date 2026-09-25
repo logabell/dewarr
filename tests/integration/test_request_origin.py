@@ -1,6 +1,7 @@
 import pytest
 
 from app.config import get_settings
+from app.origins import parse_origin
 
 pytestmark = pytest.mark.integration
 
@@ -15,6 +16,9 @@ pytestmark = pytest.mark.integration
 async def test_setup_login_and_settings_through_browser_origin(
     client, monkeypatch, public_url, origin, host
 ):
+    # Settings are immutable during normal startup. This test overrides one
+    # after other journeys may already have cached its parsed origin.
+    monkeypatch.setattr(get_settings(), "public_origin", parse_origin(public_url))
     monkeypatch.setattr(get_settings(), "public_url", public_url)
     client.headers.update({"Origin": origin, "Host": host})
     credentials = {"username": "admin", "password": "a long test password"}

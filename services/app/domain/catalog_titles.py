@@ -4,7 +4,22 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from sqlalchemy import func, literal, literal_column
+from sqlalchemy import String, func, literal, literal_column
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
+
+
+class _Trim(FunctionElement):
+    type = String()
+    inherit_cache = True
+
+
+@compiles(_Trim)
+def _compile_trim(element, compiler, **kwargs):
+    # Match PostgreSQL's reflected spelling so Alembic can compare expression
+    # indexes without proposing a rebuild of an already identical expression.
+    return f"trim(BOTH FROM {compiler.process(element.clauses, **kwargs)})"
+
 
 # A repeated trailing chain makes the order of edition labels irrelevant. The
 # same expression runs in Python and PostgreSQL; never strip arbitrary brackets.
@@ -68,7 +83,7 @@ def display_text_sql(value):
     value = func.translate(
         func.lower(func.normalize(value, literal_column("NFKC"))), _rule("‘’"), _rule("''")
     )
-    return func.trim(func.regexp_replace(value, _rule(r"\s+"), _rule(" "), _rule("g")))
+    return _Trim(func.regexp_replace(value, _rule(r"\s+"), _rule(" "), _rule("g")))
 
 
 def stripped_title(value):
@@ -93,12 +108,12 @@ def titles_agree(expected, actual):
 
 def display_title_sql(value):
     value = display_text_sql(value)
-    return func.trim(func.regexp_replace(value, _rule(DISPLAY_SUFFIX), _rule(""), _rule("g")))
+    return _Trim(func.regexp_replace(value, _rule(DISPLAY_SUFFIX), _rule(""), _rule("g")))
 
 
 def display_base_sql(value):
     """Candidate family for presentation grouping, including subtitle conflicts."""
-    return func.trim(func.split_part(display_title_sql(value), _rule(":"), _rule(1)))
+    return _Trim(func.split_part(display_title_sql(value), _rule(":"), _rule(1)))
 
 
 # Recording labels describe how a book was recorded, not a different book. A dramatized

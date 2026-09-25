@@ -94,7 +94,7 @@ async def test_hydrates_freezes_and_searches_once_without_authorizing_downloads(
             )
             == 1
         )
-    assert len(service.calls) == 6
+    assert [call[-1] for call in service.calls] == [0, 1, 0, 1]
 
 
 async def test_concurrent_searches_share_manual_refresh(client, database, service, target):
@@ -115,7 +115,7 @@ async def test_concurrent_searches_share_manual_refresh(client, database, servic
     await finish(database, manual)
     for saved in searches:
         await prep.run(UUID(saved["id"]))
-    assert len(service.calls) == 6
+    assert [call[-1] for call in service.calls] == [0, 1, 0, 1]
 
 
 async def test_concurrent_searches_coalesce_new_observation(client, database, service, target):
@@ -142,7 +142,7 @@ async def test_fresh_catalog_reused_stale_catalog_not_pack_evidence(
     stale = await begin(client, target, key="stale-catalog")
     assert stale["catalog_preparation"]["state"] == "pending"
     await complete(database, stale["id"])
-    assert len(service.calls) == 12
+    assert [call[-1] for call in service.calls] == [0, 1, 0, 1] * 2
 
 
 @pytest.mark.parametrize("change", ["disabled", "generation", "deadline"])
@@ -291,7 +291,7 @@ async def test_real_worker_resumes_preparation_before_source_jobs(
     assert result["status"] == "completed", result
     assert result["catalog_preparation"]["state"] == "completed"
     assert len(source_http["calls"]) == 2
-    assert len(service.calls) == 6
+    assert [call[-1] for call in service.calls] == [0, 1, 0, 1]
 
 
 async def test_source_configuration_generation_remains_frozen(

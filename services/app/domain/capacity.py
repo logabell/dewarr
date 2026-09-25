@@ -151,6 +151,9 @@ def download_cost(frozen, observation):
 
 
 async def reserved_bytes(db, *, excluding_attempt=None, excluding_entry=None):
+    # Text queries do not trigger ORM autoflush. Include reservations changed
+    # earlier in this transaction before aggregating available capacity.
+    await db.flush()
     # Aggregate inside PostgreSQL: memory and transfer scale with mount count,
     # not with every active transfer and import reservation.
     rows = await db.execute(

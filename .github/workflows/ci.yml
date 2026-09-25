@@ -155,7 +155,29 @@ jobs:
       - run: git diff --exit-code -- src/api/schema.d.ts
       - run: npm run build
       - run: npm run format:check
-  browser:
+  browser-ui:
+    name: mocked browser journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm --prefix apps/web ci
+      - run: cd apps/web && npx playwright install --with-deps chromium
+      - run: npm --prefix apps/web run build
+      - name: All mocked browser journeys (no backend or database)
+        run: python3 scripts/check.py ui --full --skip-build --timeout 600
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-ui-evidence
+          path: apps/web/test-results/
+  browser-e2e:
+    name: live browser journeys
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -196,15 +218,25 @@ jobs:
       - run: npm --prefix apps/web ci
       - run: cd apps/web && npx playwright install --with-deps chromium
       - run: npm --prefix apps/web run build
-      - name: Mocked browser journeys (no backend)
-        run: python3 scripts/check.py ui --full --skip-build --timeout 600
       - name: Full end-to-end journeys
         run: python3 scripts/check.py e2e --full --skip-build --timeout 600
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: browser-evidence
+          name: browser-e2e-evidence
           path: apps/web/test-results/
+  # Keep the existing required check while collecting both independent results.
+  browser:
+    if: always()
+    needs: [browser-ui, browser-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require both browser selections
+        env:
+          UI_RESULT: ${{ needs.browser-ui.result }}
+          E2E_RESULT: ${{ needs.browser-e2e.result }}
+        run: test "$UI_RESULT" = success && test "$E2E_RESULT" = success
   image:
     if: ${{ !inputs.skip-image }}
     uses: ./.github/workflows/image.yml

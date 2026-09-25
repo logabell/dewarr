@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
+from app.db.migrations import index_reflection  # noqa: F401
 from app.db.models import Base
 
 config = context.config

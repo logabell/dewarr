@@ -219,10 +219,10 @@ async def test_destination_edit_during_probe_discards_stale_evidence(
     started, release = threading.Event(), threading.Event()
     original = destinations.probe_destination
 
-    def slow(*args):
+    def slow(*args, **kwargs):
         started.set()
         assert release.wait(10)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(destinations, "probe_destination", slow)
     response = await start_probe(client, route)
@@ -254,13 +254,13 @@ async def test_duplicate_worker_attempt_cannot_fail_a_newer_completed_probe(
     calls = 0
     original = destinations.probe_destination
 
-    def slow_first(*args):
+    def slow_first(*args, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
             started.set()
             assert release.wait(10)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(destinations, "probe_destination", slow_first)
     response = await start_probe(client, route)

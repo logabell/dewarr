@@ -110,3 +110,25 @@ peaks or children that detach and exit/reparent between samples can evade sampli
 An already-running PostgreSQL service and unrelated applications are outside its
 budget. Direct runner commands can bypass the wrapper; project instructions and
 documented/npm entrypoints use it by default. These POSIX controls target macOS/Linux.
+
+## v0.3.3 release CI alignment
+
+The release workflow explicitly selects `tests/unit`, `tests/contracts`, and all
+`tests/integration` cases across four deterministic shards; the small pytest
+default selection does not restrict CI. Current collection finds 3,707 backend
+cases, 80 mocked UI cases in 38 files, and 41 live browser cases in 26 files.
+These are discovery counts, not a claim that all cases passed.
+
+Mocked UI and live browser checks now run as independent jobs with separate
+evidence artifacts. The UI job starts only static preview, with no PostgreSQL or
+Python backend. Live journeys exclude `tests/ui`, retain foundation setup, and
+use the isolated backend/database fixture. Both use the bounded runner with one
+worker. The existing `browser` status requires both jobs to pass.
+
+Release validation updated obsolete expectations for short-title queries and
+removal of redundant series terminator requests, fixed probe mocks to forward
+new journal arguments, isolated cached origin overrides, and installed the fake
+browser clock before application timers. No failures were skipped or given
+longer timeouts. The same checks found a real missing ORM flush in capacity
+aggregation and a migration comparison bug for literal regex/index expressions;
+both were fixed, retaining a check that real index drift is detected.
