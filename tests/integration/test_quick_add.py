@@ -3,7 +3,7 @@ from copy import deepcopy
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.db.models import (
     AcquisitionIntent,
@@ -12,6 +12,7 @@ from app.db.models import (
     Integration,
     Operation,
     SourceResult,
+    WorkMetadataSource,
 )
 from app.domain import automatic_selection, quick_add
 from tests.integration.test_acquisition import catalog
@@ -72,9 +73,17 @@ async def complete_search(database, operation_id, fixture):
 
 
 @pytest.mark.parametrize("automatic_folders", [False, True])
+@pytest.mark.parametrize("catalog_matched", [False, True])
 async def test_quick_add_inherits_preferences_and_downloads_once(
-    client, database, authorized, catalog, automatic_folders
+    client, database, authorized, catalog, automatic_folders, catalog_matched
 ):
+    if not catalog_matched:
+        async with database() as db, db.begin():
+            await db.execute(
+                update(WorkMetadataSource)
+                .where(WorkMetadataSource.work_id == catalog["work"])
+                .values(accepted=False)
+            )
     if automatic_folders:
         await save(client, {"desired_media": "audio", "audio_formats": ["m4b", "mp3"]})
     else:
@@ -520,6 +529,57 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
     else:
         assert status["state"] == "downloaded"
         assert status["prevent_download"]
+
+
+@pytest.mark.parametrize("choice", ["automatic", "clicked", "mismatched"])
+async def test_known_book_download_does_not_require_provider_match(
+    client, database, authorized, catalog, choice
+):
+    profiles = (await client.get("/api/acquisition/profiles")).json()
+    async with database() as db, db.begin():
+        await db.execute(
+            update(WorkMetadataSource)
+            .where(WorkMetadataSource.work_id == catalog["work"])
+            .values(accepted=False)
+        )
+        search = await db.get(Operation, authorized["search"])
+        search.payload = {**search.payload, "profile": profiles[0]}
+        if choice == "mismatched":
+            original = await db.get(SourceResult, authorized["result"])
+            original.release_snapshot = {
+                **original.release_snapshot,
+                "authors": ["Wrong Author"],
+                "title": "Unrelated Book",
+            }
+    if choice == "automatic":
+        response = await client.post(
+            "/api/acquisition/automatic-selections",
+            json=authorized["body"],
+            headers={"Idempotency-Key": "unmatched-automatic-selection"},
+        )
+    else:
+        path = (
+            f"/api/source-searches/{authorized['search']}/results/{authorized['result']}/download"
+        )
+        response = await client.post(path, headers={"Idempotency-Key": "unmatched-clicked-release"})
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    await automatic_selection.run(identifier)
+    async with database() as db:
+        operation = await db.get(Operation, identifier)
+        assert operation.status == ("held" if choice == "mismatched" else "completed"), (
+            operation.message
+        )
+        intent = await db.get(AcquisitionIntent, UUID(operation.payload["command"]["intent_id"]))
+        assert intent.work_id == catalog["work"]
+        if choice != "automatic":
+            assert operation.payload["command"]["result_id"] == str(authorized["result"])
+        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == (
+            0 if choice == "mismatched" else 1
+        )
+    assert authorized["resolver"].calls == (
+        [] if choice == "mismatched" else [authorized["result"]]
+    )
 
 
 async def test_clicked_release_rejects_result_from_another_search(client, database, authorized):

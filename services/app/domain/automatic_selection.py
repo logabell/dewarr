@@ -19,7 +19,6 @@ from app.db.models import (
     AcquisitionIntent,
     AcquisitionReservation,
     AcquisitionTarget,
-    ListCatalogBinding,
     Operation,
     ProviderObject,
     SourceArtifact,
@@ -27,8 +26,6 @@ from app.db.models import (
     SourceResult,
     User,
     Version,
-    Work,
-    WorkMetadataSource,
 )
 from app.db.session import session_factory
 from app.domain import automatic_dispatch, pack_coverage
@@ -48,7 +45,6 @@ from app.domain.prowlarr_network import prowlarr_call
 from app.domain.release_profiles import (
     ProfileSnapshot,
     assess_release,
-    normalized,
     ranking_key,
     refresh_profile,
     same_profile,
@@ -58,8 +54,7 @@ from app.domain.request_constraints import constrained_preferences
 from app.domain.request_scope import SCOPE_FIELDS
 from app.domain.source_artifacts import persist_artifact
 from app.domain.source_network import source_call
-from app.domain.visibility import visible_origin_work
-from app.domain.work_graph import acquisition_lock, family_ids
+from app.domain.work_graph import acquisition_lock
 from app.importing.versioning import version_revision
 from app.jobs.queue import enqueue
 from app.jobs.retry import SourceSearchRetry
@@ -281,37 +276,6 @@ async def context(db, user_id, body, *, recovery_selection_id=None):
     current = await refresh_profile(db, user_id, profile)
     if not same_profile(current, profile):
         raise HTTPException(409, "Download preferences changed; refresh the source search")
-    # A matched source/provider identity is required; manually typed titles alone
-    # remain usable in the reviewed flow rather than silently acquiring namesakes.
-    anchor = await db.scalar(
-        select(WorkMetadataSource.id)
-        .join(Work)
-        .where(
-            visible_origin_work(user),
-            WorkMetadataSource.work_id.in_(family_ids(work.id)),
-            WorkMetadataSource.accepted.is_(True),
-        )
-        .limit(1)
-    )
-    if not anchor:
-        bindings = await db.scalars(
-            select(ListCatalogBinding).where(
-                ListCatalogBinding.owner_id == user_id,
-                ListCatalogBinding.work_id.in_(family_ids(work.id)),
-            )
-        )
-        anchor = any(
-            b.identity_key.startswith(("hardcover:", "goodreads:"))
-            and normalized(b.assertion.get("title", "")) == normalized(work.title)
-            and {normalized(a) for a in b.assertion.get("authors", [])}.intersection(
-                normalized(a) for a in work.authors
-            )
-            for b in bindings
-        )
-    if not anchor:
-        raise HTTPException(
-            409, "Match this title to a catalog provider before automatic selection"
-        )
     if body.result_id and not recovery_selection_id:
         chosen = await db.get(SourceResult, body.result_id)
         if not chosen or chosen.operation_id != search.id or chosen.owner_id != user_id:
