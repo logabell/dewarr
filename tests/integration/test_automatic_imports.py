@@ -277,3 +277,26 @@ async def test_recheck_resumes_a_held_import_and_request_counts_follow_review(
     async with database() as db:
         assert (await db.get(AutomaticImport, automatic_job)).state == "inspecting"
     assert downloader.calls.count("submit") == 1
+
+
+async def test_linked_review_retries_automatic_matching_without_new_inspection(
+    client, database, automatic_job, downloader
+):
+    await automatic.run(automatic_job)
+    async with database() as db, db.begin():
+        row = await db.get(AutomaticImport, automatic_job)
+        inspection_id = row.inspection_id
+        inspection = await db.get(DownloadInspection, inspection_id)
+        inspection.state = "ready"
+        row.state, row.message = "held", "No matching edition"
+    endpoint = f"/api/organization/inspections/{inspection_id}"
+    view = (await client.get(endpoint)).json()
+    assert view["download"]["can_retry"]
+    assert view["plan_id"] is None
+    response = await client.post(endpoint + "/retry")
+    assert response.status_code == 202, response.text
+    assert response.json()["download"]["state"] == "inspecting"
+    assert response.json()["id"] == str(inspection_id)
+    assert not response.json()["download"]["can_retry"]
+    assert (await client.post(endpoint + "/retry")).status_code == 409
+    assert downloader.calls.count("submit") == 1

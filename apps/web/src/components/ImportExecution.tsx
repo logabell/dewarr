@@ -20,11 +20,23 @@ const labels: Record<string, string> = {
   cancelled: "Stopped",
 };
 
-export default function ImportExecution({ plan }: { plan: Plan }) {
+export default function ImportExecution({
+  plan,
+  compact = false,
+}: {
+  plan: Plan;
+  compact?: boolean;
+}) {
   const cache = useQueryClient();
   const [choices, setChoices] = useState<Partial<Record<Medium, string>>>({});
   const attempt = useRef<{ payload: string; key: string } | null>(null);
   const queryKey = ["import-execution", plan.id];
+  const refresh = () =>
+    Promise.all([
+      cache.invalidateQueries({ queryKey }),
+      cache.invalidateQueries({ queryKey: ["inspection", plan.inspection_id] }),
+      cache.invalidateQueries({ queryKey: ["requests"] }),
+    ]);
   const query = useQuery({
     queryKey,
     refetchOnMount: "always",
@@ -92,7 +104,7 @@ export default function ImportExecution({ plan }: { plan: Plan }) {
     },
     onSuccess: () => {
       attempt.current = null;
-      return cache.invalidateQueries({ queryKey });
+      return refresh();
     },
   });
   const retry = useMutation({
@@ -109,7 +121,7 @@ export default function ImportExecution({ plan }: { plan: Plan }) {
           { params: { path: { run_id: runId, entry_id: entryId } } },
         ),
       ),
-    onSuccess: () => cache.invalidateQueries({ queryKey }),
+    onSuccess: refresh,
   });
   const executable =
     plan.document.profile.layout === "conventional" &&
@@ -130,75 +142,84 @@ export default function ImportExecution({ plan }: { plan: Plan }) {
           },
         ),
       ),
-    onSuccess: () => cache.invalidateQueries({ queryKey }),
+    onSuccess: refresh,
   });
+  const hasRuns = !!query.data?.runs.some((run) => run.entries.length > 0);
   return (
-    <section className="library-access" aria-label="Import books">
-      <h3>Import into your library</h3>
-      <p className="muted">
-        Resolved books import independently. Availability updates after
-        Audiobookshelf confirms the item and files.
-      </p>
-      {media.map((medium) => (
-        <label key={medium}>
-          {medium === "ebook" ? "Ebook destination" : "Audiobook destination"}
-          <select
-            value={choice(medium)?.id || ""}
-            disabled={publish.isPending}
-            onChange={(event) =>
-              setChoices((current) => ({
-                ...current,
-                [medium]: event.target.value,
-              }))
+    <section
+      className={compact ? "import-execution-compact" : "library-access"}
+      aria-label="Import books"
+    >
+      {!hasRuns && !query.isPending && (
+        <>
+          <h3>Import into your library</h3>
+          <p className="muted">
+            Resolved books import independently. Availability updates after
+            Audiobookshelf confirms the item and files.
+          </p>
+          {media.map((medium) => (
+            <label key={medium}>
+              {medium === "ebook"
+                ? "Ebook destination"
+                : "Audiobook destination"}
+              <select
+                value={choice(medium)?.id || ""}
+                disabled={publish.isPending}
+                onChange={(event) =>
+                  setChoices((current) => ({
+                    ...current,
+                    [medium]: event.target.value,
+                  }))
+                }
+              >
+                <option value="">Choose a verified destination</option>
+                {eligible(medium).map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.root_key} · {row.mode === "copy" ? "Copy" : "Hardlink"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+          {!executable && (
+            <p className="notice">
+              Use a fresh conventional plan with frozen metadata and version
+              evidence before publishing.
+            </p>
+          )}
+
+          <button
+            className="primary"
+            disabled={
+              !executable ||
+              !media.length ||
+              media.some((medium) => !choice(medium)) ||
+              publish.isPending
             }
+            onClick={() => publish.mutate()}
           >
-            <option value="">Choose a verified destination</option>
-            {eligible(medium).map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.root_key} · {row.mode === "copy" ? "Copy" : "Hardlink"}
-              </option>
-            ))}
-          </select>
-        </label>
-      ))}
-      {!executable && (
-        <p className="notice">
-          Use a fresh conventional plan with frozen metadata and version
-          evidence before publishing.
-        </p>
+            {publish.isPending ? "Queuing import…" : "Import resolved books"}
+          </button>
+        </>
       )}
       <Notice
         error={query.error || publish.error || retry.error || cancel.error}
       />
-      <button
-        className="primary"
-        disabled={
-          !executable ||
-          !media.length ||
-          media.some((medium) => !choice(medium)) ||
-          publish.isPending
-        }
-        onClick={() => publish.mutate()}
-      >
-        {publish.isPending ? "Queuing import…" : "Import resolved books"}
-      </button>
       {query.data?.runs.map((run) => (
         <section
           key={run.id}
           className="library-access"
           aria-label="Import result"
         >
-          <p className="muted">
-            Requested {new Date(run.created_at).toLocaleString()}
-          </p>
           {run.entries.map((entry) => {
             const item = plan.document.plan.items.find(
               (item) => item.group_id === entry.group_id,
             );
             return (
-              <div className="panel editor" key={entry.id}>
+              <div className={`import-result is-${entry.state}`} key={entry.id}>
                 <strong>
-                  {item?.title || "Book"} · {labels[entry.state] || entry.state}
+                  {compact ? "" : `${item?.title || "Book"} · `}
+                  {labels[entry.state] || entry.state}
                 </strong>
                 <p role="status">{entry.message}</p>
                 {entry.cover_export && (
@@ -209,18 +230,22 @@ export default function ImportExecution({ plan }: { plan: Plan }) {
                 )}
                 {entry.can_retry && (
                   <button
+                    className="primary"
                     disabled={retry.isPending}
                     onClick={() =>
                       retry.mutate({ runId: run.id, entryId: entry.id })
                     }
                   >
-                    {entry.published_at
-                      ? "Retry library detection"
-                      : "Retry import"}
+                    {retry.isPending
+                      ? "Retrying…"
+                      : entry.published_at
+                        ? "Retry library detection"
+                        : "Retry import"}
                   </button>
                 )}
                 {entry.can_cancel && (
-                  <div>
+                  <details className="import-result-options">
+                    <summary>More options</summary>
                     <button
                       disabled={cancel.isPending || retry.isPending}
                       onClick={() =>
@@ -235,7 +260,7 @@ export default function ImportExecution({ plan }: { plan: Plan }) {
                       Downloaded files and already published books are
                       preserved.
                     </p>
-                  </div>
+                  </details>
                 )}
                 {entry.state === "cancelled" && (
                   <Link

@@ -3,6 +3,7 @@
 
 import asyncio
 import base64
+import errno
 import hashlib
 import json
 from contextlib import aclosing
@@ -313,7 +314,40 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             )
 
         monkeypatch.setattr(execution, "publish_item", publish)
+    if handoff == "automatic-linked-audio":
+        original_publish = execution.publish_item
+
+        def denied(*args, **kwargs):
+            raise PermissionError(errno.EACCES, "private path must not appear", "/private/download")
+
+        monkeypatch.setattr(execution, "publish_item", denied)
     await get_queue().run_worker_async(wait=False, concurrency=1)
+    if handoff == "automatic-linked-audio":
+        async with database() as db:
+            auto = await db.scalar(select(AutomaticImport))
+            entry = await db.scalar(select(ImportEntry))
+            run = await db.get(ImportRun, entry.run_id)
+            assert entry.state == "held" and "EACCES" in entry.message
+            assert "/private" not in entry.message
+        reviewer = review_account[0]
+        endpoint = f"/api/organization/inspections/{auto.inspection_id}"
+        context = await reviewer.get(endpoint)
+        assert context.status_code == 200, context.text
+        assert context.json()["plan_id"] == str(run.plan_id)
+        assert context.json()["download"]["state"] == "held"
+        assert context.json()["download"]["work_id"] == old["work_id"]
+        assert not context.json()["download"]["can_retry"]  # Retry the existing entry.
+        assert (await owner_client.get(endpoint)).status_code == 403
+        assert (await reviewer.post(endpoint + "/retry")).status_code == 409
+        monkeypatch.setattr(execution, "publish_item", original_publish)
+        retried = await reviewer.post(
+            f"/api/organization/imports/{run.id}/entries/{entry.id}/retry"
+        )
+        assert retried.status_code == 202, retried.text
+        await get_queue().run_worker_async(wait=False, concurrency=1)
+        context = (await reviewer.get(endpoint)).json()
+        assert context["download"]["state"] == "complete", context
+        assert context["plan_id"] == str(run.plan_id)
     if handoff == "automatic-provider-retry":
         async with database() as db, db.begin():
             auto = await db.scalar(select(AutomaticImport))

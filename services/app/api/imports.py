@@ -4,13 +4,19 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import exists, select
 
 from app.api.dependencies import Admin, Database
 from app.config import get_settings
 from app.db.models import (
+    AcquisitionSelection,
+    AutomaticImport,
+    DownloadAttempt,
     DownloadInspection,
     FrozenImportPlan,
+    ImportDestination,
+    ImportEntry,
+    ImportRun,
     Operation,
 )
 from app.domain.operations import transaction_lock
@@ -53,6 +59,20 @@ class FileEditionView(BaseModel):
     created: bool
 
 
+class DownloadContext(BaseModel):
+    attempt_id: UUID
+    work_id: UUID
+    title: str
+    authors: list[str]
+    cover_url: str | None
+    medium: str
+    destination: str | None
+    mode: str | None
+    state: str
+    message: str
+    can_retry: bool = False
+
+
 class InspectionView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -63,6 +83,8 @@ class InspectionView(BaseModel):
     state: str
     message: str
     snapshot: InspectionSnapshot | None = None
+    plan_id: UUID | None = None
+    download: DownloadContext | None = None
 
 
 @router.get("/download-roots", response_model=list[str])
@@ -147,7 +169,108 @@ async def inspections(admin: Admin, db: Database, offset: int = Query(0, ge=0)):
 
 @router.get("/inspections/{inspection_id}", response_model=InspectionView)
 async def inspection(inspection_id: UUID, admin: Admin, db: Database):
-    return await owned_inspection(db, admin.id, inspection_id)
+    row = await owned_inspection(db, admin.id, inspection_id)
+    value = InspectionView.model_validate(row)
+    plan = await db.scalar(
+        select(FrozenImportPlan)
+        .where(FrozenImportPlan.inspection_id == row.id, FrozenImportPlan.owner_id == admin.id)
+        .order_by(
+            exists(
+                select(ImportRun.id)
+                .join(ImportEntry)
+                .where(
+                    ImportRun.plan_id == FrozenImportPlan.id,
+                    ImportEntry.state != "cancelled",
+                )
+            ).desc(),
+            FrozenImportPlan.created_at.desc(),
+            FrozenImportPlan.id.desc(),
+        )
+        .limit(1)
+    )
+    value.plan_id = plan.id if plan else None
+    attempt = await db.scalar(
+        select(DownloadAttempt).where(DownloadAttempt.inspection_id == row.id)
+    )
+    if not attempt:
+        return value
+    from app.domain.work_graph import canonical_work
+
+    selection = await db.get(AcquisitionSelection, attempt.selection_id)
+    work = await canonical_work(db, UUID(selection.frozen["origin_work_id"]))
+    destination = await db.get(ImportDestination, selection.destination_id)
+    automatic = await db.scalar(
+        select(AutomaticImport).where(AutomaticImport.inspection_id == row.id)
+    )
+    state = automatic.state if automatic else "review"
+    message = automatic.message if automatic else "Confirm the files for your requested book."
+    if plan:
+        entries = list(
+            await db.scalars(
+                select(ImportEntry)
+                .join(ImportRun)
+                .where(ImportRun.plan_id == plan.id)
+                .order_by(ImportEntry.created_at, ImportEntry.id)
+            )
+        )
+        if entries:
+            blocked = next(
+                (item for item in entries if item.state in {"held", "cancel-held"}), None
+            )
+            if blocked:
+                state, message = "held", blocked.message
+            elif all(item.state in {"confirmed", "skipped"} for item in entries):
+                state, message = "complete", "Imported and available in your library."
+            elif all(item.state == "cancelled" for item in entries):
+                state, message = "cancelled", "Import stopped. Downloaded files are preserved."
+            else:
+                current = next(
+                    (
+                        item
+                        for item in entries
+                        if item.state not in {"confirmed", "skipped", "cancelled"}
+                    ),
+                    entries[0],
+                )
+                state, message = current.state, current.message
+    value.download = DownloadContext(
+        attempt_id=attempt.id,
+        work_id=work.id,
+        title=work.title,
+        authors=work.authors,
+        cover_url=work.cover_url,
+        medium=selection.frozen["requirements"]["medium"],
+        destination=destination.backend_path if destination else None,
+        mode=destination.mode if destination else None,
+        state=state,
+        message=message,
+        can_retry=bool(
+            automatic
+            and automatic.state == "held"
+            and not automatic.import_run_id
+            and not automatic.evidence.get("release_rejection")
+            and not get_settings().recovery_mode
+        ),
+    )
+    return value
+
+
+@router.post("/inspections/{inspection_id}/retry", response_model=InspectionView, status_code=202)
+async def retry_download_import(inspection_id: UUID, admin: Admin, db: Database):
+    row = await owned_inspection(db, admin.id, inspection_id)
+    attempt = await db.scalar(
+        select(DownloadAttempt).where(DownloadAttempt.inspection_id == row.id)
+    )
+    if not attempt:
+        raise HTTPException(409, "This inspection is not linked to a completed download")
+    from app.importing.automatic import retry_held
+
+    if not await retry_held(db, attempt):
+        raise HTTPException(
+            409, "This import already has a plan or needs file review; refresh its status"
+        )
+    await db.commit()
+    return await inspection(inspection_id, admin, db)
 
 
 @router.post(

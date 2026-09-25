@@ -3789,6 +3789,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/organization/inspections/{inspection_id}/retry": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Retry Download Import */
+    post: operations["retry_download_import_api_organization_inspections__inspection_id__retry_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/organization/inspections/{inspection_id}/editions": {
     parameters: {
       query?: never;
@@ -7529,6 +7546,40 @@ export interface components {
       /** Maximum Bytes */
       maximum_bytes?: number | null;
     };
+    /** DownloadContext */
+    DownloadContext: {
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /**
+       * Work Id
+       * Format: uuid
+       */
+      work_id: string;
+      /** Title */
+      title: string;
+      /** Authors */
+      authors: string[];
+      /** Cover Url */
+      cover_url: string | null;
+      /** Medium */
+      medium: string;
+      /** Destination */
+      destination: string | null;
+      /** Mode */
+      mode: string | null;
+      /** State */
+      state: string;
+      /** Message */
+      message: string;
+      /**
+       * Can Retry
+       * @default false
+       */
+      can_retry: boolean;
+    };
     /** DownloadFolderView */
     DownloadFolderView: {
       /** Path */
@@ -8593,6 +8644,9 @@ export interface components {
       /** Message */
       message: string;
       snapshot?: components["schemas"]["InspectionSnapshot"] | null;
+      /** Plan Id */
+      plan_id?: string | null;
+      download?: components["schemas"]["DownloadContext"] | null;
     };
     /** InventoryReconciliationItemView */
     InventoryReconciliationItemView: {
@@ -22012,6 +22066,37 @@ export interface operations {
     responses: {
       /** @description Successful Response */
       200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InspectionView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  retry_download_import_api_organization_inspections__inspection_id__retry_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        inspection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
         headers: {
           [name: string]: unknown;
         };

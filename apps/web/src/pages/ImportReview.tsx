@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
+import DownloadImportReview from "../components/DownloadImportReview";
 import ImportExecution from "../components/ImportExecution";
 import GroupingEditor from "../components/GroupingEditor";
 import ImportCollectionContents from "../components/ImportCollectionContents";
@@ -36,6 +37,7 @@ export default function ImportReview() {
   const [source, setSource] = useState("");
   const [path, setPath] = useState("");
   const [complete, setComplete] = useState(false);
+  const [manualReview, setManualReview] = useState(false);
   const [offset, setOffset] = useState(0);
   const cache = useQueryClient();
   const attempt = useRef<{ payload: string; key: string } | null>(null);
@@ -67,8 +69,13 @@ export default function ImportReview() {
         }),
       ),
     refetchInterval: (query) =>
-      query.state.data && ["queued", "running"].includes(query.state.data.state)
-        ? 1500
+      query.state.data &&
+      (["queued", "running"].includes(query.state.data.state) ||
+        (query.state.data.download &&
+          !["complete", "cancelled"].includes(query.state.data.download.state)))
+        ? query.state.data.download?.state === "held"
+          ? 10000
+          : 2000
         : false,
   });
   const create = useMutation({
@@ -96,121 +103,139 @@ export default function ImportReview() {
     },
   });
   return (
-    <>
-      <Link to="/settings#naming">← Naming settings</Link>
+    <div className="import-review-page">
+      <Link className="import-review-back" to="/requests">
+        ← Requests
+      </Link>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Library setup</p>
-          <h1>Review completed downloads</h1>
+          <p className="eyebrow">Downloads</p>
+          <h1>{selectedId ? "Download review" : "Completed downloads"}</h1>
           <p className="muted">
-            Inspect files, match book groups and save an organization plan.
+            {selectedId
+              ? "Your book, from download to library."
+              : "Review downloads that need your attention, or import a local folder."}
           </p>
         </div>
       </div>
-      <p className="notice">
-        Inspection reads source files. Review the plan and choose a verified
-        destination before importing. A saved plan does not mark a book as
-        owned.
-      </p>
-      <form
-        className="panel editor"
-        onSubmit={(event) => {
-          event.preventDefault();
-          create.mutate();
-        }}
-      >
-        <h2>Inspect a download</h2>
-        {!roots.data?.length && !roots.isPending && (
-          <p className="notice">
-            No download roots are configured. Configure read-only worker mounts
-            and BOOK_IMPORT_SOURCES before inspecting files.
-          </p>
-        )}
-        <label>
-          Download root
-          <select
-            value={source || roots.data?.[0] || ""}
-            onChange={(event) => setSource(event.target.value)}
-            disabled={create.isPending}
-          >
-            {!roots.data?.length && (
-              <option value="">No configured roots</option>
-            )}
-            {roots.data?.map((key) => (
-              <option value={key} key={key}>
-                {key}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Download path
-          <input
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            placeholder="Series pack folder or completed-book.epub"
-            maxLength={1024}
-            required
-            disabled={create.isPending}
-          />
-        </label>
-        <p className="muted">
-          Enter a completed file or folder relative to the selected root.
-        </p>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={complete}
-            onChange={(event) => setComplete(event.target.checked)}
-            disabled={create.isPending}
-          />
-          The download has finished and its files are no longer changing
-        </label>
-        <Notice error={roots.error || create.error} />
-        <button
-          className="primary"
-          disabled={
-            !complete || !path || !roots.data?.length || create.isPending
-          }
-        >
-          {create.isPending ? "Queuing…" : "Inspect files"}
-        </button>
-      </form>
-      <section className="panel editor" aria-label="Inspection history">
-        <h2>Recent inspections</h2>
-        <Notice error={history.error} />
-        {history.data?.map((row) => (
-          <div className="import-path" key={row.id}>
-            <button onClick={() => setParams({ inspection: row.id })}>
-              {row.relative_path} · {row.state}
-            </button>
-            <span className="muted">{row.message}</span>
-          </div>
-        ))}
-        {history.data?.length === 0 && (
-          <p className="muted">No inspections yet.</p>
-        )}
-        <div className="actions">
-          <button
-            disabled={offset === 0}
-            onClick={() => setOffset((value) => Math.max(0, value - 25))}
-          >
-            Previous inspections
-          </button>
-          <button
-            disabled={(history.data?.length || 0) < 25}
-            onClick={() => setOffset((value) => value + 25)}
-          >
-            More inspections
-          </button>
-        </div>
-      </section>
       <Notice error={selected.error} />
       {selectedId && selected.isPending && <Loading />}
-      {selected.data && (
+      {selected.data?.download ? (
+        <>
+          <DownloadImportReview inspection={selected.data} />
+          {(!selected.data.plan_id ||
+            selected.data.download.state === "cancelled") && (
+            <details
+              className="import-review-advanced"
+              onToggle={(event) => setManualReview(event.currentTarget.open)}
+            >
+              <summary>Change book or file selection</summary>
+              {manualReview && (
+                <Review key={selected.data.id} inspection={selected.data} />
+              )}
+            </details>
+          )}
+        </>
+      ) : selected.data ? (
         <Review key={selected.data.id} inspection={selected.data} />
-      )}
-    </>
+      ) : null}
+      <details className="import-review-advanced" open={!selectedId}>
+        <summary>Import another download</summary>
+        <form
+          className="panel editor"
+          onSubmit={(event) => {
+            event.preventDefault();
+            create.mutate();
+          }}
+        >
+          <h2>Inspect a download</h2>
+          {!roots.data?.length && !roots.isPending && (
+            <p className="notice">
+              No download roots are configured. Configure read-only worker
+              mounts and BOOK_IMPORT_SOURCES before inspecting files.
+            </p>
+          )}
+          <label>
+            Download root
+            <select
+              value={source || roots.data?.[0] || ""}
+              onChange={(event) => setSource(event.target.value)}
+              disabled={create.isPending}
+            >
+              {!roots.data?.length && (
+                <option value="">No configured roots</option>
+              )}
+              {roots.data?.map((key) => (
+                <option value={key} key={key}>
+                  {key}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Download path
+            <input
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              placeholder="Series pack folder or completed-book.epub"
+              maxLength={1024}
+              required
+              disabled={create.isPending}
+            />
+          </label>
+          <p className="muted">
+            Enter a completed file or folder relative to the selected root.
+          </p>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={complete}
+              onChange={(event) => setComplete(event.target.checked)}
+              disabled={create.isPending}
+            />
+            The download has finished and its files are no longer changing
+          </label>
+          <Notice error={roots.error || create.error} />
+          <button
+            className="primary"
+            disabled={
+              !complete || !path || !roots.data?.length || create.isPending
+            }
+          >
+            {create.isPending ? "Queuing…" : "Inspect files"}
+          </button>
+        </form>
+        <section className="panel editor" aria-label="Inspection history">
+          <h2>Recent inspections</h2>
+          <Notice error={history.error} />
+          {history.data?.map((row) => (
+            <div className="import-path" key={row.id}>
+              <button onClick={() => setParams({ inspection: row.id })}>
+                {row.relative_path} · {row.state}
+              </button>
+              <span className="muted">{row.message}</span>
+            </div>
+          ))}
+          {history.data?.length === 0 && (
+            <p className="muted">No inspections yet.</p>
+          )}
+          <div className="actions">
+            <button
+              disabled={offset === 0}
+              onClick={() => setOffset((value) => Math.max(0, value - 25))}
+            >
+              Previous inspections
+            </button>
+            <button
+              disabled={(history.data?.length || 0) < 25}
+              onClick={() => setOffset((value) => value + 25)}
+            >
+              More inspections
+            </button>
+          </div>
+        </section>
+      </details>
+    </div>
   );
 }
 
@@ -262,7 +287,7 @@ function Review({ inspection }: { inspection: Inspection }) {
   const clearMatches = (matches.data?.items || [])
     .map(matchedSelection)
     .filter((item): item is Selection => !!item && !selections[item.group_key]);
-  const planId = params.get("plan");
+  const planId = params.get("plan") || inspection.plan_id;
   const settings = useQuery({
     queryKey: ["naming-review-settings"],
     queryFn: async () => result(await api.GET("/api/organization/settings")),
@@ -297,15 +322,15 @@ function Review({ inspection }: { inspection: Inspection }) {
   return (
     <section aria-label="Inspected download" className="library-access">
       <h2>{inspection.relative_path}</h2>
-      <p role="status">{inspection.message}</p>
+      {inspection.state !== "ready" && (
+        <p role="status">{inspection.message}</p>
+      )}
       {snapshot && (
         <>
           <p className="muted">
             {snapshot.files.length}{" "}
             {snapshot.files.length === 1 ? "file" : "files"} inspected ·{" "}
             {groups.length} book {groups.length === 1 ? "group" : "groups"}.
-            Embedded metadata is evidence; choose a catalog version to confirm
-            each mapping.
           </p>
           {snapshot.source_kind === "file" && (
             <p className="muted">
@@ -343,39 +368,38 @@ function Review({ inspection }: { inspection: Inspection }) {
           )}
           {grouping.data?.content.excluded.length ? (
             <p className="muted">
-              {grouping.data.content.excluded.length} files excluded from this
-              plan. Review file groups to see why.
+              {grouping.data.content.excluded.length} extra files excluded from
+              the library copy.
             </p>
           ) : null}
           {!editingGroups && grouping.data && (
             <section aria-label="Catalog matching">
-              <p className="muted">
-                Catalog matching uses embedded identifiers and supporting
-                metadata. A match does not confirm that the files contain the
-                complete book.
-              </p>
               <Notice error={matches.error} />
               {matches.isFetching && (
                 <p role="status">Checking catalog matches…</p>
               )}
               <div className="actions">
-                <button
-                  disabled={
-                    save.isPending || matches.isFetching || !clearMatches.length
-                  }
-                  onClick={() =>
-                    setSelections((current) => {
-                      const next = { ...current };
-                      for (const selection of clearMatches) {
-                        if (!next[selection.group_key])
-                          next[selection.group_key] = selection;
-                      }
-                      return next;
-                    })
-                  }
-                >
-                  Use clear matches on this page ({clearMatches.length})
-                </button>
+                {clearMatches.length > 0 && (
+                  <button
+                    disabled={
+                      save.isPending ||
+                      matches.isFetching ||
+                      !clearMatches.length
+                    }
+                    onClick={() =>
+                      setSelections((current) => {
+                        const next = { ...current };
+                        for (const selection of clearMatches) {
+                          if (!next[selection.group_key])
+                            next[selection.group_key] = selection;
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    Use matched books ({clearMatches.length})
+                  </button>
+                )}
                 <button
                   disabled={save.isPending || matches.isFetching}
                   onClick={() => matches.refetch()}
@@ -389,6 +413,9 @@ function Review({ inspection }: { inspection: Inspection }) {
             groups.slice(groupOffset, groupOffset + 10).map((group) => (
               <GroupMatch
                 key={`${grouping.data?.revision}:${group.key}`}
+                linkedWorkId={
+                  groups.length === 1 ? inspection.download?.work_id : undefined
+                }
                 inspectionId={inspection.id}
                 groupingRevision={grouping.data?.revision || ""}
                 group={group}
@@ -407,33 +434,37 @@ function Review({ inspection }: { inspection: Inspection }) {
                 }
               />
             ))}
-          <div className="actions">
-            <button
-              disabled={groupOffset === 0}
-              onClick={() => setGroupOffset((value) => Math.max(0, value - 10))}
-            >
-              Previous groups
-            </button>
-            <button
-              disabled={groupOffset + 10 >= groups.length}
-              onClick={() => setGroupOffset((value) => value + 10)}
-            >
-              More groups
-            </button>
-          </div>
+          {groups.length > 10 && (
+            <div className="actions">
+              <button
+                disabled={groupOffset === 0}
+                onClick={() =>
+                  setGroupOffset((value) => Math.max(0, value - 10))
+                }
+              >
+                Previous groups
+              </button>
+              <button
+                disabled={groupOffset + 10 >= groups.length}
+                onClick={() => setGroupOffset((value) => value + 10)}
+              >
+                More groups
+              </button>
+            </div>
+          )}
           <p className="muted">
             {Object.keys(selections).length}{" "}
             {Object.keys(selections).length === 1 ? "group" : "groups"} selected
             for this plan.
           </p>
           <details>
-            <summary>File evidence and items needing review</summary>
+            <summary>Inspection details</summary>
             {snapshot.files.slice(0, fileLimit).map((file) => (
               <div className="import-path" key={file.path}>
                 <strong>
-                  {file.path} · {file.state}
+                  {file.path} · {file.medium ? file.state : "Extra file"}
                 </strong>
-                {file.reason && <span>{file.reason}</span>}
+                {file.medium && file.reason && <span>{file.reason}</span>}
                 <span className="muted">SHA-256: {file.sha256}</span>
               </div>
             ))}
@@ -623,6 +654,7 @@ function EditionGap({
 }
 
 function GroupMatch({
+  linkedWorkId,
   inspectionId,
   groupingRevision,
   group,
@@ -631,6 +663,7 @@ function GroupMatch({
   disabled,
   onChange,
 }: {
+  linkedWorkId?: string;
   inspectionId: string;
   groupingRevision: string;
   group: Group;
@@ -646,7 +679,7 @@ function GroupMatch({
   const [q, setQ] = useState("");
   const [editionNote, setEditionNote] = useState("");
   const [offset, setOffset] = useState(0);
-  const [manualWorkId, setWorkId] = useState("");
+  const [manualWorkId, setWorkId] = useState(linkedWorkId || "");
   const workId = selection?.work_id || manualWorkId;
   const versionId = selection?.version_id || "";
   const [versionOffset, setVersionOffset] = useState(0);
@@ -850,7 +883,7 @@ function GroupMatch({
           )}
           <details>
             <summary>
-              Catalog evidence and possible versions ({match.candidates.length})
+              Match details ({match.candidates.length} editions)
             </summary>
             {(match.evidence.issues || []).map((issue) => (
               <p key={issue}>{issue}</p>
@@ -921,20 +954,22 @@ function GroupMatch({
               ))}
             </select>
           </label>
-          <div className="actions">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset((value) => Math.max(0, value - 20))}
-            >
-              Previous matches
-            </button>
-            <button
-              disabled={offset + 20 >= books.data.total}
-              onClick={() => setOffset((value) => value + 20)}
-            >
-              More matches
-            </button>
-          </div>
+          {books.data.total > 20 && (
+            <div className="actions">
+              <button
+                disabled={offset === 0}
+                onClick={() => setOffset((value) => Math.max(0, value - 20))}
+              >
+                Previous matches
+              </button>
+              <button
+                disabled={offset + 20 >= books.data.total}
+                onClick={() => setOffset((value) => value + 20)}
+              >
+                More matches
+              </button>
+            </div>
+          )}
         </>
       )}
       {versions.data && (
@@ -980,26 +1015,28 @@ function GroupMatch({
                 ))}
             </select>
           </label>
-          <div className="actions">
-            <button
-              disabled={versionOffset === 0}
-              onClick={() => {
-                update("", full);
-                setVersionOffset((value) => Math.max(0, value - 40));
-              }}
-            >
-              Previous versions
-            </button>
-            <button
-              disabled={versionOffset + 40 >= versions.data.versions_total}
-              onClick={() => {
-                update("", full);
-                setVersionOffset((value) => value + 40);
-              }}
-            >
-              More versions
-            </button>
-          </div>
+          {versions.data.versions_total > 40 && (
+            <div className="actions">
+              <button
+                disabled={versionOffset === 0}
+                onClick={() => {
+                  update("", full);
+                  setVersionOffset((value) => Math.max(0, value - 40));
+                }}
+              >
+                Previous versions
+              </button>
+              <button
+                disabled={versionOffset + 40 >= versions.data.versions_total}
+                onClick={() => {
+                  update("", full);
+                  setVersionOffset((value) => value + 40);
+                }}
+              >
+                More versions
+              </button>
+            </div>
+          )}
           <label className="check-label">
             <input
               type="checkbox"

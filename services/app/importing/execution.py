@@ -7,6 +7,7 @@ Bulk file work happens outside database transactions in private staging.
 import asyncio
 import base64
 import hashlib
+import logging
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -44,6 +45,7 @@ from app.importing.backend import verify_backend
 from app.importing.collection_contents import verify as verify_contents
 from app.importing.covers import CoverError, fetch_cover
 from app.importing.destinations import destination_configuration
+from app.importing.failures import import_failure
 from app.importing.filesystem import beneath, digest, directory
 from app.importing.naming import AUDIO, EBOOK
 from app.importing.ownership import already_owned
@@ -56,6 +58,8 @@ from app.importing.publication import (
 from app.importing.storage import import_sources
 from app.importing.versioning import version_revision
 from app.security import decrypt_secrets
+
+logger = logging.getLogger(__name__)
 
 
 class Superseded(PublicationError):
@@ -740,6 +744,7 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
 
         await cancel(operation_id, checkpoint=checkpoint)
         return
+    stage = "Checking import configuration"
     try:
         async with session_factory()() as db:
             entry = await db.get(ImportEntry, entry_id)
@@ -754,6 +759,7 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
             spec = PublicationSpec.model_validate(entry.specification)
             receipt = entry.receipt
         async with factory(url, secret) as adapter:
+            stage = "Connecting to the library"
             capabilities = await verify_backend(
                 adapter,
                 external_library,
@@ -779,8 +785,10 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                         )
             published_now = not entry.published_at
             if published_now:
+                stage = "Preparing artwork"
                 spec = await prepare_cover(entry_id, token)
                 entry.specification = spec.model_dump(mode="json")
+                stage = "Checking library storage"
                 observation = await capacity.observe_import(spec)
                 async with session_factory()() as db, db.begin():
                     current = await db.get(ImportEntry, entry_id)
@@ -794,6 +802,7 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                     current = await db.get(ImportEntry, entry_id)
                     await context(db, current, token, lock=True)
                     await capacity.reserve_import(db, current, spec, observation)
+                stage = "Organizing library files"
                 if spec.mode == "rename":
                     from app.importing.seeding_rename import place_seeding_copy
 
@@ -842,6 +851,7 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                             entity_id=current.id,
                         )
                     )
+            stage = "Confirming the library copy"
             if capabilities["scan_capable"] and published_now:
                 await adapter.scan(external_library)
             await asyncio.to_thread(verify_published_media, spec, receipt)
@@ -911,7 +921,14 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
         message = (
             str(error)[:500]
             if isinstance(error, (PublicationError, AdapterError))
-            else "Import failed; check source, mounts, credentials and permissions before retrying"
+            else import_failure(error, stage)
+        )
+        logger.warning(
+            "Import %s failed during %s (%s, errno=%s)",
+            entry_id,
+            stage,
+            type(error).__name__,
+            getattr(error, "errno", None),
         )
         transient = isinstance(error, AdapterError) and error.kind in {
             FailureKind.UNAVAILABLE,

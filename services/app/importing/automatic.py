@@ -29,6 +29,7 @@ from app.domain.catalog_titles import parse_title_labels
 from app.domain.operations import transaction_lock
 from app.domain.work_graph import canonical_work
 from app.importing.destination_view import view as destination_view
+from app.importing.extra_files import is_extra
 from app.importing.grouping import current_grouping
 from app.importing.matching import match_group
 from app.importing.naming import fingerprint
@@ -174,6 +175,7 @@ async def retry_held(db, attempt):
     operation = await db.get(Operation, row.operation_id)
     operation.status, operation.message = "queued", row.message
     operation.job_id = await enqueue(db, "organization.automatic", automatic_id=str(row.id))
+    return True
 
 
 async def continue_inspection(db, inspection_id):
@@ -361,7 +363,7 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
                 work = await canonical_work(db, linked.work_id)
                 candidate = candidate_evidence(match.evidence, linked, work, work, False)
         if (match.status != "matched" and not linked) or not candidate:
-            reason = match.message
+            reason = reason or match.message
         elif candidate.work_id not in works:
             release_rejection = True
             reason = "Additional collection titles need an authorized acquisition scope"
@@ -508,8 +510,8 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
     row.import_run_id, row.state = imported.id, "importing"
     await enqueue(db, "acquisition.fulfillment", work_id=selection.frozen["origin_work_id"])
     row.message = importer_message(plan.document)
-    if held or grouping.excluded:
-        row.message += "; other files remain for review"
+    if held or any(not is_extra(item.path) for item in grouping.excluded):
+        row.message += "; other book files need review"
 
 
 async def run(identifier):

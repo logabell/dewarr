@@ -1,0 +1,275 @@
+.import-review-page {
+  max-width: 1100px;
+  margin-inline: auto;
+  padding-bottom: 48px;
+}
+.import-review-back {
+  color: var(--muted);
+  font-size: 13px;
+}
+.import-review-page .page-heading {
+  margin: 24px 0 28px;
+}
+.import-review-page .page-heading h1 {
+  margin: 4px 0 8px;
+}
+.import-review-page .page-heading p {
+  margin: 0;
+}
+.download-import {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.download-import-book {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 28px;
+}
+.download-import-cover {
+  width: 66px;
+  height: 98px;
+  flex: 0 0 66px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+}
+.download-import-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.download-import-identity {
+  flex: 1;
+  min-width: 0;
+}
+.download-import-identity h2 {
+  font-size: 24px;
+  line-height: 1.25;
+  margin: 4px 0 6px;
+}
+.download-import-identity p {
+  margin: 0;
+}
+.download-import-association {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 12px;
+  color: var(--muted);
+}
+.download-import-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.download-import-state.is-held {
+  color: #e4ba73;
+  background: #e4ba7312;
+}
+.download-import-state.is-complete {
+  color: #84c7ac;
+  background: #84c7ac12;
+}
+.download-import-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  list-style: none;
+  margin: 0;
+  padding: 20px 28px;
+  border-block: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  gap: 12px;
+}
+.download-import-steps li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.download-import-steps li > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.download-import-steps .is-complete {
+  color: #84c7ac;
+}
+.download-import-steps .is-complete > span:first-child {
+  background: #84c7ac12;
+  border-color: #84c7ac40;
+}
+.download-import-route {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr;
+  gap: 24px;
+  padding: 24px 28px;
+}
+.download-import-route > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.download-import-route strong {
+  font-weight: 500;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.download-import-next,
+.import-execution-compact {
+  margin: 0 28px 24px;
+}
+.download-import-next h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.download-import-next p {
+  font-size: 14px;
+  margin: 8px 0 16px;
+}
+.download-import-next.is-held {
+  border-left: 3px solid #e4ba73;
+  padding-left: 18px;
+}
+.import-execution-compact .library-access {
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.import-result {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 12px;
+}
+.import-result.is-held,
+.import-result.is-cancel-held {
+  border-left: 3px solid #e4ba73;
+  background: #e4ba7305;
+}
+.import-result.is-confirmed,
+.import-result.is-skipped {
+  border-left: 3px solid #84c7ac;
+}
+.import-result > strong {
+  font-size: 15px;
+}
+.import-result > p {
+  font-size: 13px;
+  margin: 10px 0 16px;
+  line-height: 1.65;
+}
+.import-result-options {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.import-result-options > button {
+  margin-top: 12px;
+}
+.download-import-files {
+  border-top: 1px solid var(--line);
+  padding: 18px 28px;
+  font-size: 13px;
+}
+.download-import-files summary,
+.import-review-advanced > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 500;
+}
+.download-import-files[open] summary {
+  margin-bottom: 20px;
+}
+.download-import-file {
+  margin: 16px 0;
+  overflow-wrap: anywhere;
+}
+.download-import-file > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 12px;
+  font-size: 12px;
+}
+.import-review-advanced {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.import-review-advanced > summary {
+  font-size: 13px;
+}
+.import-review-advanced[open] > summary {
+  margin-bottom: 24px;
+}
+.import-review-page .editor {
+  padding: 24px;
+}
+.import-review-page .inline-form {
+  align-items: end;
+  gap: 12px;
+}
+.import-review-page .inline-form label {
+  flex: 1;
+}
+.import-review-page .import-path {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .download-import-book {
+    padding: 20px;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .download-import-identity h2 {
+    font-size: 20px;
+  }
+  .download-import-state {
+    margin-left: 80px;
+  }
+  .download-import-steps {
+    grid-template-columns: 1fr 1fr;
+    padding: 16px 20px;
+    gap: 16px;
+  }
+  .download-import-route {
+    grid-template-columns: 1fr;
+    padding: 20px;
+    gap: 16px;
+  }
+  .download-import-next,
+  .import-execution-compact {
+    margin: 0 20px 20px;
+  }
+  .download-import-files {
+    padding: 18px 20px;
+  }
+}
+.download-import .spin {
+  animation: loading-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .download-import .spin {
+    animation: none;
+  }
+}
