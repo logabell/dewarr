@@ -11,7 +11,7 @@ from app.importing.match_evidence import group_evidence, language_key
 
 def agrees_with_request(work, release, facts):
     # Missing tags are common in M4B files. Conflicting tags still require review.
-    if facts.issues or facts.identifiers or work.metadata_fields.get("identity_rejected"):
+    if facts.issues or work.metadata_fields.get("identity_rejected"):
         return False
     title = display_title(work.title)
     authors = sorted(normalized(name) for name in work.authors)

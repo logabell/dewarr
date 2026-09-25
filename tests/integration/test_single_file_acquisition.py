@@ -88,6 +88,8 @@ pytestmark = pytest.mark.integration
         "automatic-provider-settings",
         "automatic-unmatched",
         "automatic-linked-audio",
+        "automatic-linked-ebook",
+        "automatic-language-alias",
         "automatic-manifest",
         "automatic-disable",
         "automatic-sample",
@@ -117,6 +119,8 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
         "automatic-provider-retry",
         "automatic-unmatched",
         "automatic-linked-audio",
+        "automatic-linked-ebook",
+        "automatic-language-alias",
     }
     medium = (
         "audio"
@@ -151,6 +155,9 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             if handoff in {"automatic", "automatic-unmatched"}
             else "Alex Morgan",
             isbn="9781234567897" if automatic_mode and handoff != "automatic-unmatched" else None,
+            language="en-US"
+            if handoff in {"automatic-linked-ebook", "automatic-language-alias"}
+            else "en",
         )
     epub(source.parent / "unrelated.epub", title="Not part of this torrent")
     original = source.read_bytes()
@@ -209,6 +216,10 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
                     id=502,
                     title="First Harbor sample"
                     if handoff == "automatic-sample"
+                    # Exercise provider resolution when the saved release alone
+                    # cannot corroborate the book's title.
+                    else "First Harbor special edition"
+                    if provider_mode
                     else "First Harbor",
                     main_cat=13 if medium == "audio" else 14,
                     filetype="MP3" if medium == "audio" else "EPUB",
@@ -247,7 +258,7 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
     assert selected_response.status_code == 201, selected_response.text
     owner_client = client
     if automatic_mode:
-        if medium == "ebook" and not provider_mode:
+        if medium == "ebook" and not provider_mode and handoff != "automatic-linked-ebook":
             await edition(database, work_id=UUID(old["work_id"]))
         if handoff == "automatic-ambiguous":
             await edition(database, work_id=UUID(old["work_id"]))
@@ -387,8 +398,17 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             )
             entries = list(await db.scalars(select(ImportEntry)))
             assert len(entries) == 1 and entries[0].state == "confirmed"
-            if handoff in {"automatic-unmatched", "automatic-linked-audio"}:
+            if handoff in {
+                "automatic-unmatched",
+                "automatic-linked-audio",
+                "automatic-linked-ebook",
+            }:
                 assert auto.evidence["linked_download"]["work_id"] == old["work_id"]
+                if handoff == "automatic-linked-ebook":
+                    imported_version = await db.get(Version, entries[0].version_id)
+                    assert imported_version.work_id == UUID(old["work_id"])
+                    assert imported_version.identifiers == {"isbn_13": "9781234567897"}
+                    assert not resolution_provider["calls"]
             else:
                 assert plan.document["matching_evidence"]
             fulfilled = await db.scalar(select(DownloadFulfillment))

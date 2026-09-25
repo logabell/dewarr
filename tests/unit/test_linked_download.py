@@ -7,7 +7,12 @@ from app.importing.match_evidence import MatchEvidence
 
 
 @pytest.mark.parametrize(
-    "facts", [MatchEvidence(), MatchEvidence(titles=["project hail mary"], authors=[["andy weir"]])]
+    "facts",
+    [
+        MatchEvidence(),
+        MatchEvidence(titles=["project hail mary"], authors=[["andy weir"]]),
+        MatchEvidence(identifiers=[{"namespace": "asin", "value": "B012345678"}]),
+    ],
 )
 def test_linked_book_does_not_need_embedded_edition_identifier(facts):
     work = SimpleNamespace(
@@ -23,10 +28,9 @@ def test_linked_book_does_not_need_embedded_edition_identifier(facts):
         MatchEvidence(authors=[["another author"]]),
         MatchEvidence(languages=["fr"]),
         MatchEvidence(issues=["Files disagree about narrator"]),
-        MatchEvidence(identifiers=[{"namespace": "asin", "value": "B012345678"}]),
     ],
 )
-def test_linked_book_preserves_conflicts_and_identifier_matching(facts):
+def test_linked_book_preserves_conflicting_file_metadata(facts):
     work = SimpleNamespace(
         title="Project Hail Mary", authors=["Andy Weir"], language="en", metadata_fields={}
     )

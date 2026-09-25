@@ -4,34 +4,17 @@ import re
 
 from pydantic import Field
 
+from app.domain.catalog_language import catalog_language
 from app.domain.identity import normalized
 from app.domain.narrators import embedded_names
 from app.importing.metadata import valid_isbn
 from app.importing.naming import StrictModel
 
 ISBN_KEYS = ("isbn", "isbn10", "isbn13", "isbn_10", "isbn_13")
-LANGUAGE_ALIASES = {
-    "eng": "en",
-    "fra": "fr",
-    "fre": "fr",
-    "deu": "de",
-    "ger": "de",
-    "spa": "es",
-    "ita": "it",
-    "por": "pt",
-    "nld": "nl",
-    "dut": "nl",
-    "jpn": "ja",
-    "zho": "zh",
-    "chi": "zh",
-    "rus": "ru",
-    "ara": "ar",
-}
 
 
 def language_key(value):
-    value = normalized(value).replace("_", "-")
-    return LANGUAGE_ALIASES.get(value, value)
+    return catalog_language(value) or ""
 
 
 def isbn_key(value):

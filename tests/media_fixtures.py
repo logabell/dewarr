@@ -18,7 +18,14 @@ def cover_bytes(*, color="navy", size=(240, 360), format="PNG", **save_options):
 
 
 def epub(
-    path, title="First Harbor", author="Alex Morgan", *, chapter=True, metadata=None, isbn=None
+    path,
+    title="First Harbor",
+    author="Alex Morgan",
+    *,
+    chapter=True,
+    metadata=None,
+    isbn=None,
+    language="en",
 ):
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as book:
@@ -34,7 +41,7 @@ def epub(
                 '<package xmlns="http://www.idpf.org/2007/opf"><metadata '
                 'xmlns:dc="http://purl.org/dc/elements/1.1/">'
                 f"<dc:title>{escape(title)}</dc:title><dc:creator>{escape(author)}</dc:creator>"
-                "<dc:language>en</dc:language>"
+                f"<dc:language>{escape(language)}</dc:language>"
                 f"<dc:identifier>{escape(isbn or 'synthetic-fixture')}</dc:identifier>"
                 '</metadata><manifest><item id="chapter" href="chapter.xhtml" '
                 'media-type="application/xhtml+xml"/></manifest>'

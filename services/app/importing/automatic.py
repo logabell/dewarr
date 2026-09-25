@@ -352,6 +352,9 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             and len(members) == 1
             and not continuation
             and not match.truncated
+            # Unknown file identifiers can define a local edition of the saved
+            # book. Existing identifier matches must retain conflict review.
+            and not any(item.identifier_match for item in match.candidates)
         ):
             from app.importing.linked_download import linked_version
             from app.importing.matching import candidate_evidence
