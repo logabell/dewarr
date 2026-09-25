@@ -1,11 +1,12 @@
 """Bounded catalog-derived search terms, never authorization for pack coverage."""
 
 import unicodedata
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from app.db.models import CatalogSeries, SeriesMembership, Version, Work, WorkMetadataSource
-from app.domain.catalog_titles import identity_authors, parse_title_labels
+from app.domain.catalog_titles import identity_authors, optional_subtitle_base, parse_title_labels
 from app.domain.visibility import visible_origin_work
 from app.domain.work_graph import family_ids
 
@@ -30,6 +31,26 @@ def default_query(work):
         f"{title} {surname}" if surname and surname.casefold() not in title.casefold() else title
     )
     return query[:300]
+
+
+def book_queries(work, query):
+    """Broaden a default search after empty responses; preserve custom queries.
+
+    Search terms discover candidates, never establish their identity. Keep
+    content-bearing subtitles (volumes, summaries, etc.) even in the broad query.
+    """
+    work = SimpleNamespace(**work)
+    if normalized_query(query) != normalized_query(default_query(work)):
+        return [query]
+    title = optional_subtitle_base(work.title)
+    shortened = default_query(SimpleNamespace(title=title, authors=work.authors))
+    candidates, seen = [], set()
+    for value in (query, shortened, title[:300]):
+        key = normalized_query(value)
+        if key and key not in seen:
+            candidates.append(value)
+            seen.add(key)
+    return candidates
 
 
 async def edition_identifiers(db, work, medium):

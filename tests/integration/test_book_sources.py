@@ -388,3 +388,97 @@ async def test_source_search_migration_guards_saved_profile_history(client, admi
     assert downgraded.returncode != 0 and "pre-upgrade backup" in downgraded.stderr
     async with database() as db:
         assert await db.scalar(text("SELECT version_num FROM alembic_version")) == before
+
+
+@pytest.mark.parametrize("source", ["mam", "prowlarr"])
+@pytest.mark.parametrize(
+    "scenario", ["broaden", "precise", "custom", "page", "retry", "retry-page", "empty"]
+)
+async def test_empty_default_search_broadens_and_preserves_matching_and_pagination(
+    client, admin, database, catalog, source_http, prowlarr_http, monkeypatch, source, scenario
+):
+    async with database() as db, db.begin():
+        work = await db.get(Work, catalog["work"])
+        work.title, work.authors = "Atmosphere: A Love Story", ["Taylor Jenkins Reid"]
+    await (configure_mam(client) if source == "mam" else configure_prowlarr(client))
+    original = book_sources.source_call if source == "mam" else book_sources.prowlarr_call
+    calls = []
+    primary = "Atmosphere: A Love Story Reid"
+    chosen = primary if scenario == "precise" else "Atmosphere"
+
+    async def provider(owner, action, query=None, **kwargs):
+        if action == "search":
+            calls.append((query.q, query.offset))
+            if (scenario == "retry" and calls == [(primary, 0), ("Atmosphere Reid", 0)]) or (
+                scenario == "retry-page"
+                and calls[-1] == ("Atmosphere", 50)
+                and calls.count(("Atmosphere", 50)) == 1
+            ):
+                from app.adapters.contracts import AdapterError, FailureKind
+
+                raise AdapterError(FailureKind.RATE_LIMIT, "Retry fixture", retry_after=1)
+            # A full first page establishes pagination. A later empty page must
+            # stay on that query, rather than broadening to a different result set.
+            found = scenario != "empty" and query.q == chosen and query.offset == 0
+            count = 50 if scenario in {"page", "retry-page"} and found else int(found)
+            if source == "mam":
+                source_http["body"] = search_response(
+                    data=[
+                        release_row(
+                            id=500 + i,
+                            title="Atmosphere",
+                            author_info='{"1":"Taylor Jenkins Reid"}',
+                            series_info="{}",
+                        )
+                        for i in range(count)
+                    ],
+                    found=count,
+                    total=count,
+                )
+            else:
+                prowlarr_http["releases"] = [
+                    release(
+                        guid=f"https://tracker.test/item/{i}",
+                        title="Taylor Jenkins Reid - Atmosphere [M4B]",
+                    )
+                    for i in range(count)
+                ]
+        return await original(owner, action, *(() if query is None else (query,)), **kwargs)
+
+    monkeypatch.setattr(
+        book_sources, "source_call" if source == "mam" else "prowlarr_call", provider
+    )
+    saved = await begin(
+        client,
+        catalog,
+        q="custom m4b" if scenario == "custom" else primary,
+        medium="audio",
+        offset=50 if scenario in {"page", "retry-page"} else 0,
+    )
+    if scenario in {"retry", "retry-page"}:
+        with pytest.raises(SourceSearchRetry):
+            await book_sources.run(UUID(saved["id"]), source)
+    await book_sources.run(UUID(saved["id"]), source)
+    observed = (await read(client, saved["id"])).json()
+    assert observed["status"] == "completed"
+    expected = [(primary, 0), ("Atmosphere Reid", 0), ("Atmosphere", 0)]
+    if scenario in {"page", "retry-page"}:
+        expected.append(("Atmosphere", 50))
+        if scenario == "retry-page":
+            expected.append(("Atmosphere", 50))
+    elif scenario == "retry":
+        expected.insert(2, ("Atmosphere Reid", 0))
+    elif scenario == "precise":
+        expected = [(primary, 0)]
+    elif scenario == "custom":
+        expected = [("custom m4b", 0)]
+    assert calls == expected
+    if scenario in {"broaden", "precise", "retry"}:
+        assert len(observed["items"]) == 1
+        assert observed["items"][0]["assessment"]["identity"] == "corroborated"
+    else:
+        assert not observed["items"]
+    unit = next(
+        s for s in observed["sources"] if s["key"] == ("mam" if source == "mam" else "prowlarr:7")
+    )
+    assert unit["query"] == ("custom m4b" if scenario == "custom" else chosen)

@@ -31,6 +31,18 @@ def distinct_work_subtitle(value):
     return bool(re.search(DISTINCT_SUBTITLE + r"\b", value, re.IGNORECASE))
 
 
+def optional_subtitle_base(value):
+    """Short title for discovery or a listing that omits a catalog subtitle.
+
+    This does not normalize catalog identity: callers must still corroborate
+    authors and reject listings with conflicting or additional title text.
+    """
+    title = parse_title_labels(value).title or value
+    if distinct_work_subtitle(title):
+        return title
+    return title.split(":", 1)[0].strip() or title
+
+
 def title_narrators(value):
     suffix = re.search(DISPLAY_SUFFIX, value or "", re.IGNORECASE)
     if not suffix:

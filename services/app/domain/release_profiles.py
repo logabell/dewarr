@@ -12,7 +12,7 @@ from sqlalchemy.orm import aliased
 
 from app.db.models import AcquisitionDefaults, AcquisitionProfile
 from app.domain import narrators
-from app.domain.catalog_titles import parse_title_labels
+from app.domain.catalog_titles import optional_subtitle_base, parse_title_labels
 from app.domain.narrators import NarratorNames
 from app.domain.request_scope import ScopePreferences
 from app.importing.naming import fingerprint
@@ -393,9 +393,14 @@ def indexer_title_identity(release, work):
     )
     title = re.sub(r"\.(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)$", "", title, flags=re.I)
     actual = normalized(title)
-    expected = normalized(parse_title_labels(work["title"]).title)
-    return bool(expected) and any(
+    expected_titles = {
+        normalized(parse_title_labels(work["title"]).title),
+        normalized(optional_subtitle_base(work["title"])),
+    }
+    return any(
         actual in {f"{author} {expected}", f"{expected} {author}", f"{expected} by {author}"}
+        for expected in expected_titles
+        if expected
         for value in work["authors"]
         if (author := normalized(value))
     )
@@ -404,16 +409,20 @@ def indexer_title_identity(release, work):
 def assess_release(release, work, preferences, medium="all"):
     raw, part, dramatized = release_labels(getattr(release, "title", release.raw_title))
     title, expected = normalized(raw), normalized(parse_title_labels(work["title"]).title)
+    title_agrees = bool(title) and title in {
+        expected,
+        normalized(optional_subtitle_base(work["title"])),
+    }
     authors = {normalized(a) for a in release.authors}
     work_authors = {normalized(a) for a in work["authors"]}
     known = set().union(*(identifier_values(value) for value in work.get("identifiers") or []))
     same_edition = bool(known & identifier_values(getattr(release, "isbn", None)))
     identity = (
         "corroborated"
-        if ((title == expected or same_edition) and authors & work_authors)
+        if ((title_agrees or same_edition) and authors & work_authors)
         or indexer_title_identity(release, work)
         else "possible"
-        if title == expected or same_edition or (expected and expected in title)
+        if title_agrees or same_edition or (expected and expected in title)
         else "unmatched"
     )
     if authors and work_authors and not authors & work_authors:

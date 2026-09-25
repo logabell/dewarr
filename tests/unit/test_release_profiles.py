@@ -367,3 +367,66 @@ def test_observed_companion_formats_and_total_transfer_size_are_enforced():
     enforce_inspected_profile(
         files, ProfileSnapshot(preferences=ReleasePreferences(maximum_bytes=110))
     )
+
+
+@pytest.mark.parametrize(
+    ("catalog_title", "release_title", "authors", "identity"),
+    [
+        ("Atmosphere: A Love Story", "Atmosphere", ["Taylor Jenkins Reid"], "corroborated"),
+        ("Atmosphere: A Love Story", "Atmosphere", [], "possible"),
+        ("Atmosphere: A Love Story", "Atmosphere", ["Other Writer"], "unmatched"),
+        (
+            "Atmosphere: A Love Story",
+            "Atmosphere: Another Story",
+            ["Taylor Jenkins Reid"],
+            "unmatched",
+        ),
+        ("Atmosphere: A Love Story", "Atmosphere summary", ["Taylor Jenkins Reid"], "unmatched"),
+        ("Atmosphere: Volume Two", "Atmosphere", ["Taylor Jenkins Reid"], "unmatched"),
+        ("Atmosphere: A Love Story", "Atmosphere (1 of 2)", ["Taylor Jenkins Reid"], "possible"),
+    ],
+)
+def test_source_missing_subtitle_still_requires_author_and_complete_title(
+    catalog_title, release_title, authors, identity
+):
+    item = candidate().model_copy(update={"title": release_title, "authors": authors})
+    assert (
+        assess_release(
+            item, {"title": catalog_title, "authors": ["Taylor Jenkins Reid"]}, ReleasePreferences()
+        ).identity
+        == identity
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Taylor Jenkins Reid - Atmosphere [M4B]", "corroborated"),
+        ("Other Writer - Atmosphere [M4B]", "unmatched"),
+        ("Taylor Jenkins Reid - Atmosphere: Another Story [M4B]", "unmatched"),
+        ("Taylor Jenkins Reid - Atmosphere.part01.rar", "unmatched"),
+    ],
+)
+def test_indexer_missing_subtitle_requires_exact_author_title_pair(title, expected):
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    item = ProwlarrRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        authors=[],
+        medium="audio",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+    assert (
+        assess_release(
+            item,
+            {"title": "Atmosphere: A Love Story", "authors": ["Taylor Jenkins Reid"]},
+            ReleasePreferences(),
+        ).identity
+        == expected
+    )

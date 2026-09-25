@@ -12,9 +12,10 @@ from app.db.models import (
     Integration,
     Operation,
     SourceResult,
+    Work,
     WorkMetadataSource,
 )
-from app.domain import automatic_selection, quick_add
+from app.domain import automatic_selection, book_sources, quick_add
 from tests.integration.test_acquisition import catalog
 from tests.integration.test_acquisition_defaults import save
 from tests.integration.test_acquisition_selections import selection_route
@@ -618,3 +619,42 @@ async def test_clicked_release_missing_torrent_route_explains_the_required_setup
     assert "import destination" in receipt["message"]
     assert "inspection budget" not in receipt["message"]
     assert authorized["resolver"].calls == []
+
+
+async def test_quick_add_broadens_empty_search_and_downloads_title_without_subtitle(
+    client, database, authorized, catalog, monkeypatch
+):
+    from app.adapters.mam import ReleasePage
+
+    async with database() as db, db.begin():
+        work = await db.get(Work, catalog["work"])
+        work.title = "Harbor: A Love Story"
+    await defaults(client, authorized)
+    queries = []
+
+    async def search(owner, action, query, **kwargs):
+        assert action == "search"
+        queries.append(query.q)
+        items = [authorized["release"]] if query.q == "Harbor" else []
+        return ReleasePage(items=items, total=len(items), has_more=False, offset=0, limit=50), 1
+
+    monkeypatch.setattr(book_sources, "source_call", search)
+    response = await add(client, catalog["work"])
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    async with database() as db:
+        parent = await db.get(Operation, identifier)
+        search_id = UUID(parent.payload["search_id"])
+    await book_sources.run(search_id, "mam")
+    assert queries == ["Harbor: A Love Story Writer", "Harbor Writer", "Harbor"]
+    await quick_add.run(identifier)
+    async with database() as db:
+        parent = await db.get(Operation, identifier)
+        assert parent.status == "running", parent.message
+        child = UUID(parent.payload["slots"]["audio"]["operation_id"])
+    await automatic_selection.run(child)
+    await quick_add.run(identifier)
+    latest = await client.get(f"/api/requests/quick-add/latest/{catalog['work']}")
+    assert latest.json()["status"] == "completed", latest.text
+    async with database() as db:
+        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 1

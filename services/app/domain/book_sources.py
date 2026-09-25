@@ -368,6 +368,44 @@ async def fail_worker(identifier, source, token, message):
         refresh_status(operation, payload)
 
 
+async def search_with_fallback(identifier, source, token, unit, state, payload, fetch, empty):
+    """Checkpoint bounded query relaxation, including across rate-limit retries.
+
+    Further pages choose the query using page one before fetching their offset;
+    an exhausted later page must not switch to a broader, unrelated result set.
+    """
+    queries = (
+        source_queries.book_queries(payload["work"], payload["query"])
+        if state.get("query_key", "book") == "book"
+        else [state["query"]]
+    )
+    offset = payload["offset"]
+    for index in range(state.get("query_index", 0), len(queries)):
+        query = queries[index]
+        if not await update_unit(
+            identifier,
+            source,
+            token,
+            unit,
+            {
+                "state": "running",
+                "query": query,
+                "query_index": index,
+                "message": "Searching" if index == 0 else f"Trying broader search: {query}",
+            },
+        ):
+            raise HTTPException(409, "Search is no longer current")
+        probe = offset and len(queries) > 1 and not state.get("query_selected")
+        result = await fetch(query, 0 if probe else offset)
+        if state.get("query_selected") or not empty(result[0]) or index == len(queries) - 1:
+            if probe and not empty(result[0]):
+                if not await update_unit(identifier, source, token, unit, {"query_selected": True}):
+                    raise HTTPException(409, "Search is no longer current")
+                result = await fetch(query, offset)
+            return result
+    raise HTTPException(409, "Invalid search checkpoint")
+
+
 async def run(identifier, source):
     if get_settings().recovery_mode:
         raise SourceSearchRetry(60)
@@ -429,15 +467,28 @@ async def run(identifier, source):
                     {"state": "running", "message": "Searching Soulseek"},
                 ):
                     return
-                releases, generation = await slskd_search(
-                    owner_id,
-                    {
-                        "q": payload["sources"][source].get("query", payload["query"]),
-                        "title": payload["work"]["title"],
-                        "authors": payload["work"]["authors"],
-                        "observed_at": datetime.now(UTC),
-                    },
-                    expected_generation=generation,
+
+                async def fetch_slskd(query, offset):
+                    return await slskd_search(
+                        owner_id,
+                        {
+                            "q": query,
+                            "title": payload["work"]["title"],
+                            "authors": payload["work"]["authors"],
+                            "observed_at": datetime.now(UTC),
+                        },
+                        expected_generation=generation,
+                    )
+
+                releases, generation = await search_with_fallback(
+                    identifier,
+                    source,
+                    token,
+                    source,
+                    payload["sources"][source],
+                    payload,
+                    fetch_slskd,
+                    lambda releases: not releases,
                 )
                 if not await update_unit(
                     identifier,
@@ -477,45 +528,54 @@ async def run(identifier, source):
                         {"state": "running", "message": "Searching " + SOURCE_NAMES[source]},
                     ):
                         return
-                    if source == "audiobookbay":
-                        if payload["medium"] == "ebook":
-                            await update_unit(
-                                identifier,
-                                source,
-                                token,
-                                unit,
-                                {
-                                    "state": "completed",
-                                    "message": "AudiobookBay supplies audiobooks only",
-                                    "has_more": False,
-                                },
-                                [],
-                                generation,
-                            )
-                            continue
-                        page, generation = await abb_call(
-                            owner_id,
-                            "search",
-                            ABBSearch(
-                                q=state.get("query", payload["query"]),
-                                page=payload["offset"] // 50 + 1,
-                            ),
-                            expected_generation=generation,
+                    if source == "audiobookbay" and payload["medium"] == "ebook":
+                        await update_unit(
+                            identifier,
+                            source,
+                            token,
+                            unit,
+                            {
+                                "state": "completed",
+                                "message": "AudiobookBay supplies audiobooks only",
+                                "has_more": False,
+                            },
+                            [],
+                            generation,
                         )
-                    else:
-                        page, generation = await source_call(
+                        continue
+
+                    async def fetch_native(query, offset, generation=generation):
+                        if source == "audiobookbay":
+                            return await abb_call(
+                                owner_id,
+                                "search",
+                                ABBSearch(q=query, page=offset // 50 + 1),
+                                expected_generation=generation,
+                            )
+                        return await source_call(
                             owner_id,
                             "search",
                             MAMSearch(
-                                q=state.get("query", payload["query"]),
+                                q=query,
                                 medium=payload["medium"],
                                 language_ids=[],
-                                offset=payload["offset"],
+                                offset=offset,
                                 limit=50,
                             ),
                             with_generation=True,
                             expected_generation=generation,
                         )
+
+                    page, generation = await search_with_fallback(
+                        identifier,
+                        source,
+                        token,
+                        unit,
+                        state,
+                        payload,
+                        fetch_native,
+                        lambda page: not page.items and not page.has_more,
+                    )
                     if not await update_unit(
                         identifier,
                         source,
@@ -603,17 +663,32 @@ async def run(identifier, source):
                         {"state": "running", "message": "Searching this indexer"},
                     ):
                         return
-                    batch, generation = await prowlarr_call(
-                        owner_id,
-                        "search",
-                        ProwlarrSearch(
-                            q=state.get("query", payload["query"]),
-                            medium=payload["medium"],
-                            indexer_id=state["indexer_id"],
-                            offset=payload["offset"],
-                            limit=50,
-                        ),
-                        expected_generation=generation,
+
+                    async def fetch_indexer(
+                        query, offset, generation=generation, indexer_id=state["indexer_id"]
+                    ):
+                        return await prowlarr_call(
+                            owner_id,
+                            "search",
+                            ProwlarrSearch(
+                                q=query,
+                                medium=payload["medium"],
+                                indexer_id=indexer_id,
+                                offset=offset,
+                                limit=50,
+                            ),
+                            expected_generation=generation,
+                        )
+
+                    batch, generation = await search_with_fallback(
+                        identifier,
+                        source,
+                        token,
+                        unit,
+                        state,
+                        payload,
+                        fetch_indexer,
+                        lambda batch: not batch.hits and not batch.returned_count,
                     )
                     await update_unit(
                         identifier,
