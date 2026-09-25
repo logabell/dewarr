@@ -44,7 +44,8 @@ def test_identifiers_are_namespaced_and_invalid_values_do_not_gain_identity():
         ("isbn", "9781234567897")
     }
     assert language_key("eng") == language_key("EN")
-    assert language_key("en-US") != language_key("en-GB")
+    assert language_key("en-US") == language_key("en-GB") == "en"
+    assert language_key("en-US") != language_key("de-DE")
 
 
 def test_epub_identifier_assertions_are_preserved_and_never_read_from_filenames(tmp_path):

@@ -356,7 +356,9 @@ def test_legacy_publication_fingerprints_remain_stable(specification, with_cover
             }
         )
     old = specification.model_dump(mode="json")
-    # Legacy eras predate source_kind and chapter merging; only the oldest predates artwork.
+    # Legacy eras predate separate journals, source_kind and chapter merging;
+    # only the oldest predates artwork.
+    old.pop("journal_root")
     old.pop("source_kind")
     old.pop("conversion")
     if not with_cover:

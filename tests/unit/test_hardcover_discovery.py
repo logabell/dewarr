@@ -40,7 +40,8 @@ async def test_trending_keeps_rank_and_batches_hydration_without_editions():
     assert "rating" in calls[1]["query"]
     assert [b.external_id for b in result.items] == [str(key) for key in range(21, 1, -1)]
     assert len(calls) == 2 and calls[0]["variables"] == {"offset": 20}
-    assert calls[1]["variables"]["ids"] == list(range(21, 1, -1))
+    # Hydration IDs are sorted for cache reuse; presentation retains provider rank.
+    assert calls[1]["variables"]["ids"] == list(range(2, 22))
 
 
 @pytest.mark.parametrize("value", [None, {}, [True], [1, 1], [-1], [2147483648], ["42"]])
@@ -243,7 +244,7 @@ async def test_related_suggestions_preserve_provider_order_and_exclude_the_seed(
     )
     result = await source.related("1")
     assert [b.external_id for b in result.items] == ["3", "2"]
-    assert calls[1]["variables"] == {"ids": [3, 2]}
+    assert calls[1]["variables"] == {"ids": [2, 3]}
 
 
 async def test_related_rejects_an_unknown_cached_similarity_shape():
