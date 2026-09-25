@@ -35,3 +35,28 @@ def test_linked_book_preserves_conflicting_file_metadata(facts):
         title="Project Hail Mary", authors=["Andy Weir"], language="en", metadata_fields={}
     )
     assert not agrees_with_request(work, {"title": work.title, "authors": work.authors}, facts)
+
+
+@pytest.mark.parametrize(
+    ("catalog_title", "release_title", "file_title", "expected"),
+    [
+        ("Atmosphere: A Love Story", "Atmosphere", "Atmosphere: A Love Story", True),
+        ("Atmosphere: A Love Story", "Atmosphere", "Atmosphere", True),
+        ("Atmosphere: A Love Story", "Atmosphere", "Atmosphere: Another Story", False),
+        ("Atmosphere: A Love Story", "Atmosphere: Another Story", "Atmosphere", False),
+        ("Atmosphere: A Love Story", "Atmosphere", "Atmosphere (1 of 2)", False),
+        ("Atmosphere: Volume Two", "Atmosphere", "Atmosphere", False),
+        ("Atmosphere: A Love Story", "Atmosphere", "Atmosphere: A Study Guide", False),
+    ],
+)
+def test_linked_download_accepts_omitted_subtitle_but_not_conflicting_content(
+    catalog_title, release_title, file_title, expected
+):
+    work = SimpleNamespace(
+        title=catalog_title, authors=["Taylor Jenkins Reid"], language="en", metadata_fields={}
+    )
+    facts = MatchEvidence(titles=[file_title], authors=[["taylor jenkins reid"]])
+    assert (
+        agrees_with_request(work, {"title": release_title, "authors": work.authors}, facts)
+        is expected
+    )

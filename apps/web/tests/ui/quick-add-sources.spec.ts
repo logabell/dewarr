@@ -124,6 +124,8 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   };
   const posted: Record<string, unknown>[] = [];
   let receipt: unknown = null;
+  let submitGate: Promise<void> | undefined;
+  let finishSubmit: (() => void) | undefined;
   const releaseDownloads: string[] = [];
   const wedgeChoices: Array<string | null> = [];
   let held = false;
@@ -147,6 +149,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
       data = { effective: profile.preferences };
     else if (path === "/api/requests/quick-add") {
       posted.push(route.request().postDataJSON());
+      await submitGate;
       receipt = {
         id: "quick-1",
         status: "completed",
@@ -251,7 +254,17 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     await route.fulfill({ json: data });
   });
   await page.goto("/books/work-1");
+  submitGate = new Promise<void>((resolve) => {
+    finishSubmit = resolve;
+  });
   await page.getByRole("button", { name: "Quick add", exact: true }).click();
+  const startingStatus = page.getByRole("region", {
+    name: "Quick add progress",
+  });
+  await expect(startingStatus).toContainText("Starting your request…");
+  await expect(startingStatus).toBeVisible();
+  finishSubmit!();
+  submitGate = undefined;
   await expect(page.getByText("Preferred downloads queued")).toBeVisible();
   expect(posted[0].specification).toEqual({});
   await page.getByLabel("Quick add format", { exact: true }).click();
@@ -277,9 +290,17 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await expect.poll(() => posted.length).toBe(2);
   expect(posted[1].specification).toEqual({ mode: "ebook" });
   await page.getByLabel("Quick add format", { exact: true }).click();
+  submitGate = new Promise<void>((resolve) => {
+    finishSubmit = resolve;
+  });
   await page.getByRole("button", { name: "Audiobook", exact: true }).click();
   await expect.poll(() => posted.length).toBe(3);
   expect(posted[2].specification).toEqual({ mode: "audio" });
+  await expect(startingStatus).toContainText("Starting audiobook request…");
+  await expect(startingStatus).not.toContainText("Preferred downloads queued");
+  finishSubmit!();
+  submitGate = undefined;
+  await expect(startingStatus).toContainText("Preferred downloads queued");
   await page.getByLabel("Quick add format", { exact: true }).click();
   await expect(page.locator(".quick-add-options button")).toHaveText([
     "Both",
@@ -359,6 +380,22 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     });
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
+  const heldReceipt = receipt;
+  submitGate = new Promise<void>((resolve) => {
+    finishSubmit = resolve;
+  });
+  await page.getByLabel("Quick add format", { exact: true }).click();
+  await page.getByRole("button", { name: "Audiobook", exact: true }).click();
+  await expect(quickStatus).toContainText("Starting audiobook request…");
+  await expect(quickStatus).not.toContainText("Request needs attention");
+  await expect(
+    quickStatus.getByRole("link", { name: "Review sources" }),
+  ).toHaveCount(0);
+  finishSubmit!();
+  submitGate = undefined;
+  await expect(quickStatus).toContainText("Preferred downloads queued");
+  receipt = heldReceipt;
+  await page.reload();
   await quickStatus.getByRole("link", { name: "Review sources" }).click();
   await expect(
     page.getByRole("heading", { name: "Prepare the best release" }),
@@ -680,9 +717,9 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Quick add", exact: true }).click();
-  await expect.poll(() => posted.length).toBe(5);
+  await expect.poll(() => posted.length).toBe(6);
   expect(imported).toBe(1);
-  expect(posted[4]).toEqual({ work_id: work.id, specification: {} });
+  expect(posted[5]).toEqual({ work_id: work.id, specification: {} });
   await expect(page.getByText("Preferred downloads queued")).toBeVisible();
   await page
     .getByRole("button", { name: "Search sources", exact: true })

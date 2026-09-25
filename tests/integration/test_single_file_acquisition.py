@@ -40,6 +40,7 @@ from app.db.models import (
     SourceConnection,
     User,
     Version,
+    Work,
     WorkMetadataSource,
 )
 from app.domain import download_attempts as downloads
@@ -88,6 +89,7 @@ pytestmark = pytest.mark.integration
         "automatic-provider-settings",
         "automatic-unmatched",
         "automatic-linked-audio",
+        "automatic-subtitle-audio",
         "automatic-linked-ebook",
         "automatic-language-alias",
         "automatic-manifest",
@@ -119,12 +121,19 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
         "automatic-provider-retry",
         "automatic-unmatched",
         "automatic-linked-audio",
+        "automatic-subtitle-audio",
         "automatic-linked-ebook",
         "automatic-language-alias",
     }
     medium = (
         "audio"
-        if handoff in {"automatic-audio", "automatic-provider-audio", "automatic-linked-audio"}
+        if handoff
+        in {
+            "automatic-audio",
+            "automatic-provider-audio",
+            "automatic-linked-audio",
+            "automatic-subtitle-audio",
+        }
         else "ebook"
     )
     name = "selected.mp3" if medium == "audio" else "selected.epub"
@@ -134,10 +143,18 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             source,
             tags={
                 "language": "en",
-                **({} if handoff == "automatic-linked-audio" else {"isbn": "9781234567897"}),
+                **(
+                    {}
+                    if handoff in {"automatic-linked-audio", "automatic-subtitle-audio"}
+                    else {"isbn": "9781234567897"}
+                ),
             },
         )
         seeded = await prepare_audio_route(client, database, route, old["work_id"], source)
+        if handoff == "automatic-subtitle-audio":
+            async with database() as db, db.begin():
+                work = await db.get(Work, UUID(old["work_id"]))
+                work.title = "First Harbor: A Love Story"
         if provider_mode:
             async with database() as db, db.begin():
                 await db.execute(
@@ -401,6 +418,7 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             if handoff in {
                 "automatic-unmatched",
                 "automatic-linked-audio",
+                "automatic-subtitle-audio",
                 "automatic-linked-ebook",
             }:
                 assert auto.evidence["linked_download"]["work_id"] == old["work_id"]

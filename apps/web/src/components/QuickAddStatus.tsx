@@ -5,15 +5,20 @@ import type { components } from "../api/schema";
 export default function QuickAddStatus({
   receipt,
   workId,
+  starting,
 }: {
-  receipt: components["schemas"]["QuickAddView"];
+  receipt?: components["schemas"]["QuickAddView"];
   workId?: string;
+  starting?: string;
 }) {
-  const active = ["queued", "running"].includes(receipt.status);
-  const held = ["held", "failed", "cancelled"].includes(receipt.status);
-  const checks = receipt.source_checks || [];
+  const active =
+    !!starting || ["queued", "running"].includes(receipt?.status || "");
+  const held =
+    !starting &&
+    ["held", "failed", "cancelled"].includes(receipt?.status || "");
+  const checks = receipt?.source_checks || [];
   const failure = [
-    receipt.message,
+    receipt?.message,
     ...checks.flatMap((check) => check.reasons),
   ].join(" ");
   const routeProblem =
@@ -26,19 +31,21 @@ export default function QuickAddStatus({
     /no (eligible|automatic|matching) release|no results|title and author/i.test(
       failure,
     );
-  const message = active
-    ? "Finding the best match using your saved preferences."
-    : routeProblem
-      ? "Check your download client and library folder settings, then try again."
-      : noMatch
-        ? "No matching download found for one or more requested formats. Your request is saved."
-        : held
-          ? "Open downloads to see what needs attention."
-          : receipt.message;
+  const message = starting
+    ? "Submitting your request. Search progress will appear here."
+    : active
+      ? "Finding the best match using your saved preferences."
+      : routeProblem
+        ? "Check your download client and library folder settings, then try again."
+        : noMatch
+          ? "No matching download found for one or more requested formats. Your request is saved."
+          : held
+            ? "Open downloads to see what needs attention."
+            : receipt?.message;
   const Icon = active ? LoaderCircle : held ? CircleAlert : CircleCheck;
   const slots = [...new Set(checks.map((check) => check.slot))];
   const context = new URLSearchParams({ tab: "sources" });
-  if (receipt.request_id) {
+  if (receipt?.request_id) {
     context.set("request", receipt.request_id);
     if (slots.length === 1) context.set("slot", slots[0]);
   }
@@ -59,11 +66,13 @@ export default function QuickAddStatus({
           className={active ? "source-download-spinner" : undefined}
         />
         <strong>
-          {active
-            ? "Finding your download"
-            : held
-              ? "Request needs attention"
-              : "Quick add complete"}
+          {starting
+            ? starting
+            : active
+              ? "Finding your download"
+              : held
+                ? "Request needs attention"
+                : "Quick add complete"}
         </strong>
       </div>
       <p>{message}</p>
@@ -80,7 +89,7 @@ export default function QuickAddStatus({
         )}
         <Link
           to={
-            receipt.request_id
+            receipt?.request_id
               ? `/requests#request-${receipt.request_id}`
               : "/requests"
           }

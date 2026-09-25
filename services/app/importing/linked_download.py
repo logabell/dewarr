@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from app.domain.catalog_titles import display_title
+from app.domain.catalog_titles import display_title, optional_subtitle_base
 from app.domain.identity import normalized
 from app.domain.work_graph import canonical_work
 from app.importing.file_editions import attach_file_edition
@@ -14,10 +14,11 @@ def agrees_with_request(work, release, facts):
     if facts.issues or work.metadata_fields.get("identity_rejected"):
         return False
     title = display_title(work.title)
+    titles = {title, display_title(optional_subtitle_base(work.title))}
     authors = sorted(normalized(name) for name in work.authors)
-    if not title or not authors or display_title(release.get("title", "")) != title:
+    if not title or not authors or display_title(release.get("title", "")) not in titles:
         return False
-    if any(display_title(value) != title for value in facts.titles):
+    if any(display_title(value) not in titles for value in facts.titles):
         return False
     if any(value != authors for value in facts.authors):
         return False

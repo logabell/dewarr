@@ -131,8 +131,18 @@ export default function QuickAdd({
   const missingPreference =
     (needsPreference || preferenceError) &&
     (preferenceUnset || !defaults.isSuccess);
-  const feedbackError =
-    (preferenceError ? null : add.error) || status.error || null;
+  const feedbackError = add.isPending
+    ? null
+    : (preferenceError ? null : add.error) || status.error || null;
+  const starting = add.isPending
+    ? add.variables === "audio"
+      ? "Starting audiobook request…"
+      : add.variables === "ebook"
+        ? "Starting ebook request…"
+        : add.variables === "both"
+          ? "Starting ebook and audiobook request…"
+          : "Starting your request…"
+    : undefined;
   const label =
     preference === "audio"
       ? "Audiobook"
@@ -161,7 +171,7 @@ export default function QuickAdd({
     return (
       <div
         ref={bind}
-        className={`cover-quick-add ${missingPreference || feedbackError || (engaged && status.data) ? "has-feedback" : ""}`}
+        className={`cover-quick-add ${starting || missingPreference || feedbackError || (engaged && status.data) ? "has-feedback" : ""}`}
         onMouseEnter={() => setEngaged(true)}
         onFocus={() => setEngaged(true)}
       >
@@ -219,23 +229,31 @@ export default function QuickAdd({
         ) : (
           <Notice error={feedbackError} />
         )}
-        {engaged && status.data && !missingPreference && (
+        {starting ? (
           <span className="cover-quick-status" role="status">
-            {["held", "failed"].includes(status.data.status)
-              ? "Request needs attention."
-              : status.data.message}{" "}
-            <Link
-              to={
-                id && ["held", "failed"].includes(status.data.status)
-                  ? `/books/${id}?tab=sources`
-                  : "/requests"
-              }
-            >
-              {id && ["held", "failed"].includes(status.data.status)
-                ? "Review sources"
-                : "View downloads"}
-            </Link>
+            {starting}
           </span>
+        ) : (
+          engaged &&
+          status.data &&
+          !missingPreference && (
+            <span className="cover-quick-status" role="status">
+              {["held", "failed"].includes(status.data.status)
+                ? "Request needs attention."
+                : status.data.message}{" "}
+              <Link
+                to={
+                  id && ["held", "failed"].includes(status.data.status)
+                    ? `/books/${id}?tab=sources`
+                    : "/requests"
+                }
+              >
+                {id && ["held", "failed"].includes(status.data.status)
+                  ? "Review sources"
+                  : "View downloads"}
+              </Link>
+            </span>
+          )
         )}
       </div>
     );
@@ -304,13 +322,17 @@ export default function QuickAdd({
       ) : (
         <>
           <Notice error={feedbackError} />
-          {add.error && (
+          {add.error && !add.isPending && (
             <Link to="/settings#preferences">Download preferences</Link>
           )}
         </>
       )}
-      {status.data && !missingPreference && (
-        <QuickAddStatus receipt={status.data} workId={id} />
+      {(starting || status.data) && !missingPreference && (
+        <QuickAddStatus
+          receipt={status.data || undefined}
+          workId={id}
+          starting={starting}
+        />
       )}
     </div>
   );
