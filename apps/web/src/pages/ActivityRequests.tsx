@@ -453,7 +453,16 @@ function RequestCover({ title, url }: { title: string; url?: string | null }) {
   return (
     <div className="request-cover" aria-hidden="true">
       {url && !failed ? (
-        <img src={url} alt="" onError={() => setFailed(true)} />
+        <img
+          src={
+            url.startsWith("https://")
+              ? `/api/catalog/cover-image?url=${encodeURIComponent(url)}`
+              : url
+          }
+          alt=""
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
       ) : (
         <span>{title}</span>
       )}
@@ -468,6 +477,7 @@ function targetActions(
   onTransfer: (attemptId: string, cancel: boolean) => void,
   onClaim: (target: Target) => void,
 ) {
+  if (target.state === "satisfied") return [];
   const qualify = (label: string) =>
     request.targets.length > 1
       ? `${label} · ${mediumLabel(target.slot)}`
@@ -583,7 +593,10 @@ function RequestCard({
       danger: true,
       onSelect: () => onDecide("declined", false),
     });
-  if (request.can_withdraw)
+  if (
+    request.can_withdraw &&
+    request.targets.some((target) => target.state !== "satisfied")
+  )
     for (const reason of request.reasons.filter((item) => item.active))
       menu.push({
         key: `withdraw-${reason.id}`,
@@ -627,6 +640,7 @@ function RequestCard({
             <td>
               <div className="request-book-cell">
                 <RequestCover
+                  key={request.cover_url}
                   title={request.work_title}
                   url={request.cover_url}
                 />

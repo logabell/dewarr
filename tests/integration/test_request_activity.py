@@ -40,6 +40,8 @@ async def test_active_filter_counts_before_paging_and_keeps_satisfied_requests(
 ):
     satisfied = (await request(client, body(catalog, "ebook")))["request"]
     mixed = (await request(client, body(catalog, "both")))["request"]
+    assert not satisfied["can_withdraw"]
+    assert mixed["can_withdraw"]
     newest = (await request(client, body(catalog, "audio")))["request"]
     await client.delete(f"/api/requests/{newest['id']}/reasons/{newest['reasons'][0]['id']}")
     first = (await client.get("/api/requests?active_only=true&limit=1")).json()

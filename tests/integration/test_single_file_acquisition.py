@@ -417,6 +417,17 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
         assert qbit.calls.count("submit") == 1
         activity = (await owner_client.get(f"/api/acquisition/downloads/{auto.attempt_id}")).json()
         assert activity["fulfillment"]["available_now"] and activity["inspection_id"] is None
+        fulfilled_request = (
+            await owner_client.get(f"/api/requests/{wanted['request']['id']}")
+        ).json()
+        assert not fulfilled_request["can_withdraw"]
+        fulfilled_target = fulfilled_request["targets"][0]
+        assert fulfilled_target["state"] == "satisfied"
+        assert fulfilled_target["can_view_download_history"]
+        assert not any(
+            fulfilled_target[capability]
+            for capability in ("can_recheck", "can_cancel", "can_repair", "needs_review")
+        )
         return
     if handoff:
         client = review_account[0]

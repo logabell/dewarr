@@ -593,6 +593,8 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
     ]
     owns = attempt.owner_id == user.id
     target.can_view_download_history = owns
+    if target.state == "satisfied":
+        return
     recovering = await db.scalar(
         select(DownloadRecovery.id).where(DownloadRecovery.attempt_id == attempt.id).limit(1)
     )
@@ -606,7 +608,7 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
         and (not attempt.next_check_at or attempt.next_check_at <= now)
     )
     target.can_repair = not recovering and await _can_repair(db, user, attempt, repair, now)
-    if target.state == "satisfied" or attempt.state != "complete":
+    if attempt.state != "complete":
         return
     queued = await db.scalar(
         select(DownloadAttempt.id).where(DownloadAttempt.id == attempt.id, _review_clause())
@@ -929,7 +931,8 @@ async def view(db, user, intent):
         can_open_book=can_open_book,
         can_decide=has(user, MANAGE_REQUESTS) and approval == "pending",
         can_start_download=can_start_download,
-        can_withdraw=intent.owner_id == user.id,
+        can_withdraw=intent.owner_id == user.id
+        and any(target.state != "satisfied" for target in targets),
         approval_status=approval,
         cover_url=cover_url,
         authors=authors,
