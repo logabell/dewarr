@@ -6,6 +6,7 @@ import { api, result, type Auth } from "../api/client";
 import { canStartDownload } from "../permissions";
 import { Notice } from "../components";
 import { randomUUID } from "../randomUUID";
+import QuickAddStatus from "./QuickAddStatus";
 
 type Mode = "both" | "ebook" | "audio" | undefined;
 const MISSING_MEDIA = "Choose media to request or set a default";
@@ -117,6 +118,12 @@ export default function QuickAdd({
   const busy =
     add.isPending ||
     !!(status.data && ["queued", "running"].includes(status.data.status));
+  useEffect(() => {
+    if (status.data && !["queued", "running"].includes(status.data.status)) {
+      for (const name of ["requests", "activity", "downloads", "book-sources"])
+        void cache.invalidateQueries({ queryKey: [name] });
+    }
+  }, [cache, status.data?.id, status.data?.status]);
   const preference = defaults.data?.effective.desired_media;
   const preferenceUnset = defaults.isSuccess && preference == null;
   const [needsPreference, setNeedsPreference] = useState(false);
@@ -214,7 +221,20 @@ export default function QuickAdd({
         )}
         {engaged && status.data && !missingPreference && (
           <span className="cover-quick-status" role="status">
-            {status.data.message} <Link to="/requests">View downloads</Link>
+            {["held", "failed"].includes(status.data.status)
+              ? "Request needs attention."
+              : status.data.message}{" "}
+            <Link
+              to={
+                id && ["held", "failed"].includes(status.data.status)
+                  ? `/books/${id}?tab=sources`
+                  : "/requests"
+              }
+            >
+              {id && ["held", "failed"].includes(status.data.status)
+                ? "Review sources"
+                : "View downloads"}
+            </Link>
           </span>
         )}
       </div>
@@ -289,17 +309,8 @@ export default function QuickAdd({
           )}
         </>
       )}
-      {status.data && (
-        <div className="quick-add-status" role="status">
-          <span>{status.data.message}</span>{" "}
-          <Link to="/requests">View downloads</Link>
-          {status.data.status === "held" && id && (
-            <>
-              {" "}
-              · <Link to={`/books/${id}?tab=sources`}>Review sources</Link>
-            </>
-          )}
-        </div>
+      {status.data && !missingPreference && (
+        <QuickAddStatus receipt={status.data} workId={id} />
       )}
     </div>
   );

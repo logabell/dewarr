@@ -377,6 +377,30 @@ def identifier_values(value):
     )
 
 
+def indexer_title_identity(release, work):
+    """An exact author/title pair can supply the missing structured indexer fields.
+
+    Only remove explicit media labels. Extra titles, archive/repair filenames,
+    partial releases and conflicting structured authors still require review.
+    """
+    if release.source != "prowlarr" or release.authors:
+        return False
+    title = re.sub(
+        r"\[(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)\]",
+        " ",
+        release.title,
+        flags=re.I,
+    )
+    title = re.sub(r"\.(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)$", "", title, flags=re.I)
+    actual = normalized(title)
+    expected = normalized(parse_title_labels(work["title"]).title)
+    return bool(expected) and any(
+        actual in {f"{author} {expected}", f"{expected} {author}", f"{expected} by {author}"}
+        for value in work["authors"]
+        if (author := normalized(value))
+    )
+
+
 def assess_release(release, work, preferences, medium="all"):
     raw, part, dramatized = release_labels(getattr(release, "title", release.raw_title))
     title, expected = normalized(raw), normalized(parse_title_labels(work["title"]).title)
@@ -386,7 +410,8 @@ def assess_release(release, work, preferences, medium="all"):
     same_edition = bool(known & identifier_values(getattr(release, "isbn", None)))
     identity = (
         "corroborated"
-        if (title == expected or same_edition) and authors & work_authors
+        if ((title == expected or same_edition) and authors & work_authors)
+        or indexer_title_identity(release, work)
         else "possible"
         if title == expected or same_edition or (expected and expected in title)
         else "unmatched"

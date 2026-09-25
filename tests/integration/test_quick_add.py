@@ -110,6 +110,78 @@ async def test_quick_add_inherits_preferences_and_downloads_once(
     assert latest.json()["status"] == "completed"
 
 
+async def test_quick_add_uses_torrent_default_despite_legacy_usenet_primary(
+    client, database, authorized, catalog
+):
+    async with database() as db, db.begin():
+        other = Integration(
+            name="Usenet",
+            kind="sabnzbd",
+            base_url="http://unused.invalid",
+            encrypted_secrets="unused",
+            config={"save_path": "/not-mapped", "mappings": []},
+            status="connected",
+            enabled=True,
+        )
+        db.add(other)
+        await db.flush()
+        other_id = str(other.id)
+    await defaults(client, authorized, downloader_id=other_id)
+    response = await add(client, catalog["work"])
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    async with database() as db:
+        operation = await db.get(Operation, identifier)
+        assert operation.payload["routes"]["downloader_id"] == authorized["body"]["downloader_id"]
+    await complete_search(database, identifier, authorized)
+    await quick_add.run(identifier)
+    async with database() as db:
+        operation = await db.get(Operation, identifier)
+        child_id = UUID(operation.payload["slots"]["audio"]["operation_id"])
+    await automatic_selection.run(child_id)
+    await quick_add.run(identifier)
+    receipt = (await client.get(f"/api/requests/quick-add/latest/{catalog['work']}")).json()
+    assert receipt["status"] == "completed", receipt
+    assert receipt["request_id"]
+    assert receipt["source_checks"][0]["source"] == "MAM"
+    assert receipt["source_checks"][0]["status"] == "completed"
+
+
+async def test_quick_add_feedback_explains_older_candidate_rejections(
+    client, database, authorized, catalog
+):
+    await defaults(client, authorized)
+    response = await add(client, catalog["work"])
+    identifier = UUID(response.json()["id"])
+    await complete_search(database, identifier, authorized)
+    await quick_add.run(identifier)
+    async with database() as db, db.begin():
+        operation = await db.get(Operation, identifier)
+        child = await db.get(Operation, UUID(operation.payload["slots"]["audio"]["operation_id"]))
+        child.status = "held"
+        child.message = "No eligible release found within this page and inspection budget"
+        child.payload = {
+            **child.payload,
+            "decisions": [
+                {
+                    "result_id": str(authorized["result"]),
+                    "reasons": ["No ready torrent download route"],
+                    "inspected": True,
+                }
+            ],
+            "inspected": [str(authorized["result"])],
+        }
+    await quick_add.run(identifier)
+    receipt = (await client.get(f"/api/requests/quick-add/latest/{catalog['work']}")).json()
+    assert receipt["status"] == "held"
+    check = receipt["source_checks"][0]
+    assert check["source"] == "MAM" and check["slot"] == "audio"
+    assert check["reasons"] == ["No ready torrent download route"]
+    assert check["candidates"] == 1
+    assert "No ready torrent download route" in check["message"]
+    assert "inspection budget" not in check["message"]
+
+
 async def test_quick_add_explicit_medium_overrides_default_without_changing_it(
     client, database, authorized, catalog
 ):

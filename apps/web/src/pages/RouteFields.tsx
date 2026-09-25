@@ -51,9 +51,9 @@ export function primaryDownloaderPreference(
 ) {
   return (
     preferences?.torrent_downloader_id ||
+    protocolPreference(preferences, "torrent", downloaders) ||
     preferences?.downloader_id ||
     preferences?.usenet_downloader_id ||
-    protocolPreference(preferences, "torrent", downloaders) ||
     protocolPreference(preferences, "nzb", downloaders) ||
     chooseRoute(downloaders.filter((item) => item.protocol === "soulseek"))?.id
   );

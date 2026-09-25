@@ -1,10 +1,10 @@
 import { useId, useState } from "react";
 import { ReleaseDescription, ReleaseMediaInfo } from "./ReleaseContent";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Download, ExternalLink } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ExternalLink } from "lucide-react";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
-import { Notice } from "../components";
+import SourceReleaseDownload from "./SourceReleaseDownload";
 import { transferSize } from "../pages/DownloadConstraints";
 import BookDialog from "./BookDialog";
 
@@ -27,7 +27,6 @@ export default function SourceReleaseDetails({
   searchId,
   rank,
   close,
-  onInspect,
   disabled,
   canAcquire,
 }: {
@@ -35,7 +34,6 @@ export default function SourceReleaseDetails({
   searchId: string;
   rank: number;
   close: () => void;
-  onInspect: () => void;
   disabled: boolean;
   canAcquire: boolean;
 }) {
@@ -56,28 +54,6 @@ export default function SourceReleaseDetails({
     retry: false,
   });
   const release = detail.data || original;
-  const save = useMutation({
-    mutationFn: async () => {
-      const artifact = result(
-        await api.POST(
-          "/api/source-searches/{search_id}/results/{result_id}/artifact",
-          { params: { path: { search_id: searchId, result_id: item.id } } },
-        ),
-      );
-      const download = await api.GET(
-        "/api/source-artifacts/{artifact_id}/torrent",
-        { params: { path: { artifact_id: artifact.id } }, parseAs: "blob" },
-      );
-      if (!download.response.ok)
-        throw new Error("Could not save torrent. Try again.");
-      const url = URL.createObjectURL(download.data as Blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `release-${release.source_id}.torrent`;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    },
-  });
   const mam = release.source === "mam" ? release : null;
   return (
     <BookDialog
@@ -99,22 +75,19 @@ export default function SourceReleaseDetails({
         </p>
         <div className="release-detail-actions">
           {canAcquire && (
-            <>
-              <button
-                className="primary"
-                disabled={disabled || save.isPending}
-                onClick={onInspect}
-              >
-                Inspect this release
-              </button>
-              <button
-                disabled={disabled || save.isPending}
-                onClick={() => save.mutate()}
-              >
-                <Download size={16} />
-                {save.isPending ? "Saving…" : "Save torrent"}
-              </button>
-            </>
+            <SourceReleaseDownload
+              searchId={searchId}
+              resultId={item.id}
+              title={release.title}
+              disabled={disabled}
+              download={item.download}
+              showLabel
+              offerWedge={
+                original.source === "mam" &&
+                !original.freeleech &&
+                !original.personal_freeleech
+              }
+            />
           )}
           {mam && (
             <a
@@ -126,7 +99,6 @@ export default function SourceReleaseDetails({
             </a>
           )}
         </div>
-        <Notice error={save.error} />
         {detail.isFetching && (
           <p className="muted" role="status">
             Loading full source details…

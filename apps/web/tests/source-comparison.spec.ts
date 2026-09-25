@@ -162,7 +162,7 @@ test("release view sorting and filters compare every loaded result without chang
     await expect(
       page
         .getByRole("dialog")
-        .getByRole("button", { name: "Inspect this release" }),
+        .getByRole("button", { name: /^Download / }),
     ).toBeDisabled();
     await page.keyboard.press("Escape");
   }
@@ -197,9 +197,7 @@ test("release view sorting and filters compare every loaded result without chang
     .getByRole("button", { name: /^Details for/ })
     .click();
   await expect(
-    page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Inspect this release" }),
+    page.getByRole("dialog").getByRole("button", { name: /^Download / }),
   ).toBeDisabled();
   expect(writes).toEqual([]);
   expect(errors).toEqual([]);

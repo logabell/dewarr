@@ -10,6 +10,7 @@ from sqlalchemy.orm import aliased
 
 from app.api.dependencies import CurrentUser, Database, Member
 from app.api.operations import OperationView
+from app.api.quick_add_feedback import QuickAddView, quick_add_view
 from app.db.models import (
     AcquisitionIntent,
     AcquisitionReason,
@@ -906,7 +907,7 @@ class QuickAddInput(BaseModel):
     specification: RequestOptions = Field(default_factory=RequestOptions)
 
 
-@router.post("/quick-add", response_model=OperationView, status_code=202)
+@router.post("/quick-add", response_model=QuickAddView, status_code=202)
 async def quick_add(
     body: QuickAddInput,
     user: Member,
@@ -918,12 +919,12 @@ async def quick_add(
     operation = await begin(db, user, body.work_id, body.specification, idempotency_key)
     await db.flush()
     await db.refresh(operation)
-    response = OperationView.model_validate(operation)
+    response = await quick_add_view(db, operation)
     await db.commit()
     return response
 
 
-@router.get("/quick-add/latest/{work_id}", response_model=OperationView | None)
+@router.get("/quick-add/latest/{work_id}", response_model=QuickAddView | None)
 async def latest_quick_add(work_id: UUID, user: Member, db: Database):
     from app.domain.quick_add import KIND, repair
 
@@ -942,7 +943,7 @@ async def latest_quick_add(work_id: UUID, user: Member, db: Database):
         await repair(db, operation)
         await db.commit()
         await db.refresh(operation)
-        return OperationView.model_validate(operation)
+        return await quick_add_view(db, operation)
     return None
 
 

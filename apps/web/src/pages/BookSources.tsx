@@ -5,16 +5,14 @@ import SourceReleaseDetails, {
   ReleaseTags,
 } from "../components/SourceReleaseDetails";
 import { transferSize } from "./DownloadConstraints";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { api, result, type Auth } from "../api/client";
 import { canStartDownload } from "../permissions";
 import type { components } from "../api/schema";
 import { Notice } from "../components";
 import { randomUUID } from "../randomUUID";
-
-const AutomaticSelection = lazy(() => import("./AutomaticSelection"));
 
 function useCanDownloadRelease() {
   const { data: session } = useQuery<Auth | null>({
@@ -41,7 +39,6 @@ export default function BookSources({
 }) {
   const cache = useQueryClient();
   const canDownload = useCanDownloadRelease();
-  const navigate = useNavigate();
   const [params] = useSearchParams();
   const [q, setQ] = useState(work.title.slice(0, 300));
   const [medium, setMedium] = useState("all");
@@ -154,53 +151,14 @@ export default function BookSources({
     request.isSuccess,
     begin,
   ]);
-  const inspect = useMutation({
-    mutationFn: async (id: string) =>
-      result(
-        await api.POST(
-          "/api/source-searches/{search_id}/results/{result_id}/artifact",
-          { params: { path: { search_id: search.data!.id, result_id: id } } },
-        ),
-      ),
-    onSuccess: (artifact) => {
-      const context = new URLSearchParams({
-        work: work.id,
-        search: search.data!.id,
-      });
-      if (search.data?.profile.id) {
-        context.set("profile", search.data.profile.id);
-        context.set(
-          "profile_generation",
-          String(search.data.profile.generation),
-        );
-      }
-      if (search.data?.profile.effective_revision)
-        context.set(
-          "profile_effective_revision",
-          search.data.profile.base_effective_revision ||
-            search.data.profile.effective_revision,
-        );
-      for (const field of ["request", "slot"])
-        if (params.get(field)) context.set(field, params.get(field)!);
-      navigate(`/sources/artifacts/${artifact.id}?${context}`);
-    },
-  });
   const busy =
-    begin.isPending ||
-    inspect.isPending ||
-    (search.data && search.data.status !== "completed");
+    begin.isPending || (search.data && search.data.status !== "completed");
   const data =
     !requestId || search.data?.request_id === requestId ? search.data : null;
   return (
     <section className="book-sources" aria-label="Book download sources">
       <Notice
-        error={
-          search.error ||
-          profiles.error ||
-          request.error ||
-          begin.error ||
-          inspect.error
-        }
+        error={search.error || profiles.error || request.error || begin.error}
       />
       <form
         className="source-search-toolbar compact-source-search"
@@ -247,26 +205,17 @@ export default function BookSources({
         <Results
           key={data.id}
           data={data}
-          inspecting={inspect.isPending}
           canAcquire={canAcquire}
           canDownload={canDownload}
-          onInspect={(id) => inspect.mutate(id)}
+          refreshing={
+            !!busy || !profiles.data || (!!requestId && !request.isSuccess)
+          }
+          onRefresh={() => {
+            key.current = randomUUID();
+            begin.mutate(0);
+          }}
         />
       )}
-      {data &&
-        canAcquire &&
-        canDownload(params.get("slot") || undefined) &&
-        params.get("request") &&
-        ["ebook", "audio", "either"].includes(params.get("slot") || "") && (
-          <Suspense fallback={<p>Loading release preparation…</p>}>
-            <AutomaticSelection
-              key={`${params.get("request")}:${params.get("slot")}`}
-              search={data}
-              requestId={params.get("request")!}
-              slot={params.get("slot")!}
-            />
-          </Suspense>
-        )}
       {data?.sources.some((source) => source.has_more) && (
         <button
           disabled={!!busy || data.offset >= 10000}
@@ -284,17 +233,42 @@ export default function BookSources({
 
 function Results({
   data,
-  inspecting,
   canAcquire,
   canDownload,
-  onInspect,
+  refreshing,
+  onRefresh,
 }: {
   data: Search;
-  inspecting: boolean;
   canAcquire: boolean;
   canDownload: (medium?: string | null) => boolean;
-  onInspect: (id: string) => void;
+  refreshing: boolean;
+  onRefresh: () => void;
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const next = Math.min(
+      ...[data.expires_at, ...data.items.map((item) => item.expires_at)]
+        .map(Date.parse)
+        .filter((expiry) => expiry > now),
+    );
+    if (!Number.isFinite(next)) return;
+    const timer = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.min(Math.max(0, next - Date.now()) + 1, 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [data, now]);
+  const unavailableReason = (item: Search["items"][number]) =>
+    data.stale_identity
+      ? "Book details changed"
+      : Date.parse(item.expires_at) <= now
+        ? "Search result expired"
+        : !item.current_connection
+          ? "Source settings changed"
+          : null;
+  const expired = Date.parse(data.expires_at) <= now;
+  const needsRefresh =
+    expired || data.items.some((item) => unavailableReason(item));
   const [pageIndex, setPageIndex] = useState(0);
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailIndex = data.items.findIndex((item) => item.id === detailId);
@@ -329,7 +303,7 @@ function Results({
                 (value) => value.toLowerCase() === format,
               ))) &&
         (!hideBlocked ||
-          (item.current_connection && !item.assessment.blocked.length)) &&
+          (!unavailableReason(item) && !item.assessment.blocked.length)) &&
         (!needle ||
           [
             release.title,
@@ -378,7 +352,7 @@ function Results({
           Connect a download source in Settings to find releases.
         </p>
       )}
-      {data.status === "completed" && !data.items.length && (
+      {data.status === "completed" && !data.items.length && !expired && (
         <p className="notice">No releases found. Try a different search.</p>
       )}
       {data.stale_identity && (
@@ -386,6 +360,25 @@ function Results({
           The catalog identity or series evidence changed. Refresh the search
           before inspecting a result.
         </p>
+      )}
+      {needsRefresh && !data.stale_identity && (
+        <div className="source-refresh-notice" role="status">
+          <div>
+            <strong>
+              {expired
+                ? "Search results expired"
+                : "Some results need refreshing"}
+            </strong>
+            <p>
+              {expired
+                ? "Search results are kept for 25 minutes. Connection health is separate; refresh to get current download links."
+                : "A result expired or its source settings changed. Refresh to get current download links."}
+            </p>
+          </div>
+          <button disabled={refreshing} onClick={onRefresh}>
+            {refreshing ? "Refreshing…" : "Refresh results"}
+          </button>
+        </div>
       )}
       {data.items.length > 0 && (
         <section
@@ -540,8 +533,8 @@ function Results({
                     </button>
                     <small>
                       {sourceName(item.release)} · #{rank + 1}
-                      {!item.current_connection
-                        ? " · Expired"
+                      {unavailableReason(item)
+                        ? ` · ${unavailableReason(item)}`
                         : item.assessment.blocked.length
                           ? " · Blocked"
                           : ""}
@@ -601,12 +594,14 @@ function Results({
                             !item.release.personal_freeleech
                           }
                           disabled={
-                            inspecting ||
                             data.status !== "completed" ||
-                            data.stale_identity ||
-                            !item.current_connection ||
-                            item.assessment.blocked.length > 0 ||
-                            Date.parse(item.expires_at) <= Date.now()
+                            !!unavailableReason(item) ||
+                            item.assessment.blocked.length > 0
+                          }
+                          disabledReason={
+                            unavailableReason(item)
+                              ? `${unavailableReason(item)}. Refresh results to download.`
+                              : undefined
                           }
                         />
                       )}
@@ -625,11 +620,8 @@ function Results({
           searchId={data.id}
           close={() => setDetailId(null)}
           canAcquire={canAcquire && canDownload(detailItem.release.medium)}
-          onInspect={() => onInspect(detailItem.id)}
           disabled={
-            inspecting ||
-            data.stale_identity ||
-            !detailItem.current_connection ||
+            !!unavailableReason(detailItem) ||
             detailItem.assessment.blocked.length > 0
           }
         />
@@ -637,7 +629,7 @@ function Results({
       <InfiniteScroll
         query={{
           hasNextPage: visibleCount < filtered.length,
-          isFetching: inspecting,
+          isFetching: refreshing,
           isFetchNextPageError: false,
           fetchNextPage: async () => setPageIndex((n) => n + 1),
         }}

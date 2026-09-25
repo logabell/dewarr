@@ -78,6 +78,7 @@ async def inherit(db, user, spec, profile, options, *, include_fallback=True):
         # unless it is the only saved downloader.
         downloader_id = (
             preferences.torrent_downloader_id
+            or await protocol_default(db, preferences, "torrent")
             or preferences.downloader_id
             or preferences.usenet_downloader_id
         )

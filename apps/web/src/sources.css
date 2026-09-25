@@ -102,12 +102,58 @@
   margin: 0;
 }
 .quick-add-status {
+  width: 100%;
   max-width: 38rem;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel, #1c2738);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.quick-add-status[data-tone="review"] {
+  border-inline-start-color: #d5ab68;
+}
+.quick-add-status-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.quick-add-status-heading svg {
+  flex: none;
+}
+.quick-add-status p {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+.quick-add-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 10px;
 }
 .quick-add-status a {
   white-space: nowrap;
+}
+.source-refresh-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.source-refresh-notice > div {
+  flex: 1 1 260px;
+}
+.source-refresh-notice p {
+  margin: 4px 0 0;
+  color: var(--muted);
 }
 .book-sources > h2 {
   margin-bottom: 4px;

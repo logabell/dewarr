@@ -25,6 +25,44 @@ from tests.torrent_fixture import torrent_bytes
 WORK = {"title": "Harbor", "authors": ["Writer"]}
 
 
+@pytest.mark.parametrize(
+    ("title", "authors", "expected"),
+    [
+        ("[M4B] Andy Weir-Project Hail Mary", [], "corroborated"),
+        ("Andy Weir - Project Hail Mary", [], "corroborated"),
+        ("Project.Hail.Mary.by.Andy.Weir", [], "corroborated"),
+        ("Project Hail Mary - Andy Weir.m4b", [], "corroborated"),
+        ("Project Hail Mary", [], "possible"),
+        ("Andy Weir - Project Hail Mary.par2", [], "possible"),
+        ("Andy Weir - Project Hail Mary.part01.rar", [], "possible"),
+        ("Andy Weir - Project Hail Mary sample", [], "possible"),
+        ("Andy Weir - Project Hail Mary and The Martian", [], "possible"),
+        ("[M4B] Andy Weir-Project Hail Mary", ["Other Writer"], "unmatched"),
+    ],
+)
+def test_indexer_exact_author_title_pair_can_replace_missing_structured_fields(
+    title, authors, expected
+):
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    candidate = ProwlarrRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        authors=authors,
+        medium="audio",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+    assessment = assess_release(
+        candidate, {"title": "Project Hail Mary", "authors": ["Andy Weir"]}, ReleasePreferences()
+    )
+    assert assessment.identity == expected
+
+
 def test_builtin_ebook_format_preference_order():
     assert ReleasePreferences().ebook_formats == [
         "epub",

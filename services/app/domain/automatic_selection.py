@@ -758,12 +758,12 @@ async def run(identifier):
         operation.payload = payload
         if not possible:
             from app.domain.release_download_status import selection_feedback
+            from app.domain.selection_feedback import no_release_message
 
             message = (
                 "This release could not be downloaded. Inspect its details or refresh sources."
                 if body.result_id
-                else "No eligible release found within this page and inspection budget; "
-                "review candidate reasons or refresh results"
+                else no_release_message(payload)
             )
             finish(operation, "held", message)
             operation.message = selection_feedback(operation)[0]

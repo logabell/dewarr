@@ -70,12 +70,14 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   const search = {
     id: "search-1",
     work_id: work.id,
+    request_id: "request-1",
     query: work.title,
     medium: "all",
     offset: 0,
     status: "completed",
     message: "Search complete",
     stale_identity: false,
+    expires_at: new Date(Date.now() + 25 * 60_000).toISOString(),
     profile,
     sources: [
       {
@@ -91,6 +93,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
         id: "result-1",
         release: { ...release, freeleech: false, personal_freeleech: false },
         current_connection: true,
+        expires_at: new Date(Date.now() + 25 * 60_000).toISOString(),
         assessment: {
           blocked: [],
           review: [],
@@ -110,6 +113,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
           vip: false,
         },
         current_connection: true,
+        expires_at: new Date(Date.now() + 25 * 60_000).toISOString(),
         assessment: {
           blocked: ["Fixture blocked release"],
           review: [],
@@ -123,6 +127,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   const releaseDownloads: string[] = [];
   const wedgeChoices: Array<string | null> = [];
   let held = false;
+  let refreshes = 0;
   let savedDownload: Record<string, unknown> | null = null;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -149,6 +154,8 @@ test("Quick add follows defaults and format overrides; sources provide compact r
       };
       data = receipt;
     } else if (path.includes("/quick-add/latest/")) data = receipt;
+    else if (path === "/api/requests/request-1")
+      data = { id: "request-1", release_policy: profile };
     else if (path === "/api/catalog/works/work-1") data = work;
     else if (path === "/api/metadata/works/work-1")
       data = {
@@ -162,7 +169,16 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     else if (path === "/api/acquisition/profiles") data = [profile];
     else if (path === "/api/library/libraries") data = [];
     else if (path === "/api/sources/prowlarr/indexers") data = [];
-    else if (path.endsWith("/source-searches/latest"))
+    else if (path === "/api/catalog/works/work-1/source-searches") {
+      refreshes++;
+      search.id = `search-refreshed-${refreshes}`;
+      search.expires_at = new Date(Date.now() + 60 * 60_000).toISOString();
+      search.items.forEach((item) => {
+        item.expires_at = search.expires_at;
+        item.current_connection = true;
+      });
+      data = search;
+    } else if (path.endsWith("/source-searches/latest"))
       data = {
         ...search,
         items: search.items.map((item) => ({
@@ -188,6 +204,18 @@ test("Quick add follows defaults and format overrides; sources provide compact r
         message: "Preparing selected release",
       };
     } else if (path === "/api/acquisition/automatic-selections/selected-1") {
+      savedDownload = {
+        state: held ? "failed" : "queued",
+        message: held
+          ? "The release language does not match this request"
+          : "Selected release download started",
+        request_id: "request-1",
+        operation_id: "selected-1",
+        reasons: held
+          ? ["The release language does not match this request"]
+          : [],
+        prevent_download: !held,
+      };
       data = {
         id: "selected-1",
         status: held ? "held" : "completed",
@@ -261,7 +289,89 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await page.getByRole("button", { name: "Both", exact: true }).click();
   await expect.poll(() => posted.length).toBe(4);
   expect(posted[3].specification).toEqual({ mode: "both" });
-  await page.getByRole("link", { name: "Search sources", exact: true }).click();
+  receipt = {
+    id: "quick-1",
+    status: "running",
+    message: "Searching MAM",
+    source_checks: [],
+  };
+  await page.reload();
+  const quickStatus = page.getByRole("region", { name: "Quick add progress" });
+  await expect(quickStatus).toContainText("Finding your download");
+  await expect(quickStatus).toContainText(
+    "Finding the best match using your saved preferences.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Adding…", exact: true }),
+  ).toBeDisabled();
+  receipt = {
+    id: "quick-1",
+    status: "held",
+    request_id: "request-1",
+    message:
+      "Audiobook: Request added. No automatic release was found. MAM: No eligible release found within this page and inspection budget",
+    source_checks: [
+      {
+        slot: "audio",
+        source: "MAM",
+        status: "held",
+        candidates: 7,
+        inspected: 5,
+        message:
+          "No ready torrent download route. Check your torrent client and import destination.",
+        reasons: ["No ready torrent download route"],
+      },
+      {
+        slot: "audio",
+        source: "Prowlarr indexers",
+        status: "held",
+        candidates: 8,
+        inspected: 0,
+        message: "The source must corroborate the catalog title and author",
+        reasons: ["The source must corroborate the catalog title and author"],
+      },
+    ],
+  };
+  await expect(quickStatus).toContainText("Request needs attention");
+  await expect(quickStatus).not.toContainText("inspection budget");
+  await expect(quickStatus).not.toContainText("Source checks");
+  await expect(quickStatus).not.toContainText("inspected");
+  await expect(quickStatus).toContainText(
+    "Check your download client and library folder settings",
+  );
+  await expect(
+    quickStatus.getByRole("link", { name: "Check download settings" }),
+  ).toHaveAttribute("href", "/settings#downloaders");
+  await expect(
+    quickStatus.getByRole("link", { name: "Review sources" }),
+  ).toHaveAttribute(
+    "href",
+    "/books/work-1?tab=sources&request=request-1&slot=audio",
+  );
+  for (const width of [1236, 390]) {
+    await page.setViewportSize({ width, height: 930 });
+    const box = (await quickStatus.boundingBox())!;
+    expect(box.width).toBeGreaterThan(220);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path: testInfo.outputPath(`quick-add-held-${width}.png`),
+      fullPage: true,
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await quickStatus.getByRole("link", { name: "Review sources" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Prepare the best release" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Prepare best eligible release" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Candidate decisions", { exact: false }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Choose a verified torrent downloader", { exact: false }),
+  ).toHaveCount(0);
   await expect(page).toHaveURL(/tab=sources/);
   const table = page.getByRole("table");
   await expect(table.getByRole("row")).toHaveCount(3);
@@ -334,11 +444,16 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     path: testInfo.outputPath("release-details-desktop.png"),
     fullPage: true,
   });
-  const download = page.waitForEvent("download");
-  await dialog
-    .getByRole("button", { name: "Save torrent", exact: true })
-    .click();
-  expect((await download).suggestedFilename()).toBe("release-720129.torrent");
+  await expect(
+    dialog.getByRole("button", { name: "Inspect this release" }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save torrent" }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Download Project Hail Mary" }),
+  ).toBeDisabled();
+  expect(releaseDownloads).toHaveLength(1);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(details).toBeFocused();
@@ -347,10 +462,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     .nth(1)
     .click();
   await expect(
-    dialog.getByRole("button", { name: "Inspect this release" }),
-  ).toBeDisabled();
-  await expect(
-    dialog.getByRole("button", { name: "Save torrent" }),
+    dialog.getByRole("button", { name: "Download Project Hail Mary" }),
   ).toBeDisabled();
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
@@ -376,9 +488,20 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   ).toBe(true);
   await page.keyboard.press("Escape");
   held = true;
+  savedDownload = null;
   search.items[0].release.freeleech = true;
   await page.reload();
-  await sourceDownload.first().click();
+  await details.click();
+  await dialog
+    .getByRole("button", { name: "Download Project Hail Mary" })
+    .click();
+  await expect(dialog).toContainText("Download not started");
+  expect(releaseDownloads).toEqual([
+    "/api/source-searches/search-1/results/result-1/download",
+    "/api/source-searches/search-1/results/result-1/download",
+  ]);
+  expect(wedgeChoices).toEqual(["true", null]);
+  await page.keyboard.press("Escape");
   const feedback = table.locator(".source-download-message").first();
   await expect(feedback).toContainText("Download not started");
   await expect(feedback).toHaveAttribute("role", "alert");
@@ -466,6 +589,49 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await page.setViewportSize({ width: 390, height: 844 });
   expect(releaseDownloads).toHaveLength(downloadCount);
   savedDownload = null;
+  const expiry = new Date(
+    (await page.evaluate(() => Date.now())) + 60_000,
+  ).toISOString();
+  search.expires_at = expiry;
+  search.items.forEach((item) => {
+    item.expires_at = expiry;
+  });
+  await page.reload();
+  await expect(sourceDownload.first()).toBeEnabled();
+  await page.clock.fastForward(61_000);
+  await expect(sourceDownload.first()).toBeDisabled();
+  await expect(
+    page.getByText("Search results expired", { exact: true }),
+  ).toBeVisible();
+  await expect(sourceDownload.first()).toHaveAttribute(
+    "title",
+    "Search result expired. Refresh results to download.",
+  );
+  await page
+    .getByRole("checkbox", { name: "Hide blocked or expired results" })
+    .check();
+  await expect(table).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Refresh results", exact: true })
+    .click();
+  await expect.poll(() => refreshes).toBe(1);
+  await expect(sourceDownload.first()).toBeEnabled();
+  await expect(
+    page.getByText("Search results expired", { exact: true }),
+  ).toHaveCount(0);
+  search.items[0].current_connection = false;
+  await page.reload();
+  await expect(table).toContainText("Source settings changed");
+  await expect(table).not.toContainText("Search result expired");
+  await expect(sourceDownload.first()).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Refresh results", exact: true })
+    .click();
+  await expect(sourceDownload.first()).toBeEnabled();
+  await page.screenshot({
+    path: testInfo.outputPath("sources-refreshed.png"),
+    fullPage: true,
+  });
   search.items = Array.from({ length: 55 }, (_, index) => ({
     ...search.items[0],
     id: `result-${index}`,

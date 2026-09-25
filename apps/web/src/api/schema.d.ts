@@ -11069,6 +11069,51 @@ export interface components {
       work_id: string;
       specification?: components["schemas"]["RequestOptions"];
     };
+    /** QuickAddSourceCheck */
+    QuickAddSourceCheck: {
+      /** Slot */
+      slot: string;
+      /** Source */
+      source: string;
+      /** Status */
+      status: string;
+      /** Message */
+      message: string;
+      /** Reasons */
+      reasons?: string[];
+      /** Candidates */
+      candidates: number;
+      /** Inspected */
+      inspected: number;
+    };
+    /** QuickAddView */
+    QuickAddView: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Kind */
+      kind: string;
+      /** Status */
+      status: string;
+      /** Message */
+      message: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Request Id */
+      request_id?: string | null;
+      /** Source Checks */
+      source_checks?: components["schemas"]["QuickAddSourceCheck"][];
+    };
     /** RankedReleaseView */
     RankedReleaseView: {
       /**
@@ -20906,7 +20951,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["OperationView"];
+          "application/json": components["schemas"]["QuickAddView"];
         };
       };
       /** @description Validation Error */
@@ -20937,7 +20982,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["OperationView"] | null;
+          "application/json": components["schemas"]["QuickAddView"] | null;
         };
       };
       /** @description Validation Error */

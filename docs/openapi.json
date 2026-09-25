@@ -10846,7 +10846,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationView"
+                  "$ref": "#/components/schemas/QuickAddView"
                 }
               }
             }
@@ -10891,7 +10891,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/OperationView"
+                      "$ref": "#/components/schemas/QuickAddView"
                     },
                     {
                       "type": "null"
@@ -32213,6 +32213,111 @@
           "work_id"
         ],
         "title": "QuickAddInput"
+      },
+      "QuickAddSourceCheck": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "candidates": {
+            "type": "integer",
+            "title": "Candidates"
+          },
+          "inspected": {
+            "type": "integer",
+            "title": "Inspected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot",
+          "source",
+          "status",
+          "message",
+          "candidates",
+          "inspected"
+        ],
+        "title": "QuickAddSourceCheck"
+      },
+      "QuickAddView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "source_checks": {
+            "items": {
+              "$ref": "#/components/schemas/QuickAddSourceCheck"
+            },
+            "type": "array",
+            "title": "Source Checks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "message",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "QuickAddView"
       },
       "RankedReleaseView": {
         "properties": {

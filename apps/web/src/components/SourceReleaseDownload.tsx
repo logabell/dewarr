@@ -8,7 +8,7 @@ import { randomUUID } from "../randomUUID";
 
 type SavedDownload = components["schemas"]["ReleaseDownloadStatus"];
 const labels: Record<SavedDownload["state"], string> = {
-  preparing: "Preparing download",
+  preparing: "Starting download",
   queued: "Download queued",
   downloading: "Downloading",
   downloaded: "Downloaded · awaiting import",
@@ -24,15 +24,19 @@ export default function SourceReleaseDownload({
   resultId,
   title,
   disabled,
+  disabledReason,
   download,
   offerWedge = false,
+  showLabel = false,
 }: {
   searchId: string;
   resultId: string;
   title: string;
   disabled: boolean;
+  disabledReason?: string;
   download?: SavedDownload | null;
   offerWedge?: boolean;
+  showLabel?: boolean;
 }) {
   const key = useRef(randomUUID());
   const cache = useQueryClient();
@@ -54,7 +58,8 @@ export default function SourceReleaseDownload({
       ),
     onSuccess: (operation) => {
       setOperationId(operation.id);
-      void cache.invalidateQueries({ queryKey: ["requests"] });
+      for (const name of ["requests", "book-sources"])
+        void cache.invalidateQueries({ queryKey: [name] });
     },
   });
   const status = useQuery({
@@ -128,10 +133,12 @@ export default function SourceReleaseDownload({
   return (
     <>
       <button
-        className="release-info-button"
+        className={showLabel ? "primary" : "release-info-button"}
         aria-label={`Download ${title}`}
         title={
-          state && (complete || busy) ? labels[state] : "Download this release"
+          state && (complete || busy)
+            ? labels[state]
+            : disabledReason || "Download this release"
         }
         disabled={disabled || !!busy || complete}
         onClick={() => {
@@ -153,6 +160,8 @@ export default function SourceReleaseDownload({
         ) : (
           <Download size={18} aria-hidden />
         )}
+        {showLabel &&
+          (busy ? "Starting…" : complete && state ? labels[state] : "Download")}
       </button>
       {offerWedge && !complete && (
         <label className="check-label wedge-choice">
