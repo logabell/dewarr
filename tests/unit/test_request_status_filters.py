@@ -101,3 +101,10 @@ def test_downloading_filter_keeps_an_import_and_skips_an_inventory_check():
     assert _matches_card(importing, "downloading")
     assert not _matches_card(checking, "downloading")
     assert _chip(checking, checking.targets[0]) == "check-inventory"
+
+
+def test_held_import_is_review_instead_of_forever_importing():
+    card = _card(state="wanted", attempt_state="complete", needs_review=True)
+    assert _chip(card, card.targets[0]) == "review"
+    assert _matches_card(card, "review")
+    assert not _matches_card(card, "downloading")

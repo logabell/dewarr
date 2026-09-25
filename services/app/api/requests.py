@@ -18,6 +18,7 @@ from app.db.models import (
     AcquisitionTarget,
     AssetContains,
     AuditEvent,
+    AutomaticImport,
     AutomaticImportContinuation,
     BookList,
     DownloadAttempt,
@@ -25,6 +26,9 @@ from app.db.models import (
     DownloadMembership,
     DownloadRecovery,
     DownloadRepair,
+    FrozenImportPlan,
+    ImportEntry,
+    ImportRun,
     Integration,
     Library,
     LibraryAsset,
@@ -82,6 +86,10 @@ class TargetView(BaseModel):
     source_artifact_id: UUID | None = None
     next_action: Literal["none", "search", "selected-release", "downloads", "book"] = "none"
     progress: float | None = None
+    download_speed: int | None = None
+    eta_seconds: int | None = None
+    client_state: str | None = None
+    import_state: str | None = None
     selection_status: str | None = None
     attempt_state: str | None = None
     attempt_id: UUID | None = None
@@ -264,6 +272,20 @@ def _active_reasons(*extra):
     )
 
 
+def _import_entries(*states):
+    return (
+        select(ImportEntry.id)
+        .join(ImportRun, ImportRun.id == ImportEntry.run_id)
+        .join(FrozenImportPlan, FrozenImportPlan.id == ImportRun.plan_id)
+        .where(
+            FrozenImportPlan.inspection_id == DownloadAttempt.inspection_id,
+            ImportEntry.state.in_(states),
+        )
+        .correlate(DownloadAttempt)
+        .exists()
+    )
+
+
 def _review_clause():
     """Completed transfers still waiting for an administrator import review."""
     active_handoff = exists().where(
@@ -282,7 +304,27 @@ def _review_clause():
     )
     return and_(
         DownloadAttempt.state == "complete",
-        or_(and_(DownloadAttempt.inspection_id.is_(None), committed_member), active_handoff),
+        or_(
+            committed_member,
+            select(AcquisitionSelection.id)
+            .where(
+                AcquisitionSelection.id == DownloadAttempt.selection_id,
+                AcquisitionSelection.state == "committed",
+            )
+            .correlate(DownloadAttempt)
+            .exists(),
+        ),
+        or_(
+            _import_entries("held", "cancel-held"),
+            and_(
+                ~exists().where(
+                    AutomaticImport.attempt_id == DownloadAttempt.id,
+                    AutomaticImport.state.in_(["queued", "inspecting", "importing", "complete"]),
+                ),
+                ~_import_entries("queued", "publishing", "awaiting-library", "cancelling"),
+                or_(DownloadAttempt.inspection_id.is_(None), active_handoff),
+            ),
+        ),
     )
 
 
@@ -415,6 +457,8 @@ def _chip(card, target) -> str:
         return "declined"
     if card.approval_status == "pending" or target.message == "Waiting for approval":
         return "pending"
+    if target.state != "satisfied" and getattr(target, "needs_review", False):
+        return "review"
     if target.attempt_state in _LIVE_DOWNLOADS:
         return "downloading"
     if target.state == "awaiting-inventory":
@@ -440,6 +484,8 @@ def _chip(card, target) -> str:
 
 def _matches_card(card, status: str) -> bool:
     chips = [_chip(card, target) for target in card.targets]
+    if status == "review":
+        return "review" in chips
     if status == "library":
         return "in-library" in chips
     if status == "downloading":
@@ -506,6 +552,22 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
     target.progress = (
         float(raw) if isinstance(raw, int | float) and not isinstance(raw, bool) else None
     )
+    from app.adapters.qbittorrent import optional_metric
+
+    observation = attempt.observation or {}
+    target.download_speed = optional_metric(observation.get("download_speed"))
+    target.eta_seconds = optional_metric(observation.get("eta_seconds"), maximum=8640000)
+    target.client_state = observation.get("state")
+    automatic = await db.scalar(
+        select(AutomaticImport).where(AutomaticImport.attempt_id == attempt.id)
+    )
+    if automatic:
+        target.import_state = automatic.state
+        if target.state != "satisfied":
+            target.message = automatic.message
+            if automatic.state == "held":
+                target.needs_review = True
+                target.review_message = automatic.message
     target.shared_download = len(members) > 1
     target.shared_books = [
         label for item in members if item.id != selection_id and (label := _shared_book(item))
@@ -544,12 +606,30 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
         and (not attempt.next_check_at or attempt.next_check_at <= now)
     )
     target.can_repair = not recovering and await _can_repair(db, user, attempt, repair, now)
-    if user.role != "admin" or attempt.state != "complete":
+    if target.state == "satisfied" or attempt.state != "complete":
         return
     queued = await db.scalar(
         select(DownloadAttempt.id).where(DownloadAttempt.id == attempt.id, _review_clause())
     )
     if not queued:
+        return
+    target.needs_review = True
+    if automatic and automatic.import_run_id:
+        blocked = await db.scalar(
+            select(ImportEntry)
+            .where(
+                ImportEntry.run_id == automatic.import_run_id,
+                ImportEntry.state.in_(["held", "cancel-held"]),
+            )
+            .limit(1)
+        )
+        if blocked:
+            target.import_state = "held"
+            target.review_message = blocked.message
+    if user.role != "admin":
+        target.review_message = (
+            target.review_message or "An administrator needs to review this download"
+        )
         return
     from app.domain.download_reviews import queue_view
 
@@ -565,7 +645,7 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
         return
     target.needs_review = True
     target.can_claim = bool(review["can_claim"])
-    target.review_message = review["message"]
+    target.review_message = target.review_message or review["message"]
     target.review_revision = review["revision"]
     target.inspection_id = review["inspection_id"]
     target.review_retry = bool(review["retry"])
@@ -953,6 +1033,23 @@ async def latest_quick_add(work_id: UUID, user: Member, db: Database):
         ):
             # Keep the receipt in history, but a withdrawn request has no book-page action.
             return None
+        if intent_id and operation.status in {"held", "failed"}:
+            covered = exists().where(
+                AcquisitionSelection.target_id == AcquisitionTarget.id,
+                AcquisitionSelection.state.in_(["committed", "fulfilled"]),
+            )
+            outstanding = await db.scalar(
+                select(AcquisitionTarget.id)
+                .where(
+                    AcquisitionTarget.intent_id == UUID(intent_id),
+                    AcquisitionTarget.state.not_in(["satisfied", "cancelled"]),
+                    ~covered,
+                )
+                .limit(1)
+            )
+            if not outstanding:
+                # A later source selection supersedes this old quick-add failure.
+                return None
         await repair(db, operation)
         await db.commit()
         await db.refresh(operation)
@@ -1012,6 +1109,51 @@ async def create(
     return response
 
 
+class RequestCounts(BaseModel):
+    pending: int = 0
+    downloading: int = 0
+    review: int = 0
+    active: int = 0
+
+
+@router.get("/counts", response_model=RequestCounts)
+async def request_counts(user: CurrentUser, db: Database):
+    # Count requests once, independently of pagination, without projecting every card.
+    pending = exists(_active_reasons(AcquisitionReason.approval_status == "pending"))
+    review = _attempt_exists(_review_clause())
+    downloading = and_(
+        ~pending,
+        or_(
+            _attempt_exists(DownloadAttempt.state.in_(_LIVE_DOWNLOADS)),
+            _attempt_exists(
+                DownloadAttempt.state == "complete", ~_review_clause(), wanted_target=True
+            ),
+        ),
+    )
+    unfinished = exists(
+        select(AcquisitionTarget.id).where(
+            AcquisitionTarget.intent_id == AcquisitionIntent.id,
+            AcquisitionTarget.state.in_(["wanted", "paused", "awaiting-inventory"]),
+        )
+    )
+    statement = (
+        select(
+            func.count().filter(pending),
+            func.count().filter(downloading),
+            func.count().filter(review),
+            func.count().filter(or_(pending, downloading, review, unfinished)),
+        )
+        .select_from(AcquisitionIntent)
+        .where(exists(_active_reasons(AcquisitionReason.approval_status != "declined")))
+    )
+    if not has(user, MANAGE_REQUESTS):
+        statement = statement.where(AcquisitionIntent.owner_id == user.id)
+    counts = (await db.execute(statement)).one()
+    return RequestCounts(
+        **dict(zip(("pending", "downloading", "review", "active"), counts, strict=True))
+    )
+
+
 @router.get("", response_model=RequestPage)
 async def all_requests(
     user: CurrentUser,
@@ -1065,7 +1207,7 @@ async def all_requests(
     if where:
         listing = listing.where(*where)
         counted = counted.where(*where)
-    if status in {"library", "downloading"}:
+    if status in {"library", "downloading", "review"}:
         return await _projected_page(db, user, listing, counted, order, status, offset, limit)
     intents = (await db.scalars(listing.order_by(*order).offset(offset).limit(limit))).all()
     total = await db.scalar(counted)

@@ -18,6 +18,8 @@ type StatusTarget = {
   attempt_state?: string | null;
   selection_status?: string | null;
   next_action?: string | null;
+  needs_review?: boolean;
+  import_state?: string | null;
 };
 
 export function statusLabel(request: StatusRequest, target: StatusTarget) {
@@ -32,6 +34,11 @@ export function statusLabel(request: StatusRequest, target: StatusTarget) {
     target.message === "Waiting for approval"
   )
     return "Pending";
+  if (
+    target.state !== "satisfied" &&
+    (target.needs_review || target.import_state === "held")
+  )
+    return "Needs review";
   if (target.attempt_state && liveDownloadStates.has(target.attempt_state))
     return "Downloading";
   if (target.state === "awaiting-inventory") return "Check inventory";

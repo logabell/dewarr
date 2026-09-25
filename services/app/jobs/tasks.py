@@ -255,7 +255,7 @@ async def reconcile_fulfillment(work_id: str) -> None:
         await reconcile_work(db, UUID(work_id))
 
 
-@tasks.periodic(cron="* * * * *")
+@tasks.periodic(cron="* * * * * */10")
 @tasks.task(name="acquisition.downloads.schedule", queue="acquisition", retry=3)
 async def schedule_downloads(timestamp: int) -> None:
     from sqlalchemy import or_, text

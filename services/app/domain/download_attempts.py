@@ -380,7 +380,8 @@ async def start(
 async def record(db, attempt, state, message, *, poll=False):
     attempt.state, attempt.message = state, message
     attempt.run_token, attempt.lease_until = None, None
-    attempt.next_check_at = datetime.now(UTC) + timedelta(seconds=60) if poll else None
+    interval = 10 if state == "downloading" else 60
+    attempt.next_check_at = datetime.now(UTC) + timedelta(seconds=interval) if poll else None
     operation = await db.get(Operation, attempt.operation_id)
     operation.status = (
         "completed"
@@ -427,7 +428,15 @@ async def cancel(db, user, identifier):
 
 
 async def recheck(db, user, identifier):
-    await owned_attempt(db, user, identifier)
+    current = await owned_attempt(db, user, identifier)
+    if current.state == "complete":
+        from app.db.models import AutomaticImport
+
+        automatic_id = await db.scalar(
+            select(AutomaticImport.id).where(AutomaticImport.attempt_id == identifier)
+        )
+        if automatic_id:
+            await transaction_lock(db, f"automatic-import:{automatic_id}")
     attempt, selection = await locked(db, identifier)
     await member(db, user.id)
     if get_settings().recovery_mode:
@@ -445,9 +454,11 @@ async def recheck(db, user, identifier):
         raise HTTPException(409, "A download check is running or cooling down")
     if attempt.state == "complete":
         from app.domain.download_fulfillment import reconcile_work
+        from app.importing.automatic import retry_held
         from app.importing.reuse import recheck as recheck_reuse
 
         await recheck_reuse(db, attempt)
+        await retry_held(db, attempt)
 
         for item in await download_memberships.for_attempt(db, attempt.id):
             await reconcile_work(db, UUID(item.frozen["origin_work_id"]))

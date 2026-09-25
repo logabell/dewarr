@@ -91,3 +91,30 @@ test("manual release failures and preparation remain visible in Requests", () =>
     "In library",
   );
 });
+
+test("a held import needs review and a satisfied request wins over stale review", () => {
+  assert.equal(
+    statusLabel(active, {
+      state: "wanted",
+      attempt_state: "complete",
+      import_state: "held",
+    }),
+    "Needs review",
+  );
+  assert.equal(
+    statusLabel(active, {
+      state: "wanted",
+      attempt_state: "complete",
+      needs_review: true,
+    }),
+    "Needs review",
+  );
+  assert.equal(
+    statusLabel(active, {
+      state: "satisfied",
+      attempt_state: "complete",
+      needs_review: true,
+    }),
+    "In library",
+  );
+});

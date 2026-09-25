@@ -117,16 +117,19 @@ test("activity requests preserve independent reasons and route missing media to 
     exact: true,
   });
   await expect
-    .poll(() => requests.getByRole("article").count())
+    .poll(() => requests.locator("tbody").count())
     .toBeGreaterThanOrEqual(10);
-  await requests.getByRole("article").last().scrollIntoViewIfNeeded();
-  const card = requests.getByRole("article", {
+  await requests.locator("tbody").last().scrollIntoViewIfNeeded();
+  const card = requests.getByRole("rowgroup", {
     name: "Activity Journey Alpha request",
     exact: true,
   });
   await expect(card).toBeVisible();
   await expect(card).toContainText("Audiobook");
   await expect(card.getByText("Wanted", { exact: true })).toBeVisible();
+  await card
+    .getByRole("button", { name: "Details for Activity Journey Alpha" })
+    .click();
   await card.getByText("Details", { exact: true }).click();
   await expect(card).toContainText("Effective request scope");
   await card.getByText("Details", { exact: true }).click();
@@ -139,7 +142,7 @@ test("activity requests preserve independent reasons and route missing media to 
     page.getByRole("region", { name: "Book download sources" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Requests", exact: true }).click();
-  await requests.getByRole("article").last().scrollIntoViewIfNeeded();
+  await requests.locator("tbody").last().scrollIntoViewIfNeeded();
   await expect(card).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("request-activity-desktop.png"),
@@ -164,6 +167,9 @@ test("activity requests preserve independent reasons and route missing media to 
   await card
     .getByRole("menuitem", { name: "Withdraw your request", exact: true })
     .click();
+  await card
+    .getByRole("button", { name: "Details for Activity Journey Alpha" })
+    .click();
   await expect(
     card.getByText("Your request · Withdrawn", { exact: true }),
   ).toBeVisible();
@@ -187,7 +193,7 @@ test("activity requests preserve independent reasons and route missing media to 
   await expect(
     page.getByRole("link", { name: "Withdrawn", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  await requests.getByRole("article").last().scrollIntoViewIfNeeded();
+  await requests.locator("tbody").last().scrollIntoViewIfNeeded();
   await expect(card).toContainText("Audiobook");
   await expect(card.getByText("Withdrawn", { exact: true })).toBeVisible();
   await expect(

@@ -20,7 +20,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
@@ -61,6 +61,7 @@ function mediumLabel(slot: string) {
 }
 
 function chipState(label: string) {
+  if (label === "Needs review") return "paused";
   if (label === "Download not started") return "failed";
   if (label === "Preparing download") return "downloading";
   if (label === "In library") return "satisfied";
@@ -210,7 +211,8 @@ function shortDate(value?: string | null) {
 function inProgress(request: Request) {
   return request.targets.some(
     (target) =>
-      target.attempt_state && liveDownloadStates.has(target.attempt_state),
+      (target.attempt_state && liveDownloadStates.has(target.attempt_state)) ||
+      ["queued", "inspecting", "importing"].includes(target.import_state || ""),
   );
 }
 
@@ -233,6 +235,7 @@ export default function ActivityRequests({
   sort: "newest" | "title";
 }) {
   const cache = useQueryClient();
+  const navigate = useNavigate();
   const claimKeys = useRef(new Map<string, string>());
   const requests = usePagedQuery({
     queryKey: ["requests", "board", status, sort],
@@ -344,6 +347,12 @@ export default function ActivityRequests({
         }),
       );
     },
+    onSuccess: (review) => {
+      if (review.inspection_id)
+        navigate(
+          `/organization/inspections?inspection=${review.inspection_id}`,
+        );
+    },
     onSettled: refresh,
   });
   return (
@@ -381,33 +390,51 @@ export default function ActivityRequests({
           {!requests.data.items.length && !requests.hasNextPage && (
             <p className="requests-empty">{emptyCopy[status]}</p>
           )}
-          <div className="request-list">
-            {requests.data.items.map((request) => (
-              <RequestCard
-                key={request.id}
-                request={request}
-                canManage={canManage}
-                busy={
-                  withdraw.isPending ||
-                  decide.isPending ||
-                  transfer.isPending ||
-                  claim.isPending
-                }
-                onWithdraw={(reason) =>
-                  withdraw.mutate({ intent: request.id, reason })
-                }
-                onDecide={(decision, download) =>
-                  decide.mutate({
-                    id: request.id,
-                    status: decision,
-                    download,
-                    expected: expectedStatus(request),
-                  })
-                }
-                onTransfer={(id, cancel) => transfer.mutate({ id, cancel })}
-                onClaim={(target) => claim.mutate(target)}
-              />
-            ))}
+          <div className="request-ledger-scroll">
+            <table className="request-ledger">
+              <caption className="sr-only">
+                Book requests and download activity
+              </caption>
+              <thead>
+                <tr>
+                  <th>Book</th>
+                  <th>Format</th>
+                  <th>Status</th>
+                  <th>Progress</th>
+                  <th>Speed</th>
+                  <th>Time left</th>
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              {requests.data.items.map((request) => (
+                <RequestCard
+                  key={request.id}
+                  request={request}
+                  canManage={canManage}
+                  busy={
+                    withdraw.isPending ||
+                    decide.isPending ||
+                    transfer.isPending ||
+                    claim.isPending
+                  }
+                  onWithdraw={(reason) =>
+                    withdraw.mutate({ intent: request.id, reason })
+                  }
+                  onDecide={(decision, download) =>
+                    decide.mutate({
+                      id: request.id,
+                      status: decision,
+                      download,
+                      expected: expectedStatus(request),
+                    })
+                  }
+                  onTransfer={(id, cancel) => transfer.mutate({ id, cancel })}
+                  onClaim={(target) => claim.mutate(target)}
+                />
+              ))}
+            </table>
           </div>
           {decide.data?.download_message && (
             <p className="notice" role="status">
@@ -463,7 +490,7 @@ function targetActions(
       ? "Retry"
       : target.review_reassignment
         ? "Reassign"
-        : "Review";
+        : "Review files";
     actions.push({
       key: `claim-${target.slot}`,
       label: qualify(label),
@@ -496,9 +523,9 @@ function targetActions(
       href: `/sources/artifacts/${target.source_artifact_id}`,
     });
   if (target.inspection_id)
-    actions.push({
+    actions.unshift({
       key: `inspect-${target.slot}`,
-      label: qualify("Inspect"),
+      label: qualify(target.needs_review ? "Review files" : "Inspect"),
       icon: Eye,
       href: `/organization/inspections?inspection=${target.inspection_id}`,
     });
@@ -576,164 +603,218 @@ function RequestCard({
     if (actions.length > 1) menu.push(...actions.slice(1));
     return { target, primary };
   });
+  const [expanded, setExpanded] = useState(false);
   return (
-    <article
-      className="request-row"
+    <tbody
       id={`request-${request.id}`}
       aria-label={`${request.work_title} request`}
     >
-      <RequestCover title={request.work_title} url={request.cover_url} />
-      <div className="request-row-body">
-        <header className="request-row-head">
-          <div className="request-row-identity">
-            <h2>
-              {request.can_open_book ? (
-                <Link to={`/books/${request.work_id}`}>
-                  {request.work_title}
-                </Link>
-              ) : (
-                request.work_title
-              )}
-            </h2>
-            {byline && <p className="request-row-meta">{byline}</p>}
-          </div>
-          <div className="request-row-tools">
-            {request.can_decide && (
-              <button
-                type="button"
-                className="primary"
-                disabled={busy}
-                onClick={() => onDecide("approved", false)}
-              >
-                <Check size={14} aria-hidden />
-                Approve
-              </button>
-            )}
-            {request.can_start_download && (
-              <button
-                type="button"
-                className={request.can_decide ? undefined : "primary"}
-                disabled={busy}
-                onClick={() => onDecide("approved", true)}
-              >
-                <Download size={14} aria-hidden />
-                Download
-              </button>
-            )}
-            <ActionMenu
-              label={`Actions for ${request.work_title}`}
-              items={menu}
-              disabled={busy}
-            />
-          </div>
-        </header>
-        <div className="request-targets">
-          {rows.map(({ target, primary }) => {
-            const label = statusLabel(request, target);
-            const active =
-              !!target.attempt_state &&
-              liveDownloadStates.has(target.attempt_state);
-            const progress =
-              typeof target.progress === "number"
-                ? Math.max(0, Math.min(1, target.progress))
-                : null;
-            const notes = targetNotes(label, target);
-            return (
-              <div className="request-target" key={target.slot}>
-                <div className="request-target-line">
-                  <span className="request-medium">
-                    {target.slot === "audio" ? (
-                      <Headphones size={14} aria-hidden />
+      {rows.map(({ target, primary }, index) => {
+        const label = statusLabel(request, target);
+        const active = label === "Downloading";
+        const spinning = [
+          "Downloading",
+          "Importing",
+          "Preparing download",
+        ].includes(label);
+        const progress =
+          typeof target.progress === "number"
+            ? Math.max(0, Math.min(1, target.progress))
+            : null;
+        const notes = targetNotes(label, target);
+        return (
+          <tr key={target.slot} className="request-ledger-row">
+            <td>
+              <div className="request-book-cell">
+                <RequestCover
+                  title={request.work_title}
+                  url={request.cover_url}
+                />
+                <div className="request-row-identity">
+                  <h2>
+                    {request.can_open_book ? (
+                      <Link to={`/books/${request.work_id}`}>
+                        {request.work_title}
+                      </Link>
                     ) : (
-                      <BookOpen size={14} aria-hidden />
+                      request.work_title
                     )}
-                    {mediumLabel(target.slot)}
-                  </span>
-                  <span
-                    className="request-status"
-                    data-state={chipState(label)}
-                  >
-                    {label === "Download not started" ? (
-                      <CircleAlert size={14} aria-hidden />
-                    ) : label === "In library" ? (
-                      <CircleCheck size={14} aria-hidden />
-                    ) : [
-                        "Downloading",
-                        "Importing",
-                        "Preparing download",
-                      ].includes(label) ? (
-                      <LoaderCircle size={14} aria-hidden />
-                    ) : null}
-                    {label}
-                  </span>
-                  {progress !== null && (
+                  </h2>
+                  <p className="request-row-meta">{byline}</p>
+                </div>
+              </div>
+            </td>
+            <td>
+              <span className="request-medium">
+                {target.slot === "audio" ? (
+                  <Headphones size={14} aria-hidden />
+                ) : (
+                  <BookOpen size={14} aria-hidden />
+                )}
+                {mediumLabel(target.slot)}
+              </span>
+            </td>
+            <td>
+              <span
+                className="request-status"
+                data-state={chipState(label)}
+                title={notes.join(". ")}
+              >
+                {spinning ? (
+                  <LoaderCircle
+                    size={14}
+                    className="source-download-spinner"
+                    aria-hidden
+                  />
+                ) : label === "In library" ? (
+                  <CircleCheck size={14} aria-hidden />
+                ) : label === "Needs review" ||
+                  label === "Download not started" ? (
+                  <CircleAlert size={14} aria-hidden />
+                ) : null}
+                {label}
+              </span>
+              {label === "Needs review" && (
+                <p className="request-status-hint">
+                  {target.inspection_id || target.can_claim
+                    ? "Choose Review files to continue"
+                    : "Administrator review required"}
+                </p>
+              )}
+            </td>
+            <td>
+              <div className="request-transfer-progress">
+                {progress !== null ? (
+                  <>
                     <span className="request-percent">
                       {Math.round(progress * 100)}%
                     </span>
-                  )}
-                  {primary && (
-                    <div className="request-target-actions">
-                      <ActionButton action={primary} busy={busy} />
-                    </div>
-                  )}
-                </div>
-                {(active || progress !== null) && (
-                  <div className="request-progress">
                     <progress
                       max={1}
-                      {...(progress !== null ? { value: progress } : {})}
+                      value={progress}
                       aria-label={`${request.work_title} ${mediumLabel(target.slot).toLowerCase()} download progress`}
                     />
-                  </div>
-                )}
-                {notes.map((note) => (
-                  <p className="request-target-note" key={note}>
-                    {note}
-                  </p>
-                ))}
-                {!!target.shared_books?.length && (
-                  <ul
-                    className="request-shared-books"
-                    aria-label="Other books in this transfer"
-                  >
-                    {target.shared_books.map((book) => (
-                      <li key={book}>{book}</li>
-                    ))}
-                  </ul>
-                )}
-                {target.can_repair && target.attempt_id && (
-                  <DownloadRepair attemptId={target.attempt_id} />
-                )}
-                {target.attempt_id && target.can_view_download_history && (
-                  <DownloadRecoveryDetails
-                    attemptId={target.attempt_id}
-                    workId={request.work_id}
-                  />
+                  </>
+                ) : active ? (
+                  <span className="muted">Connecting…</span>
+                ) : (
+                  <span className="muted">—</span>
                 )}
               </div>
-            );
-          })}
-        </div>
-        {!!request.reasons.length && (
-          <ul className="request-reasons">
-            {request.reasons.map((reason) => (
-              <li key={reason.id}>
-                <span className={reason.active ? undefined : "is-quiet"}>
-                  {reason.label}
-                  {reason.active ? "" : " · Withdrawn"}
-                  {reason.approval_status === "pending" &&
-                    " · Waiting for approval"}
-                  {reason.approval_status === "declined" && " · Declined"}
-                </span>
-                {reason.decision_note && <p>{reason.decision_note}</p>}
-              </li>
-            ))}
-          </ul>
-        )}
-        <RequestDetails request={request} />
-      </div>
-    </article>
+            </td>
+            <td className="request-metric">
+              {active ? transferSpeed(target.download_speed) : "—"}
+            </td>
+            <td className="request-metric">
+              {active ? transferTime(target.eta_seconds) : "—"}
+            </td>
+            <td>
+              <div className="request-row-tools">
+                {index === 0 && request.can_decide && (
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() => onDecide("approved", false)}
+                  >
+                    <Check size={14} aria-hidden />
+                    Approve
+                  </button>
+                )}
+                {index === 0 && request.can_start_download && (
+                  <button
+                    disabled={busy}
+                    onClick={() => onDecide("approved", true)}
+                  >
+                    <Download size={14} aria-hidden />
+                    Download
+                  </button>
+                )}
+                {primary && <ActionButton action={primary} busy={busy} />}
+                {index === 0 && (
+                  <>
+                    <button
+                      className="control-icon"
+                      aria-label={`Details for ${request.work_title}`}
+                      aria-expanded={expanded}
+                      onClick={() => setExpanded(!expanded)}
+                    >
+                      <ChevronRight
+                        size={16}
+                        className={expanded ? "request-chevron-open" : ""}
+                        aria-hidden
+                      />
+                    </button>
+                    <ActionMenu
+                      label={`Actions for ${request.work_title}`}
+                      items={menu}
+                      disabled={busy}
+                    />
+                  </>
+                )}
+              </div>
+            </td>
+          </tr>
+        );
+      })}
+      {expanded && (
+        <tr className="request-detail-row">
+          <td colSpan={7}>
+            <div className="request-detail-content">
+              {request.targets.map((target) => (
+                <div key={target.slot}>
+                  {targetNotes(statusLabel(request, target), target).map(
+                    (note) => (
+                      <p className="request-target-note" key={note}>
+                        {note}
+                      </p>
+                    ),
+                  )}
+                  {!!target.shared_books?.length && (
+                    <p className="request-target-note">
+                      Shared with {target.shared_books.join(", ")}
+                    </p>
+                  )}
+                  {target.can_repair && target.attempt_id && (
+                    <DownloadRepair attemptId={target.attempt_id} />
+                  )}
+                  {target.attempt_id && target.can_view_download_history && (
+                    <DownloadRecoveryDetails
+                      attemptId={target.attempt_id}
+                      workId={request.work_id}
+                    />
+                  )}
+                </div>
+              ))}
+              <ul className="request-reasons">
+                {request.reasons.map((reason) => (
+                  <li key={reason.id}>
+                    {reason.label}
+                    {reason.active ? "" : " · Withdrawn"}
+                    {reason.decision_note && <p>{reason.decision_note}</p>}
+                  </li>
+                ))}
+              </ul>
+              <RequestDetails request={request} />
+            </div>
+          </td>
+        </tr>
+      )}
+    </tbody>
   );
+}
+
+function transferSpeed(value?: number | null) {
+  if (value == null) return "—";
+  if (value >= 1048576) return `${(value / 1048576).toFixed(1)} MiB/s`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KiB/s`;
+  return `${value} B/s`;
+}
+
+function transferTime(value?: number | null) {
+  if (value == null || value >= 8640000) return "—";
+  if (value < 60) return "< 1m";
+  if (value < 3600) return `${Math.ceil(value / 60)}m`;
+  return `${Math.floor(value / 3600)}h ${Math.ceil((value % 3600) / 60)}m`;
 }
 
 function RequestDetails({ request }: { request: Request }) {

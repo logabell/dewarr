@@ -126,6 +126,12 @@ def magnet_hashes(value: str) -> set[str]:
     return identities
 
 
+def optional_metric(value, *, maximum=None):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value if maximum is None or value < maximum else None
+
+
 class QbitState(DownloadState):
     infohash_v1: str | None = None
     infohash_v2: str | None = None
@@ -134,6 +140,8 @@ class QbitState(DownloadState):
     auto_managed: bool
     progress: float
     total_bytes: int
+    download_speed: int | None = Field(default=None, ge=0)
+    eta_seconds: int | None = Field(default=None, ge=0)
     all_files_selected: bool
     reported_complete: bool = False
     seeders: int | None = Field(default=None, ge=0)
@@ -252,6 +260,8 @@ def parse_state(row: dict, properties: dict, files: list) -> QbitState:
             category=row["category"],
             auto_managed=row["auto_tmm"],
             progress=completed,
+            download_speed=optional_metric(row.get("dlspeed")),
+            eta_seconds=optional_metric(row.get("eta"), maximum=8640000),
             seeders=integer(row["num_seeds"]) if "num_seeds" in row else None,
             total_bytes=total,
             all_files_selected=all_selected,

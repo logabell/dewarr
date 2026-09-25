@@ -237,3 +237,37 @@ async def test_approver_status_follows_the_requesters_library(client, admin, cat
         assert seen["message"] != "Already available in your library"
     finally:
         await patron.aclose()
+
+
+async def test_request_counts_are_scoped_and_include_pending_work(client, admin, catalog):
+    saved = (await request(client, body(catalog, "audio")))["request"]
+    counts = (await client.get("/api/requests/counts")).json()
+    assert counts == {"pending": 0, "downloading": 0, "review": 0, "active": 1}
+    await client.delete(f"/api/requests/{saved['id']}/reasons/{saved['reasons'][0]['id']}")
+    assert (await client.get("/api/requests/counts")).json()["active"] == 0
+    await login_member(client)
+    assert (await client.get("/api/requests/counts")).json()["active"] == 0
+
+
+async def test_old_quick_add_failure_is_hidden_after_a_source_is_started(
+    client, admin, database, selected, downloader
+):
+    from app.db.models import Operation
+    from app.domain.quick_add import KIND
+
+    response = await start(client, selected)
+    assert response.status_code == 202
+    async with database() as db, db.begin():
+        selection = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        work_id = selection.frozen["origin_work_id"]
+        db.add(
+            Operation(
+                owner_id=UUID(admin["id"]),
+                kind=KIND,
+                status="held",
+                idempotency_key="old-quick-add-failure",
+                message="No download route",
+                payload={"intent_id": str(selection.intent_id), "command": {"work_id": work_id}},
+            )
+        )
+    assert (await client.get(f"/api/requests/quick-add/latest/{work_id}")).json() is None

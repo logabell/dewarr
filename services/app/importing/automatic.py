@@ -153,6 +153,29 @@ async def schedule(db, attempt, selection):
     return True
 
 
+async def retry_held(db, attempt):
+    row = await db.scalar(select(AutomaticImport).where(AutomaticImport.attempt_id == attempt.id))
+    if not row:
+        return
+    await transaction_lock(db, f"automatic-import:{row.id}")
+    await db.refresh(row)
+    if row.state != "held" or row.import_run_id or row.evidence.get("release_rejection"):
+        return
+    await check_policy(db, row)
+    if row.inspection_id:
+        inspection = await db.get(DownloadInspection, row.inspection_id)
+        if inspection.state != "ready":
+            return
+        await download_reviews.validate_inspection(db, inspection.id)
+        if await download_reviews.has_imports(db, inspection.id):
+            return
+    row.state = "inspecting" if row.inspection_id else "queued"
+    row.message = "Rechecking completed files for import"
+    operation = await db.get(Operation, row.operation_id)
+    operation.status, operation.message = "queued", row.message
+    operation.job_id = await enqueue(db, "organization.automatic", automatic_id=str(row.id))
+
+
 async def continue_inspection(db, inspection_id):
     row = await db.scalar(
         select(AutomaticImport).where(
@@ -319,7 +342,25 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             (item for item in match.candidates if item.version_id == match.selected_version_id),
             None,
         )
-        if match.status != "matched" or not candidate:
+        linked = None
+        if (
+            not reason
+            and match.status != "matched"
+            and len(grouping.groups) == 1
+            and len(members) == 1
+            and not continuation
+            and not match.truncated
+        ):
+            from app.importing.linked_download import linked_version
+            from app.importing.matching import candidate_evidence
+
+            linked = await linked_version(
+                db, approver, selection, inspection, group, grouping_revision
+            )
+            if linked:
+                work = await canonical_work(db, linked.work_id)
+                candidate = candidate_evidence(match.evidence, linked, work, work, False)
+        if (match.status != "matched" and not linked) or not candidate:
             reason = match.message
         elif candidate.work_id not in works:
             release_rejection = True
@@ -376,13 +417,24 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
                 }
             )
             continue
+        if linked:
+            row.evidence = {
+                **row.evidence,
+                "linked_download": {
+                    "selection_id": str(selection.id),
+                    "work_id": str(candidate.work_id),
+                    "version_id": str(candidate.version_id),
+                    "group_key": group.key,
+                    "basis": "saved-book-and-release-with-no-conflicting-file-metadata",
+                },
+            }
         choices.append(
             GroupSelection(
                 group_key=group.key,
                 work_id=candidate.work_id,
                 version_id=candidate.version_id,
                 full_content=True,
-                match_revision=match.revision,
+                match_revision=None if linked else match.revision,
             )
         )
     counts = Counter(item.work_id for item in choices)
@@ -426,7 +478,7 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             )
         row.state, row.message = (
             "held",
-            "No book group qualifies for automatic import; open file review",
+            held[0]["reason"] if held else "No matching book files; review download",
         )
         return
     profile = await current_profile(db)

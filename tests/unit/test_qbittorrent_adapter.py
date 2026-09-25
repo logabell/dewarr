@@ -651,3 +651,12 @@ async def test_directory_listing_reads_the_path_qbittorrent_sees():
         if request.url.path.endswith("app/getDirectoryContent")
     ]
     assert len(listed) == 1 and listed[0].method == "POST"
+
+
+def test_transfer_metrics_are_optional_and_unknown_eta_is_not_a_countdown():
+    observed = parse_state(row(dlspeed=1048576, eta=120), properties(), files())
+    assert observed.download_speed == 1048576 and observed.eta_seconds == 120
+    observed = parse_state(row(dlspeed=0, eta=8640000), properties(), files())
+    assert observed.download_speed == 0 and observed.eta_seconds is None
+    observed = parse_state(row(dlspeed="invalid", eta=-1), properties(), files())
+    assert observed.download_speed is None and observed.eta_seconds is None

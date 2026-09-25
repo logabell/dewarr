@@ -254,3 +254,26 @@ async def test_recovery_holds_exhausted_jobs_without_restarting_retry_budget(
         assert operation.status == "failed" and operation.job_id == original_job
         if stage == "inspection":
             assert (await db.get(DownloadInspection, row.inspection_id)).state == "failed"
+
+
+async def test_recheck_resumes_a_held_import_and_request_counts_follow_review(
+    client, database, automatic_job, downloader
+):
+    async with database() as db, db.begin():
+        row = await db.get(AutomaticImport, automatic_job)
+        attempt_id = row.attempt_id
+        row.state, row.message = "held", "No matching edition identifier"
+        operation = await db.get(Operation, row.operation_id)
+        operation.status = "failed"
+    counts = (await client.get("/api/requests/counts")).json()
+    assert counts["review"] == 1 and counts["downloading"] == 0
+    review = (await client.get("/api/requests?status=review")).json()
+    assert review["items"][0]["targets"][0]["needs_review"]
+    response = await client.post(f"/api/acquisition/downloads/{attempt_id}/recheck")
+    assert response.status_code == 202, response.text
+    counts = (await client.get("/api/requests/counts")).json()
+    assert counts["review"] == 0 and counts["downloading"] == 1
+    await automatic.run(automatic_job)
+    async with database() as db:
+        assert (await db.get(AutomaticImport, automatic_job)).state == "inspecting"
+    assert downloader.calls.count("submit") == 1

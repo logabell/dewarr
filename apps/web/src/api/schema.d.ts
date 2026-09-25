@@ -3393,6 +3393,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/requests/counts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Request Counts */
+    get: operations["request_counts_api_requests_counts_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/requests/{intent_id}": {
     parameters: {
       query?: never;
@@ -11944,6 +11961,29 @@ export interface components {
        */
       require_approval: boolean;
     };
+    /** RequestCounts */
+    RequestCounts: {
+      /**
+       * Pending
+       * @default 0
+       */
+      pending: number;
+      /**
+       * Downloading
+       * @default 0
+       */
+      downloading: number;
+      /**
+       * Review
+       * @default 0
+       */
+      review: number;
+      /**
+       * Active
+       * @default 0
+       */
+      active: number;
+    };
     /** RequestInput */
     RequestInput: {
       /**
@@ -13512,6 +13552,14 @@ export interface components {
         "none" | "search" | "selected-release" | "downloads" | "book";
       /** Progress */
       progress?: number | null;
+      /** Download Speed */
+      download_speed?: number | null;
+      /** Eta Seconds */
+      eta_seconds?: number | null;
+      /** Client State */
+      client_state?: string | null;
+      /** Import State */
+      import_state?: string | null;
       /** Selection Status */
       selection_status?: string | null;
       /** Attempt State */
@@ -21136,6 +21184,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  request_counts_api_requests_counts_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RequestCounts"];
         };
       };
     };

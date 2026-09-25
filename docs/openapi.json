@@ -11159,6 +11159,27 @@
         }
       }
     },
+    "/api/requests/counts": {
+      "get": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Request Counts",
+        "operationId": "request_counts_api_requests_counts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestCounts"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/requests/{intent_id}": {
       "get": {
         "tags": [
@@ -34449,6 +34470,32 @@
         ],
         "title": "ReportInput"
       },
+      "RequestCounts": {
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "default": 0
+          },
+          "downloading": {
+            "type": "integer",
+            "title": "Downloading",
+            "default": 0
+          },
+          "review": {
+            "type": "integer",
+            "title": "Review",
+            "default": 0
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "RequestCounts"
+      },
       "RequestInput": {
         "properties": {
           "work_id": {
@@ -38675,6 +38722,50 @@
               }
             ],
             "title": "Progress"
+          },
+          "download_speed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Speed"
+          },
+          "eta_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta Seconds"
+          },
+          "client_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client State"
+          },
+          "import_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import State"
           },
           "selection_status": {
             "anyOf": [

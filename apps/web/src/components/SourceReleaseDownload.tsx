@@ -11,8 +11,8 @@ const labels: Record<SavedDownload["state"], string> = {
   preparing: "Starting download",
   queued: "Download queued",
   downloading: "Downloading",
-  downloaded: "Downloaded · awaiting import",
-  imported: "Downloaded and imported",
+  downloaded: "Downloaded",
+  imported: "In library",
   failed: "Download not started",
   cancelled: "Download cancelled",
   selected: "Release prepared",
@@ -79,7 +79,13 @@ export default function SourceReleaseDownload({
   });
   useEffect(() => {
     if (status.data && !["queued", "running"].includes(status.data.status)) {
-      for (const name of ["requests", "downloads", "activity", "book-sources"])
+      for (const name of [
+        "requests",
+        "downloads",
+        "activity",
+        "book-sources",
+        "quick-add",
+      ])
         void cache.invalidateQueries({ queryKey: [name] });
     }
   }, [cache, status.data?.id, status.data?.status]);
@@ -132,37 +138,45 @@ export default function SourceReleaseDownload({
     : "/requests";
   return (
     <>
-      <button
-        className={showLabel ? "primary" : "release-info-button"}
-        aria-label={`Download ${title}`}
-        title={
-          state && (complete || busy)
-            ? labels[state]
-            : disabledReason || "Download this release"
-        }
-        disabled={disabled || !!busy || complete}
-        onClick={() => {
-          if (receipt && !busy) {
-            key.current = randomUUID();
-            setOperationId(undefined);
+      {(showLabel ||
+        !state ||
+        (!complete && !busy && !["downloading", "queued"].includes(state))) && (
+        <button
+          className={showLabel ? "primary" : "release-info-button"}
+          aria-label={`Download ${title}`}
+          title={
+            state && (complete || busy)
+              ? labels[state]
+              : disabledReason || "Download this release"
           }
-          start.mutate(offerWedge && useWedge);
-        }}
-      >
-        {busy ? (
-          <LoaderCircle
-            size={18}
-            className="source-download-spinner"
-            aria-hidden
-          />
-        ) : complete ? (
-          <CircleCheck size={18} aria-hidden />
-        ) : (
-          <Download size={18} aria-hidden />
-        )}
-        {showLabel &&
-          (busy ? "Starting…" : complete && state ? labels[state] : "Download")}
-      </button>
+          disabled={disabled || !!busy || complete}
+          onClick={() => {
+            if (receipt && !busy) {
+              key.current = randomUUID();
+              setOperationId(undefined);
+            }
+            start.mutate(offerWedge && useWedge);
+          }}
+        >
+          {busy ? (
+            <LoaderCircle
+              size={18}
+              className="source-download-spinner"
+              aria-hidden
+            />
+          ) : complete ? (
+            <CircleCheck size={18} aria-hidden />
+          ) : (
+            <Download size={18} aria-hidden />
+          )}
+          {showLabel &&
+            (busy
+              ? "Starting…"
+              : complete && state
+                ? labels[state]
+                : "Download")}
+        </button>
+      )}
       {offerWedge && !complete && (
         <label className="check-label wedge-choice">
           <input
@@ -178,51 +192,34 @@ export default function SourceReleaseDownload({
         </label>
       )}
       {state && (
-        <div
-          className="source-download-message"
+        <Link
+          to={requestLink}
+          className="source-download-status"
           data-tone={tone}
-          role={failed ? "alert" : "status"}
+          title={message || labels[state]}
+          aria-label={`${labels[state]}: ${title}. View request`}
         >
-          <strong className="source-download-heading">
-            {failed ? (
-              <CircleAlert size={16} aria-hidden />
-            ) : busy || state === "downloading" ? (
-              <LoaderCircle
-                size={16}
-                className="source-download-spinner"
-                aria-hidden
-              />
-            ) : (
-              <CircleCheck size={16} aria-hidden />
-            )}
-            {labels[state]}
-          </strong>
-          {message && <span>{message}</span>}
-          {typeof saved?.progress === "number" && state === "downloading" && (
-            <progress
-              max={1}
-              value={Math.max(0, Math.min(1, saved.progress))}
-              aria-label={`${title} download progress`}
+          {failed ? (
+            <CircleAlert size={16} aria-hidden />
+          ) : busy || ["downloading", "queued"].includes(state) ? (
+            <LoaderCircle
+              size={16}
+              className="source-download-spinner"
+              aria-hidden
             />
+          ) : (
+            <CircleCheck size={16} aria-hidden />
           )}
-          {failed &&
-            /qBittorrent|SABnzbd|NZBGet|download client|downloader|download route/i.test(
-              message || "",
-            ) && <Link to="/settings#downloaders">Check download clients</Link>}
-          {failed && /Settings → Download preferences/i.test(message || "") ? (
-            <Link to="/settings#preferences">Choose a default destination</Link>
-          ) : failed &&
-            /library folder|library destination|import destination|import route|download-to-library/i.test(
-              message || "",
-            ) ? (
-            <Link to="/settings#libraries">Check library folders</Link>
-          ) : null}
-          {(receipt || saved) && (
-            <Link to={requestLink}>
-              View request <span aria-hidden>→</span>
-            </Link>
-          )}
-        </div>
+          <span
+            className={
+              !showLabel && (busy || ["downloading", "queued"].includes(state))
+                ? "sr-only"
+                : undefined
+            }
+          >
+            {labels[state]}
+          </span>
+        </Link>
       )}
     </>
   );

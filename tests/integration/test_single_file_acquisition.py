@@ -85,6 +85,7 @@ pytestmark = pytest.mark.integration
         "automatic-provider-retry",
         "automatic-provider-settings",
         "automatic-unmatched",
+        "automatic-linked-audio",
         "automatic-manifest",
         "automatic-disable",
         "automatic-sample",
@@ -112,12 +113,24 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
         "automatic-provider",
         "automatic-provider-audio",
         "automatic-provider-retry",
+        "automatic-unmatched",
+        "automatic-linked-audio",
     }
-    medium = "audio" if handoff in {"automatic-audio", "automatic-provider-audio"} else "ebook"
+    medium = (
+        "audio"
+        if handoff in {"automatic-audio", "automatic-provider-audio", "automatic-linked-audio"}
+        else "ebook"
+    )
     name = "selected.mp3" if medium == "audio" else "selected.epub"
     source = route["source"] / save_relative / name
     if medium == "audio":
-        audio(source, tags={"isbn": "9781234567897", "language": "en"})
+        audio(
+            source,
+            tags={
+                "language": "en",
+                **({} if handoff == "automatic-linked-audio" else {"isbn": "9781234567897"}),
+            },
+        )
         seeded = await prepare_audio_route(client, database, route, old["work_id"], source)
         if provider_mode:
             async with database() as db, db.begin():
@@ -334,7 +347,10 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             )
             entries = list(await db.scalars(select(ImportEntry)))
             assert len(entries) == 1 and entries[0].state == "confirmed"
-            assert plan.document["matching_evidence"]
+            if handoff in {"automatic-unmatched", "automatic-linked-audio"}:
+                assert auto.evidence["linked_download"]["work_id"] == old["work_id"]
+            else:
+                assert plan.document["matching_evidence"]
             fulfilled = await db.scalar(select(DownloadFulfillment))
             assert fulfilled and fulfilled.import_entry_id == entries[0].id
             assert (await db.scalar(select(DownloadIdentityClaim))).active

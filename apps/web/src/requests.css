@@ -28,6 +28,8 @@
   width: auto;
 }
 .requests-board {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   gap: 12px;
 }
@@ -266,7 +268,8 @@
 .request-row .request-preferences {
   margin: 0;
 }
-.request-row .request-preferences summary {
+.request-row .request-preferences summary,
+.request-detail-content .request-preferences summary {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -276,7 +279,8 @@
   list-style: none;
   cursor: pointer;
 }
-.request-row .request-preferences summary::-webkit-details-marker {
+.request-row .request-preferences summary::-webkit-details-marker,
+.request-detail-content .request-preferences summary::-webkit-details-marker {
   display: none;
 }
 .request-details-chevron {
@@ -574,4 +578,160 @@
 .request-status[data-state="failed"] {
   color: #fda4af;
   background: color-mix(in srgb, #fda4af 10%, transparent);
+}
+
+/* A quiet, aligned ledger keeps transfer activity readable at a glance. */
+.request-ledger-scroll {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.request-ledger {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+.request-ledger th {
+  padding: 12px 16px;
+  background: var(--request-surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.request-ledger th:first-child {
+  width: 32%;
+}
+.request-ledger td {
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+}
+.request-ledger-row:hover,
+.request-ledger-row:focus-within {
+  background: color-mix(in srgb, var(--request-surface) 65%, transparent);
+}
+.request-book-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 230px;
+}
+.request-book-cell .request-cover {
+  width: 32px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  box-shadow: none;
+}
+.request-book-cell h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.request-book-cell h2 a {
+  color: var(--request-text);
+}
+.request-book-cell h2 a:hover {
+  color: var(--request-accent);
+}
+.request-book-cell .request-row-meta {
+  font-size: 12px;
+  max-width: 340px;
+}
+.request-ledger .request-medium {
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.request-ledger .request-status {
+  white-space: nowrap;
+}
+.request-status-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 180px;
+}
+.request-transfer-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+}
+.request-transfer-progress progress {
+  width: 64px;
+  height: 4px;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  appearance: none;
+  accent-color: var(--request-accent);
+}
+.request-transfer-progress progress::-webkit-progress-bar {
+  background: var(--line);
+}
+.request-transfer-progress progress::-webkit-progress-value {
+  background: var(--request-accent);
+}
+.request-transfer-progress progress::-moz-progress-bar {
+  background: var(--request-accent);
+}
+.request-metric {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.request-ledger .request-row-tools {
+  flex-wrap: nowrap;
+}
+.request-ledger :is(button, .control-action) {
+  min-height: 32px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.request-chevron-open {
+  transform: rotate(90deg);
+}
+.request-detail-row {
+  background: var(--request-surface);
+}
+.request-detail-content {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0 4px 44px;
+  font-size: 13px;
+}
+.request-detail-content .request-reasons {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  color: var(--muted);
+}
+.request-detail-content details {
+  margin: 0;
+}
+.source-download-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--accent);
+}
+.source-download-status[data-tone="success"] {
+  color: #82d6b5;
+}
+.source-download-status[data-tone="error"] {
+  color: #e6bd72;
+}
+.source-download-status:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }

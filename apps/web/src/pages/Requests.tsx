@@ -1,8 +1,7 @@
 import { lazy, Suspense } from "react";
-import { ArrowUpDown } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Loading } from "../components";
-import { usePendingApprovals } from "../hooks/usePendingApprovals";
+import { useRequestCounts } from "../hooks/useRequestCounts";
 import { requestFilter, type RequestFilter } from "./requestFilters";
 
 const SavedRequests = lazy(() => import("./ActivityRequests"));
@@ -36,8 +35,7 @@ export default function Requests({
   const params = new URLSearchParams(search);
   const selected = requestFilter(hash, params.get("status"));
   const sort = params.get("sort") === "title" ? "title" : "newest";
-  const pendingApprovals = usePendingApprovals(canApprove);
-  const waiting = pendingApprovals.data?.total ?? 0;
+  const counts = useRequestCounts().data;
   const visible = filters.filter(
     (filter) => (!filter.approve || canApprove) && (!filter.admin || admin),
   );
@@ -64,22 +62,29 @@ export default function Requests({
           {visible.map((filter) => (
             <Link
               key={filter.id}
+              aria-label={filter.title}
               to={queryFor(filter.id)}
               aria-current={status === filter.id ? "page" : undefined}
             >
               {filter.title}
-              {filter.id === "pending" && waiting > 0 && (
-                <span className="requests-tab-count">
-                  {waiting > 99 ? "99+" : waiting}
-                  <span className="sr-only"> waiting</span>
-                </span>
-              )}
+              {(["pending", "downloading", "review"] as string[]).includes(
+                filter.id,
+              ) &&
+                (counts?.[filter.id as "pending" | "downloading" | "review"] ??
+                  0) > 0 && (
+                  <span className="requests-tab-count">
+                    {
+                      counts?.[
+                        filter.id as "pending" | "downloading" | "review"
+                      ]
+                    }
+                  </span>
+                )}
             </Link>
           ))}
         </nav>
         <div className="page-tabs-tools">
           <label className="request-sort">
-            <ArrowUpDown size={15} aria-hidden />
             <span className="sr-only">Sort</span>
             <select
               aria-label="Sort requests"

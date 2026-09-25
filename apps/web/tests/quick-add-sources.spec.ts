@@ -401,7 +401,9 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await wedge.check();
   await expect(sourceDownload.nth(1)).toBeDisabled();
   await sourceDownload.first().click();
-  await expect(table).toContainText("Selected release download started");
+  await expect(
+    table.locator(".source-download-status").first(),
+  ).toHaveAttribute("title", "Selected release download started");
   await expect(sourceDownload.first()).toBeDisabled();
   expect(releaseDownloads).toEqual([
     "/api/source-searches/search-1/results/result-1/download",
@@ -502,27 +504,19 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   ]);
   expect(wedgeChoices).toEqual(["true", null]);
   await page.keyboard.press("Escape");
-  const feedback = table.locator(".source-download-message").first();
+  const feedback = table.locator(".source-download-status").first();
   await expect(feedback).toContainText("Download not started");
-  await expect(feedback).toHaveAttribute("role", "alert");
   await expect(feedback).toHaveAttribute("data-tone", "error");
   for (const width of [1236, 390]) {
     await page.setViewportSize({ width, height: 930 });
-    const textWidth = await feedback.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return (
-        element.clientWidth -
-        parseFloat(style.paddingLeft) -
-        parseFloat(style.paddingRight)
-      );
-    });
-    expect(textWidth).toBeGreaterThanOrEqual(180);
+    expect((await feedback.boundingBox())!.height).toBeLessThanOrEqual(32);
     await table.screenshot({
       path: testInfo.outputPath(`held-download-${width}.png`),
     });
   }
-  await expect(feedback).toContainText(
-    "The release language does not match this request",
+  await expect(feedback).toHaveAttribute(
+    "title",
+    /The release language does not match this request/,
   );
   savedDownload = {
     state: "failed",
@@ -538,7 +532,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     window.dispatchEvent(new Event("offline"));
     window.dispatchEvent(new Event("online"));
   });
-  await expect(feedback).toContainText("qBittorrent connection");
+  await expect(feedback).toHaveAttribute("title", /qBittorrent connection/);
   // A withdrawal clears the saved receipt while the source table stays mounted.
   savedDownload = null;
   await page.clock.fastForward(31_000);
@@ -546,14 +540,14 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     window.dispatchEvent(new Event("offline"));
     window.dispatchEvent(new Event("online"));
   });
-  await expect(table.locator(".source-download-message")).toHaveCount(0);
+  await expect(table.locator(".source-download-status")).toHaveCount(0);
   await expect(sourceDownload.first()).toBeEnabled();
   const downloadCount = releaseDownloads.length;
   for (const [state, label] of [
     ["queued", "Download queued"],
     ["downloading", "Downloading"],
-    ["downloaded", "Downloaded · awaiting import"],
-    ["imported", "Downloaded and imported"],
+    ["downloaded", "Downloaded"],
+    ["imported", "In library"],
   ]) {
     savedDownload = {
       state,
@@ -568,18 +562,17 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     await page.reload();
     await expect(feedback).toContainText(label);
     await expect(sourceDownload.first()).toBeDisabled();
-    await expect(sourceDownload.nth(1)).toBeDisabled(); // Still blocked, not marked downloaded.
-    await expect(table.locator(".source-download-message")).toHaveCount(1);
+    await expect(sourceDownload).toHaveCount(1); // Only the blocked release retains its download button.
+    await expect(table.locator(".source-download-status")).toHaveCount(1);
+    await expect(feedback.getByRole("progressbar")).toHaveCount(0);
     if (state === "downloading")
-      await expect(feedback.getByRole("progressbar")).toHaveAttribute(
-        "value",
-        "0.42",
-      );
+      await expect(feedback.locator(".source-download-spinner")).toHaveCount(1);
     if (state === "imported") {
       await expect(feedback).toHaveAttribute("data-tone", "success");
-      await expect(
-        feedback.getByRole("link", { name: "View request" }),
-      ).toHaveAttribute("href", "/requests#request-request-1");
+      await expect(feedback).toHaveAttribute(
+        "href",
+        "/requests#request-request-1",
+      );
       await page.setViewportSize({ width: 1236, height: 930 });
       await table.screenshot({
         path: testInfo.outputPath("imported-release.png"),

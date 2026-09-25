@@ -28,7 +28,7 @@ import {
 import { api, ApiError, result, setCsrf } from "./api/client";
 import type { Auth } from "./api/client";
 import { Loading, Notice } from "./components";
-import { usePendingApprovals } from "./hooks/usePendingApprovals";
+import { useRequestCounts } from "./hooks/useRequestCounts";
 import { useLibraryReviewCount } from "./hooks/useLibraryReviewCount";
 import { canManageOwnRequests } from "./permissions";
 
@@ -390,10 +390,8 @@ function Shell({ auth }: { auth: Auth }) {
       setSearch(new URLSearchParams(location.search).get("q") || "");
   }, [location.pathname, location.search]);
   const permissions = auth.user.permissions ?? [];
-  const canApprove =
-    auth.user.role === "admin" || permissions.includes("manage_requests");
-  const pendingApprovals = usePendingApprovals(canApprove);
-  const waiting = pendingApprovals.data?.total ?? 0;
+  const requestCounts = useRequestCounts().data;
+  const waiting = requestCounts?.active ?? 0;
   const admin = auth.user.role === "admin";
   const canEdit = auth.user.role !== "viewer";
   const reviewing = useLibraryReviewCount(admin).data?.total ?? 0;
@@ -468,13 +466,17 @@ function Shell({ auth }: { auth: Auth }) {
               )}
             </NavLink>
           )}
-          <NavLink to={waiting > 0 ? "/requests?status=pending" : "/requests"}>
+          <NavLink
+            to="/requests"
+            aria-label="Requests"
+            title={`${waiting} active requests`}
+          >
             <Download size={19} />
             Requests
             {waiting > 0 && (
               <span className="nav-count">
                 {waiting > 99 ? "99+" : waiting}
-                <span className="sr-only"> waiting for approval</span>
+                <span className="sr-only"> active requests</span>
               </span>
             )}
           </NavLink>
