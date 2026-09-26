@@ -497,7 +497,7 @@ def test_probe_cleanup_does_not_mask_an_earlier_failure(roots, monkeypatch):
     assert not list(source.iterdir()) and not list(target.iterdir())
 
 
-@pytest.mark.parametrize("path", ["/library", "/audiobooks"])
+@pytest.mark.parametrize("path", ["/library", "/audiobooks", "/shelf-42", "/Reading Room"])
 def test_top_level_library_uses_private_child(path):
     library = Path(path)
     assert choose_staging(library, None, None) == library / STAGING_NAME
@@ -554,3 +554,11 @@ def test_same_device_different_bind_mount_is_rejected(media, monkeypatch, other_
         with pytest.raises(InspectionError, match="different mounts"):
             check_library_route(media, other / STAGING_NAME, [])
         assert not (other / STAGING_NAME).exists()
+
+
+def test_repick_does_not_preserve_staging_that_became_part_of_library(media):
+    previous = media / "old-incoming"
+    previous.mkdir()
+    assert choose_staging(media, None, previous) == media.parent / STAGING_NAME
+    # An operator override is explicit, and is rejected with its path by layout validation.
+    assert choose_staging(media, previous, None) == previous

@@ -85,14 +85,34 @@ function Editor({
     const timer = window.setTimeout(() => setPreviewProfile(draft), 250);
     return () => window.clearTimeout(timer);
   }, [draft]);
+  const namingDestinations = Object.fromEntries(
+    (["ebook", "audio"] as const).flatMap((kind) => {
+      const selected = selectLibraryDestination(
+        folders.data?.destinations || [],
+        folders.data?.defaults.effective?.[`${kind}_destination_id`],
+        kind,
+      );
+      return selected?.enabled ? [[kind, selected.id]] : [];
+    }),
+  );
   const preview = useQuery({
-    queryKey: ["organization-preview", "builder", previewProfile],
+    queryKey: [
+      "organization-preview",
+      "builder",
+      previewProfile,
+      namingDestinations,
+      folders.data?.destinations.map((row) => row.shared_root),
+    ],
     retry: false,
     placeholderData: (previous) => previous,
     queryFn: async () =>
       result(
         await api.POST("/api/organization/preview", {
-          body: { profile: previewProfile, groups: namingExamples },
+          body: {
+            profile: previewProfile,
+            groups: namingExamples,
+            destinations: namingDestinations,
+          },
         }),
       ),
   });

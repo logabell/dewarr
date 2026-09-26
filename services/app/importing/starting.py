@@ -95,6 +95,10 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
         if not row or row.medium != medium or not row.enabled:
             raise HTTPException(422, "Choose an enabled destination for each medium")
         current = await destination_view(db, row)
+        if current.shared_root != (medium in document.get("shared_media", [])):
+            raise HTTPException(
+                409, "This destination needs different folder names; select it and save a new plan"
+            )
         if (
             current.revision != choice.revision
             or not current.probe

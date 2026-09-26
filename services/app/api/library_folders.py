@@ -34,7 +34,7 @@ from app.domain.release_profiles import DEFAULTS_LOCK
 from app.importing.destination_view import DestinationView, view
 from app.importing.destinations import check_library_route, choose_staging
 from app.importing.filesystem import InspectionError
-from app.importing.layout import check_staging_backend, overlaps, unsafe_staging
+from app.importing.layout import check_library_layout, check_staging_backend, overlaps
 from app.importing.naming import StrictModel, fingerprint
 from app.importing.planning import assert_admin
 from app.importing.route_evidence import approval
@@ -237,7 +237,23 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
     storage = await db.get(ImportStorageSettings, 1)
     previous = storage_route(settings, root_key)
     current = previous.staging_root if previous else None
-    stage = await asyncio.to_thread(choose_staging, local, explicit, current)
+    # New media routes pointing to one folder reuse its publication storage.
+    # Existing routes retain their journal/lock protocol for recovery.
+    shared_route = next(
+        (
+            route
+            for key, path in settings.import_destinations.items()
+            if key != root_key and path == local
+            if (route := storage_route(settings, key)) is not None
+        ),
+        None,
+    )
+    stage = await asyncio.to_thread(
+        choose_staging,
+        local,
+        explicit,
+        current or (shared_route.staging_root if shared_route else None),
+    )
     pending = 0
     if current:
         pending = await db.scalar(
@@ -261,19 +277,17 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
         if existing_stage == stage:
             journals = existing_journals
             break
-    if previous and stage == current and previous.journal_root is not None:
+    if shared_route and stage == shared_route.staging_root and not previous:
+        journals = shared_route.journal_root
+    if previous and stage == current:
         journals = previous.journal_root
     chosen_route = ImportStorageRoute(staging_root=stage, journal_root=journals)
     roots = {**settings.import_destinations, root_key: local}
-    for root in roots.values():
-        if unsafe_staging(root, stage) or any(
-            overlaps(root, source) for source in settings.import_sources.values()
-        ):
-            raise HTTPException(
-                422,
-                "Library folders must be separate from downloads and staging, except for "
-                "Dewarr's private .book-search-staging child folder.",
-            )
+    try:
+        check_library_layout(roots, settings.import_sources, stage)
+    except ValueError as error:
+        logger.warning("Library folder selection rejected: %s", error)
+        raise HTTPException(422, str(error)) from error
     integration = await db.get(Integration, library.integration_id)
     try:
         check_staging_backend(

@@ -1,3 +1,6 @@
+from typing import Literal
+from uuid import UUID
+
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 from sqlalchemy import select
@@ -16,6 +19,7 @@ from app.importing.naming import (
     plan_import,
 )
 from app.importing.settings import current_profile
+from app.importing.storage import shared_naming_media
 
 router = APIRouter(prefix="/organization", tags=["organization"])
 
@@ -35,6 +39,7 @@ class SaveSettings(StrictModel):
 class PreviewInput(StrictModel):
     profile: NamingProfile | None = None
     groups: list[ImportGroup] | None = Field(default=None, min_length=1, max_length=100)
+    destinations: dict[Literal["ebook", "audio"], UUID] = Field(default_factory=dict)
 
 
 @router.get("/settings", response_model=SettingsView)
@@ -76,9 +81,13 @@ async def defaults(admin: Admin):
 @router.post("/preview", response_model=ImportPlan)
 async def preview(body: PreviewInput, admin: Admin, db: Database):
     try:
+        groups = body.groups if body.groups is not None else naming_examples()
         return plan_import(
-            body.groups if body.groups is not None else naming_examples(),
+            groups,
             body.profile or await current_profile(db),
+            shared_media=await shared_naming_media(
+                db, {group.medium for group in groups}, body.destinations, require_choice=False
+            ),
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error

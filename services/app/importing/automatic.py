@@ -496,6 +496,7 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             profile_revision=fingerprint(profile.model_dump()),
             grouping_revision=grouping_revision,
             selections=choices,
+            destinations={destination.medium: destination.id},
         ),
     )
     imported = await start_import(

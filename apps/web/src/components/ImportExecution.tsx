@@ -78,6 +78,7 @@ export default function ImportExecution({
       (row) =>
         row.id ===
         (choices[medium] ||
+          plan.document.destinations?.[medium] ||
           (eligible(medium).length === 1 ? eligible(medium)[0].id : "")),
     );
   const publish = useMutation({

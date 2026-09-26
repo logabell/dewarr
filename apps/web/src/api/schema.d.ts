@@ -7398,6 +7398,13 @@ export interface components {
       backend_path: string;
       /** Local Path */
       local_path?: string | null;
+      /** Staging Path */
+      staging_path?: string | null;
+      /**
+       * Shared Root
+       * @default false
+       */
+      shared_root: boolean;
       /** Mode */
       mode: string;
       /**
@@ -8199,11 +8206,21 @@ export interface components {
        * @default true
        */
       include_covers: boolean;
+      /** Destinations */
+      destinations?: {
+        [key: string]: string;
+      };
     };
     /** FrozenDocument */
     FrozenDocument: {
       /** Schema Version */
       schema_version: number;
+      /** Shared Media */
+      shared_media?: ("ebook" | "audio")[];
+      /** Destinations */
+      destinations?: {
+        [key: string]: string;
+      };
       /** Inspection Revision */
       inspection_revision: string;
       /** Grouping Revision */
@@ -10824,6 +10841,10 @@ export interface components {
       profile?: components["schemas"]["NamingProfile"] | null;
       /** Groups */
       groups?: components["schemas"]["ImportGroup"][] | null;
+      /** Destinations */
+      destinations?: {
+        [key: string]: string;
+      };
     };
     /** PreviewView */
     PreviewView: {

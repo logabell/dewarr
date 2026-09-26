@@ -23,6 +23,7 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .library-setup-intro {
   color: var(--muted);
@@ -366,6 +367,40 @@
   border-radius: 5px;
   background: var(--surface);
   font-size: 11px;
+}
+.library-folder-settings .library-shared-status {
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.library-shared-status svg {
+  flex-shrink: 0;
+}
+.library-staging-details {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.library-staging-details summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 5px 0;
+}
+.library-staging-details summary:hover {
+  color: var(--accent);
+}
+.library-staging-details p {
+  margin: 6px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.library-reuse-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+  font-size: 12px;
 }
 .library-folder-settings .media-folder-actions {
   display: flex;

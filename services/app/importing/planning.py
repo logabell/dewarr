@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid5
 
 from fastapi import HTTPException
@@ -40,7 +40,7 @@ from app.importing.naming import (
     plan_import,
 )
 from app.importing.settings import current_profile
-from app.importing.storage import import_sources
+from app.importing.storage import import_sources, shared_naming_media
 from app.importing.versioning import version_revision
 from app.importing.workflow import source_matches
 
@@ -98,10 +98,13 @@ class FreezeInput(StrictModel):
     grouping_revision: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     selections: list[GroupSelection] = Field(min_length=1, max_length=100)
     include_covers: bool = True
+    destinations: dict[Literal["ebook", "audio"], UUID] = Field(default_factory=dict)
 
 
 class FrozenDocument(StrictModel):
     schema_version: int
+    shared_media: list[Literal["ebook", "audio"]] = Field(default_factory=list)
+    destinations: dict[Literal["ebook", "audio"], UUID] = Field(default_factory=dict)
     inspection_revision: str
     grouping_revision: str | None = None
     excluded_files: list[dict[str, str]] = Field(default_factory=list)
@@ -276,7 +279,15 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
             ) from error
     from app.domain.catalog_metadata import preferences
 
-    plan = plan_import(groups, profile, combine_parts=(await preferences(db)).combine_library_parts)
+    shared_media = await shared_naming_media(
+        db, {group.medium for group in groups}, body.destinations
+    )
+    plan = plan_import(
+        groups,
+        profile,
+        combine_parts=(await preferences(db)).combine_library_parts,
+        shared_media=shared_media,
+    )
     # Replacements publish alongside the reported copy; no rename, overwrite or
     # deletion of library content is part of failed-download recovery.
     from app.db.models import AcquisitionSelection, DownloadAttempt, DownloadMembership
@@ -294,6 +305,10 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
     selected_files = sorted({file.path for group in groups for file in group.files})
     document = {
         "schema_version": 2,
+        "shared_media": sorted(shared_media),
+        "destinations": {
+            medium: str(identifier) for medium, identifier in body.destinations.items()
+        },
         "initial_sidecars": sidecars,
         "version_revisions": versions,
         "cover_sources": covers,

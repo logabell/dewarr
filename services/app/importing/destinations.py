@@ -436,7 +436,7 @@ def choose_staging(local: Path, explicit: Path | None, current: Path | None) -> 
     if explicit:
         return explicit
     mounts = filesystem_mounts()
-    if current:
+    if current and not unsafe_staging(local, current):
         try:
             if _device(current) == _device(local) and _mount_point(current, mounts) == _mount_point(
                 local, mounts

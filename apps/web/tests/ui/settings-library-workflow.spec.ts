@@ -431,9 +431,6 @@ for (const mode of ["hardlink", "copy"]) {
       document.documentElement.setAttribute("data-theme", "dark"),
     );
     await expect(page).toHaveURL(/#libraries$/);
-    await expect(page.getByText("Library access", { exact: true })).toHaveCount(
-      0,
-    );
     await expect(
       page.getByRole("link", { name: "Saved profiles", exact: true }),
     ).toHaveCount(0);

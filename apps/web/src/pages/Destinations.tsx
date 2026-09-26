@@ -10,6 +10,7 @@ import {
   Folder,
   Headphones,
   LoaderCircle,
+  Link2,
 } from "lucide-react";
 import { api, result } from "../api/client";
 
@@ -161,7 +162,7 @@ export default function Destinations({
       {!embedded && <h1>Library folders</h1>}
       <p className="muted">
         Choose where completed ebooks and audiobooks belong. Downloads stay
-        available for seeding.
+        available for seeding. Both formats can use the same library folder.
       </p>
       <Notice error={query.error || verification.error} />
       {verificationProgress && <p role="status">{verificationProgress}</p>}
@@ -193,6 +194,12 @@ export default function Destinations({
                     )}
                     <div className="media-folder-copy">
                       <h3>{names[medium]}</h3>
+                      {destination?.shared_root && (
+                        <span className="library-folder-status library-shared-status">
+                          <Link2 size={12} aria-hidden="true" />
+                          Shared · Ebooks + Audiobooks
+                        </span>
+                      )}
                       <p>
                         {destination
                           ? `${library?.name || "Library"} · ${libraryApp(destination.server_kind)}`
@@ -257,6 +264,13 @@ export default function Destinations({
                   </div>
                   {destination && (
                     <div className="media-folder-automation">
+                      {destination.shared_root && (
+                        <p className="muted">
+                          One library folder for both formats. New imports use
+                          separate book folders labeled Ebook or Audiobook;
+                          existing books stay where they are.
+                        </p>
+                      )}
                       <dl className="library-folder-paths">
                         <div>
                           <dt>
@@ -279,6 +293,17 @@ export default function Destinations({
                             </div>
                           )}
                       </dl>
+                      {destination.staging_path && (
+                        <details className="library-staging-details">
+                          <summary>Temporary import storage</summary>
+                          <p>
+                            Dewarr prepares complete books in{" "}
+                            <code>{destination.staging_path}</code> before
+                            adding them to your library. This folder is managed
+                            automatically.
+                          </p>
+                        </details>
+                      )}
                       <section
                         className="library-verification-next"
                         aria-label="Folder verification"
@@ -354,6 +379,7 @@ export default function Destinations({
         <FolderPicker
           medium={editing}
           saved={selected(editing)}
+          other={selected(editing === "ebook" ? "audio" : "ebook")}
           close={() => setEditing(null)}
         />
       )}
@@ -364,10 +390,12 @@ export default function Destinations({
 function FolderPicker({
   medium,
   saved,
+  other,
   close,
 }: {
   medium: Medium;
   saved?: Destination;
+  other?: Destination;
   close: () => void;
 }) {
   const cache = useQueryClient();
@@ -466,6 +494,18 @@ function FolderPicker({
   const mapping = otherPath || remotePath;
   const eligible = !!selectedFolder;
   const workerPath = mapping ? localPath.trim() : backendPath;
+  const sharesFolder =
+    !!other?.enabled &&
+    !!other.local_path &&
+    workerPath.replace(/\/+$/, "") === other.local_path.replace(/\/+$/, "");
+  const reusable =
+    other?.enabled &&
+    other.local_path &&
+    folders.find(
+      (folder) =>
+        folder.library_id === other.library_id &&
+        folder.path === other.backend_path,
+    );
   const saveBlocker = !eligible
     ? "Choose an available library folder first."
     : !workerPath.trim()
@@ -576,7 +616,8 @@ function FolderPicker({
           <>
             <p className="library-setup-intro">
               Choose the library for completed downloads. Use its default folder
-              path or a custom path for your mount.
+              path or a custom path for your mount. Folder names do not matter;
+              choose the location both apps can access.
             </p>
             <Notice error={options.error} />
             {options.isError && (
@@ -598,6 +639,29 @@ function FolderPicker({
                   disabled={save.isPending}
                 >
                   <legend>Library for {names[medium].toLowerCase()}</legend>
+                  {reusable && (
+                    <button
+                      type="button"
+                      className="library-reuse-folder"
+                      onClick={() => {
+                        setChoice(reusable.key);
+                        setLocalPath(other!.local_path!);
+                        setOtherPath(other!.local_path !== other!.backend_path);
+                      }}
+                    >
+                      <Link2 size={14} aria-hidden="true" />
+                      Use the same folder as{" "}
+                      {names[
+                        medium === "ebook" ? "audio" : "ebook"
+                      ].toLowerCase()}
+                    </button>
+                  )}
+                  {sharesFolder && (
+                    <p className="notice" role="status">
+                      Shared library · Ebooks + Audiobooks. New imports use
+                      separate book folders labeled Ebook or Audiobook.
+                    </p>
+                  )}
                   {folders.length > 1 && (
                     <label className="library-selection">
                       Library

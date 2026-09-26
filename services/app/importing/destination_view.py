@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
@@ -10,7 +11,7 @@ from app.domain.downloaders import TRANSFER_KINDS, mapped_path
 from app.domain.recovery_approvals import denial
 from app.importing.destinations import current_receipts, destination_configuration
 from app.importing.naming import StrictModel, fingerprint
-from app.importing.storage import import_sources
+from app.importing.storage import import_sources, shared_library_roots
 
 
 class ClientRouteView(StrictModel):
@@ -29,6 +30,8 @@ class DestinationView(StrictModel):
     medium: str
     backend_path: str
     local_path: str | None = None
+    staging_path: str | None = None
+    shared_root: bool = False
     mode: str
     seeding_rename: bool = False
     client_path: str | None = None
@@ -79,6 +82,11 @@ async def view(db, row, *, include_routes=False):
         medium=row.medium,
         backend_path=row.backend_path,
         local_path=configuration["root_path"],
+        staging_path=configuration["staging_path"],
+        shared_root=bool(
+            configuration["root_path"]
+            and Path(configuration["root_path"]) in await shared_library_roots(db)
+        ),
         mode=row.mode,
         seeding_rename=bool(row.seeding_rename),
         client_path=row.client_path,

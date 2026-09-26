@@ -248,6 +248,25 @@ function Review({ inspection }: { inspection: Inspection }) {
   const [fileLimit, setFileLimit] = useState(100);
   const [editingGroups, setEditingGroups] = useState(false);
   const [includeCovers, setIncludeCovers] = useState(true);
+  const [destinationIds, setDestinationIds] = useState<Record<string, string>>(
+    {},
+  );
+  const destinations = useQuery({
+    queryKey: ["review-destinations"],
+    queryFn: async () =>
+      result(await api.GET("/api/organization/destinations")),
+  });
+  const namingDestinations = Object.fromEntries(
+    (["ebook", "audio"] as const).flatMap((medium) => {
+      const candidates = (destinations.data || []).filter(
+        (row) => row.medium === medium && row.enabled,
+      );
+      const chosen =
+        candidates.find((row) => row.id === destinationIds[medium]) ||
+        (candidates.length === 1 ? candidates[0] : undefined);
+      return chosen ? [[medium, chosen.id]] : [];
+    }),
+  );
   const snapshot = inspection.snapshot;
   const grouping = useQuery({
     queryKey: ["inspection-grouping", inspection.id],
@@ -314,6 +333,7 @@ function Review({ inspection }: { inspection: Inspection }) {
             grouping_revision: grouping.data!.revision,
             include_covers: includeCovers,
             selections: Object.values(selections),
+            destinations: namingDestinations,
           },
         }),
       ),
@@ -475,7 +495,46 @@ function Review({ inspection }: { inspection: Inspection }) {
               </button>
             )}
           </details>
-          <Notice error={settings.error || save.error} />
+          <Notice error={settings.error || destinations.error || save.error} />
+          {(["ebook", "audio"] as const).map((medium) => {
+            const candidates = (destinations.data || []).filter(
+              (row) => row.medium === medium && row.enabled,
+            );
+            if (
+              new Set(candidates.map((row) => !!row.shared_root)).size < 2 ||
+              !groups.some(
+                (group) => group.medium === medium && selections[group.key],
+              )
+            )
+              return null;
+            return (
+              <label key={medium}>
+                {medium === "ebook"
+                  ? "Ebook destination"
+                  : "Audiobook destination"}
+                <select
+                  value={namingDestinations[medium] || ""}
+                  disabled={save.isPending}
+                  onChange={(event) =>
+                    setDestinationIds((current) => ({
+                      ...current,
+                      [medium]: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">
+                    Choose a folder for the naming preview
+                  </option>
+                  {candidates.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.backend_path}
+                      {row.shared_root ? " · Shared library" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
           <label className="check-label">
             <input
               type="checkbox"
@@ -519,6 +578,8 @@ function Review({ inspection }: { inspection: Inspection }) {
                 settings.refetch();
                 grouping.refetch();
                 matches.refetch();
+                destinations.refetch();
+                setDestinationIds({});
                 setSelections({});
               }}
             >

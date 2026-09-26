@@ -854,9 +854,10 @@ async def evaluate(db, library_id, version_id, rows):
     from app.importing.destination_view import view as destination_view
     from app.importing.destinations import destination_configuration
     from app.importing.metadata import ExportMetadata, initial_sidecars
-    from app.importing.naming import NamingMetadata, render, values_for
+    from app.importing.naming import NamingMetadata, media_folder, render, values_for
     from app.importing.planning import filing_series
     from app.importing.settings import current_profile
+    from app.importing.storage import shared_library_roots
 
     if reason := incomplete(rows):
         raise CombineSkipped(reason)
@@ -958,7 +959,11 @@ async def evaluate(db, library_id, version_id, rows):
             recording_year=version.publication_year,
             asin=asin if isinstance(asin, str) else None,
         )
-        folder = render(profile.audio_folder, values_for(metadata, medium="audio"))
+        folder = media_folder(
+            render(profile.audio_folder, values_for(metadata, medium="audio")),
+            "audio",
+            shared_library=Path(configuration["root_path"]) in await shared_library_roots(db),
+        )
         sidecars = initial_sidecars(
             ExportMetadata(medium="audio", naming=metadata, description=work.description)
         )

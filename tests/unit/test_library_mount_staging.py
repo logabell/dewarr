@@ -117,3 +117,34 @@ def test_shared_media_uses_protected_entry_locks(specification):
             pass
     assert not list(stage.glob("lock-*"))
     assert len(list(control.glob("lock-*"))) == 1
+
+
+@pytest.mark.parametrize("name", ["collection", "Reading Room", "shelf-42"])
+def test_location_validation_accepts_shared_root_with_any_name(name):
+    from pathlib import Path
+
+    from app.importing.layout import check_library_layout
+
+    root = Path("/") / name
+    check_library_layout(
+        {"ebook": root, "audio": root}, {"incoming": Path("/transfers")}, root / STAGING_NAME
+    )
+
+
+@pytest.mark.parametrize("conflict", ["download", "staging", "staging-download"])
+def test_layout_conflict_identifies_the_two_actual_locations(conflict):
+    from pathlib import Path
+
+    from app.importing.layout import check_library_layout
+
+    root, source, staging = Path("/shelf-42"), Path("/transfers"), Path("/shelf-42") / STAGING_NAME
+    if conflict == "download":
+        source = root / "incoming"
+    elif conflict == "staging":
+        staging = root / "old-incoming"
+    else:
+        staging = source / "temporary"
+    with pytest.raises(ValueError) as error:
+        check_library_layout({"my-books": root}, {"my-downloads": source}, staging)
+    assert str(source if conflict != "staging" else root) in str(error.value)
+    assert str(root if conflict == "download" else staging) in str(error.value)

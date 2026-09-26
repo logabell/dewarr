@@ -22443,6 +22443,22 @@
             ],
             "title": "Local Path"
           },
+          "staging_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Staging Path"
+          },
+          "shared_root": {
+            "type": "boolean",
+            "title": "Shared Root",
+            "default": false
+          },
           "mode": {
             "type": "string",
             "title": "Mode"
@@ -24614,6 +24630,20 @@
             "type": "boolean",
             "title": "Include Covers",
             "default": true
+          },
+          "destinations": {
+            "additionalProperties": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "propertyNames": {
+              "enum": [
+                "ebook",
+                "audio"
+              ]
+            },
+            "type": "object",
+            "title": "Destinations"
           }
         },
         "additionalProperties": false,
@@ -24630,6 +24660,31 @@
           "schema_version": {
             "type": "integer",
             "title": "Schema Version"
+          },
+          "shared_media": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "ebook",
+                "audio"
+              ]
+            },
+            "type": "array",
+            "title": "Shared Media"
+          },
+          "destinations": {
+            "additionalProperties": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "propertyNames": {
+              "enum": [
+                "ebook",
+                "audio"
+              ]
+            },
+            "type": "object",
+            "title": "Destinations"
           },
           "inspection_revision": {
             "type": "string",
@@ -31635,6 +31690,20 @@
               }
             ],
             "title": "Groups"
+          },
+          "destinations": {
+            "additionalProperties": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "propertyNames": {
+              "enum": [
+                "ebook",
+                "audio"
+              ]
+            },
+            "type": "object",
+            "title": "Destinations"
           }
         },
         "additionalProperties": false,

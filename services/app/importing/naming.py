@@ -306,7 +306,17 @@ def collision_key(path):
     return unicodedata.normalize("NFKC", path).casefold()
 
 
-def plan_import(groups: list[ImportGroup], profile: NamingProfile, *, combine_parts=True):
+def media_folder(folder: str, medium: str, *, shared_library: bool) -> str:
+    if not shared_library:
+        return folder
+    parents, _, leaf = folder.rpartition("/")
+    label = "Audiobook" if medium == "audio" else "Ebook"
+    return "/".join(part for part in (parents, component(f"{leaf} ({label})")) if part)
+
+
+def plan_import(
+    groups: list[ImportGroup], profile: NamingProfile, *, combine_parts=True, shared_media=()
+):
     if not groups or len(groups) > 100 or sum(len(group.files) for group in groups) > 10000:
         raise ValueError("Preview 1–100 book groups and at most 10,000 files at a time")
     if len({group.id for group in groups}) != len(groups):
@@ -400,7 +410,16 @@ def plan_import(groups: list[ImportGroup], profile: NamingProfile, *, combine_pa
             )
             if not group.metadata.authors:
                 item.missing_metadata.append("author")
-            folder = render(template, values)
+            shared_library = group.medium in shared_media
+            folder = media_folder(
+                render(template, values), group.medium, shared_library=shared_library
+            )
+            if shared_library:
+                # Publication owns complete version folders, never an existing book's
+                # contents. Keep both formats importable even with identical metadata.
+                item.warnings.append(
+                    "Shared library: ebooks and audiobooks use separate version folders"
+                )
             if values["part"] and "part" not in template_tokens(template):
                 # Audiobookshelf and Grimmory keep each folder as its own item. The label
                 # keeps a lone part distinct, and Dewarr groups the parts under one book.

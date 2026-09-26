@@ -273,10 +273,19 @@ async def status(client, work_id):
 
 
 @pytest.mark.parametrize("shelf", ["sibling", "nested"], indirect=True)
+@pytest.mark.parametrize("shared", [False, True])
 async def test_a_complete_part_set_becomes_one_book_and_separates_again(
-    client, admin, database, shelf
+    client, admin, database, shelf, shared, monkeypatch
 ):
     root, fake, library_id = shelf["root"], shelf["fake"], shelf["library_id"]
+    if shared:
+        monkeypatch.setattr(get_settings(), "import_destinations", {"audio": root, "ebook": root})
+        async with database() as db, db.begin():
+            db.add(
+                ImportDestination(
+                    root_key="ebook", library_id=library_id, medium="ebook", backend_path="/books"
+                )
+            )
     rows = await parts(database, library_id)
     assert [contains.part_index for _, contains in rows] == [1, 2, 3]
     assert len({asset.version_id for asset, _ in rows}) == 1
@@ -303,10 +312,9 @@ async def test_a_complete_part_set_becomes_one_book_and_separates_again(
     operation = await run_latest(database)
     assert operation.status == "completed", operation.message
     assert operation.message == "Combined the parts into one book"
-    book = root / "Alex Morgan" / "Dark Age - Full Cast"
-    assert sorted(path.name for path in (root / "Alex Morgan").iterdir()) == [
-        "Dark Age - Full Cast"
-    ]
+    leaf = "Dark Age - Full Cast" + (" (Audiobook)" if shared else "")
+    book = root / "Alex Morgan" / leaf
+    assert sorted(path.name for path in (root / "Alex Morgan").iterdir()) == [leaf]
     assert sorted(path.name for path in book.iterdir()) == [
         "Disc 1",
         "Disc 2",
@@ -318,7 +326,7 @@ async def test_a_complete_part_set_becomes_one_book_and_separates_again(
     assert sorted(fake.deleted) == sorted(part_items)
     [current] = await status(client, work_id)
     assert current["state"] == "combined" and current["can_separate"]
-    assert current["folder"] == "Alex Morgan/Dark Age - Full Cast"
+    assert current["folder"] == f"Alex Morgan/{leaf}"
 
     rows = await parts(database, library_id)
     by_state = {asset.external_id: (asset.state, contains.part_index) for asset, contains in rows}
