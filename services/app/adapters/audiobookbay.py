@@ -171,7 +171,7 @@ def posting(post, path):
     author = field_value(content, "written by|author")
     narrator = field_value(content, "read by|narrated by|narrator")
     # A conventional title suffix is displayed as part of the raw release title;
-    # only explicitly labelled author data can corroborate automatic identity.
+    # catalog matching separately checks conventional title/credit pairs.
     title = raw.rsplit(" - ", 1)[0] if author and raw.endswith(" - " + author) else raw
     language = field_value(info + "\n" + content, "language")
     formats = sorted(
@@ -379,6 +379,10 @@ def parse_detail(content, base_url, path):
     )
 
 
+class _HomepageRedirect(AdapterError):
+    """A search redirect to the configured root can be retried without following it."""
+
+
 class ABBClient:
     def __init__(
         self,
@@ -445,7 +449,12 @@ class ABBClient:
                         else None,
                     )
                 if 300 <= response.status_code < 400:
-                    raise AdapterError(
+                    error_type = (
+                        _HomepageRedirect
+                        if self._homepage_redirect(response.headers.get("location", ""))
+                        else AdapterError
+                    )
+                    raise error_type(
                         FailureKind.ROUTE,
                         "AudiobookBay redirected the request. Configure its final site origin.",
                     )
@@ -480,11 +489,32 @@ class ABBClient:
             raise AdapterError(FailureKind.PARSER, "AudiobookBay site layout was not recognized.")
         return True
 
+    def _homepage_redirect(self, location):
+        if not location:
+            return False
+        try:
+            target = urlsplit(urljoin(self.base_url + "/", location.strip()))
+        except ValueError:
+            return False
+        origin = urlsplit(self.base_url)
+        return (
+            target.scheme == origin.scheme
+            and target.netloc.lower() == origin.netloc.lower()
+            and target.path in {"", "/"}
+            and not target.query
+            and not target.fragment
+        )
+
     async def search(self, query):
         await self.request("/")  # Some hosts initialize a public session cookie here.
-        html = await self.request(
-            "/" if query.page == 1 else f"/page/{query.page}/", {"s": query.q, "cat": "undefined"}
-        )
+        path = "/" if query.page == 1 else f"/page/{query.page}/"
+        try:
+            html = await self.request(path, {"s": query.q, "cat": "undefined"})
+        except _HomepageRedirect:
+            lower = query.q.lower()
+            if lower == query.q:
+                raise
+            html = await self.request(path, {"s": lower, "cat": "undefined"})
         return parse_search(html, self.base_url, query.page)
 
     async def detail(self, path):

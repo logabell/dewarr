@@ -241,6 +241,12 @@ async def test_private_series_and_private_merged_origin_do_not_supply_terms(
             "Observed Cycle",
         }
         assert "Private series" not in str(plan) and "Hidden Origin" not in str(plan)
+        snapshot = await book_sources.identity(db, work, owner.id)
+        assert {entry["name"] for entry in snapshot["series"]} == {
+            "Harbor Cycle",
+            "Harbor Stories",
+            "Observed Cycle",
+        }
 
 
 async def test_legacy_search_retains_single_query_behavior(client, database, series, source_http):

@@ -14,7 +14,17 @@ from app.adapters.mam import MAMSearch
 from app.adapters.prowlarr import ProwlarrSearch
 from app.adapters.source_releases import SOURCE_NAMES
 from app.config import get_settings
-from app.db.models import Operation, SourceArtifact, SourceConnection, SourceResult, User, Work
+from app.db.models import (
+    CatalogSeries,
+    Operation,
+    SeriesMembership,
+    SourceArtifact,
+    SourceConnection,
+    SourceResult,
+    User,
+    Work,
+    WorkMetadataSource,
+)
 from app.db.session import session_factory
 from app.domain import series_preparation, source_queries
 from app.domain.audiobookbay_network import abb_call
@@ -23,8 +33,8 @@ from app.domain.prowlarr_network import prowlarr_call
 from app.domain.release_profiles import PreferenceOverrides
 from app.domain.request_preferences import for_intent, owned_request
 from app.domain.source_network import source_call
-from app.domain.visibility import visible_work
-from app.domain.work_graph import canonical_work
+from app.domain.visibility import visible_origin_work, visible_work
+from app.domain.work_graph import canonical_work, family_ids
 from app.jobs.queue import enqueue
 from app.jobs.retry import SourceSearchRetry
 from app.security import encrypt_secrets
@@ -55,8 +65,64 @@ async def accessible_work(db, user, identifier):
     return work
 
 
-def identity(work):
-    return {"id": str(work.id), "title": work.title, "authors": work.authors}
+async def identity(db, work, owner_id):
+    user = await db.get(User, owner_id)
+    rows = (
+        await db.execute(
+            select(CatalogSeries.name, SeriesMembership.snapshot)
+            .join(SeriesMembership, SeriesMembership.series_id == CatalogSeries.id)
+            .where(
+                CatalogSeries.owner_id == owner_id,
+                SeriesMembership.work_id.in_(family_ids(work.id)),
+                SeriesMembership.present.is_(True),
+            )
+        )
+    ).all()
+    metadata = await db.scalars(
+        select(WorkMetadataSource.snapshot)
+        .join(Work, Work.id == WorkMetadataSource.work_id)
+        .where(
+            WorkMetadataSource.work_id.in_(family_ids(work.id)),
+            WorkMetadataSource.accepted.is_(True),
+            visible_origin_work(user),
+        )
+    )
+    rows = list(rows)
+    for snapshot in metadata:
+        rows.extend(
+            (entry.get("name", ""), entry)
+            for entry in snapshot.get("series", [])
+            if isinstance(entry, dict)
+        )
+    series = []
+    for name, snapshot in rows:
+        value = snapshot.get("position") if isinstance(snapshot, dict) else None
+        position = str(value).strip() if value is not None else ""
+        if name and not (isinstance(snapshot, dict) and snapshot.get("compilation")):
+            series.append({"name": name, "position": position})
+    series = [
+        dict(name=name, position=position)
+        for name, position in sorted({(item["name"], item["position"]) for item in series})
+    ]
+    return {
+        "id": str(work.id),
+        "title": work.title,
+        "authors": work.authors,
+        "series": series,
+    }
+
+
+def same_identity(current, stored):
+    """Series membership is part of the snapshot once a search has stored it.
+
+    An empty list means the series catalog had not arrived yet. Filling it in
+    does not make this a different book. A different non-empty list does.
+    """
+    if not isinstance(stored, dict):
+        return False
+    if not stored.get("series"):
+        stored = {**stored, "series": current.get("series") or []}
+    return current == stored
 
 
 async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=None):
@@ -104,7 +170,7 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
             message="Using the original selected pack; no new source query",
             payload={
                 "command": command,
-                "work": identity(work),
+                "work": await identity(db, work, user.id),
                 "query": query,
                 "identifiers": identifiers,
                 "query_plan": query_plan,
@@ -172,7 +238,7 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
         idempotency_key=key,
         payload={
             "command": command,
-            "work": identity(work),
+            "work": await identity(db, work, user.id),
             "query": query,
             "identifiers": identifiers,
             "query_plan": query_plan,
@@ -218,6 +284,7 @@ async def enqueue_sources(db, operation):
 async def launch(db, operation, user, work):
     """Freeze the final query evidence only after prerequisite catalog observation."""
     payload = deepcopy(operation.payload)
+    payload["work"] = await identity(db, work, user.id)
     profile = payload["profile"]["preferences"]
     plan = await source_queries.plan(
         db, user, work, payload["query"], profile.get("search_series", True)
@@ -254,8 +321,19 @@ async def checked(db, identifier, user_id=None):
     if not user or not user.active:
         raise HTTPException(401, "This search account is no longer active")
     work = await accessible_work(db, user, UUID(operation.payload["work"]["id"]))
-    changed = identity(work) != operation.payload["work"]
+    current = await identity(db, work, user.id)
+    stored = operation.payload.get("work") or {}
     preparation = operation.payload.get("catalog_preparation")
+    preparing = preparation and preparation["state"] in series_preparation.ACTIVE
+    if preparing:
+        # Launch freezes completed series observation. Title/author changes
+        # must still invalidate the search while that observation is running.
+        stored = {**stored, "series": current["series"]}
+    elif isinstance(stored, dict) and not stored.get("series") and current.get("series"):
+        payload = deepcopy(operation.payload)
+        payload["work"] = {**stored, "series": current["series"]}
+        operation.payload = payload
+    changed = not same_identity(current, stored)
     if "query_plan" in operation.payload and not (
         preparation and preparation["state"] in series_preparation.ACTIVE
     ):

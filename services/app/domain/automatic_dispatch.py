@@ -15,7 +15,7 @@ from app.db.models import (
     Operation,
     User,
 )
-from app.domain.book_sources import identity
+from app.domain.book_sources import identity, same_identity
 from app.domain.release_profiles import ProfileSnapshot, refresh_profile, same_profile
 from app.domain.visibility import visible_library
 from app.domain.work_graph import canonical_work
@@ -190,7 +190,7 @@ async def require_selection(db, selection):
     if not same_profile(current, profile):
         raise HTTPException(409, "Automatic acquisition preferences changed; review this request")
     work = await canonical_work(db, UUID(selection.frozen["origin_work_id"]))
-    if identity(work) != operation.payload["work"]:
+    if not same_identity(await identity(db, work, selection.owner_id), operation.payload["work"]):
         raise HTTPException(
             409, "Catalog identity changed after automatic acquisition was authorized"
         )

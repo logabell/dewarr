@@ -15,6 +15,7 @@ from app.domain import narrators
 from app.domain.catalog_titles import optional_subtitle_base, parse_title_labels
 from app.domain.narrators import NarratorNames
 from app.domain.request_scope import ScopePreferences
+from app.domain.series_identity import position_key, title_outside_series_note
 from app.importing.naming import fingerprint
 
 FORMATS = {
@@ -384,12 +385,19 @@ def indexer_title_authors(release, work):
     the complete pair. Extra titles, archive/repair filenames, partial releases
     and conflicting structured authors still require review.
     """
-    if release.source != "prowlarr" or release.authors:
+    if release.source not in {"prowlarr", "audiobookbay"}:
+        return []
+    if release.authors and not (
+        {normalized(author) for author in release.authors}
+        & {normalized(author) for author in work["authors"]}
+    ):
         return []
     title = re.sub(
         r"\[(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)\]",
         " ",
-        release.title,
+        getattr(release, "raw_title", release.title)
+        if release.source == "audiobookbay"
+        else release.title,
         flags=re.I,
     )
     title = re.sub(r"\.(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)$", "", title, flags=re.I)
@@ -417,6 +425,37 @@ def indexer_title_authors(release, work):
                 # is never stripped away. Unknown suffixes still need review.
                 if re.fullmatch(rf"{re.escape(pair)}(?: (?:19|20)\d{{2}})?(?: retail)?", actual):
                     matched.add(authors[author])
+    # AudiobookBay names, including Prowlarr's copy of them, are
+    # "Title - Author, Narrator". The catalog author is the first credit.
+    if not matched:
+        head, separator, tail = title.partition(" - ")
+        if separator:
+            credit = normalized(tail.split(",")[0])
+            bare = title_outside_series_note(head, work)
+            full_title = normalized(parse_title_labels(work["title"]).title)
+            if credit in authors and (
+                normalized(head) in expected_titles
+                or (bare is not None and full_title and normalized(bare) == full_title)
+            ):
+                matched.add(authors[credit])
+    # "Series 5 - Author" omits the catalog subtitle. Accept it only when that
+    # series and position are already on the work and the first credit matches.
+    if not matched:
+        labels = parse_title_labels(title)
+        credit = normalized((labels.series_title or "").split(",")[0])
+        position = position_key(labels.sequence)
+        if (
+            labels.series
+            and position is not None
+            and credit in authors
+            and any(
+                normalized(entry.get("name", "")) == normalized(labels.series)
+                and position_key(entry.get("position")) == position
+                for entry in work.get("series") or []
+                if isinstance(entry, dict)
+            )
+        ):
+            matched.add(authors[credit])
     return sorted(matched)
 
 

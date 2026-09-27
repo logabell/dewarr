@@ -2,6 +2,7 @@
 """Native HTML + qBit metadata transport to real audio hardlinks and fixture ABS."""
 
 import hashlib
+from datetime import UTC, datetime
 from uuid import UUID
 
 import libtorrent as lt
@@ -10,7 +11,15 @@ from sqlalchemy import func, select
 
 from app.adapters.torrent_descriptor import inspect_torrent
 from app.config import get_settings
-from app.db.models import DownloadAttempt, DownloadFulfillment, ImportEntry, Integration
+from app.db.models import (
+    AutomaticImport,
+    CatalogSeries,
+    DownloadAttempt,
+    DownloadFulfillment,
+    ImportEntry,
+    Integration,
+    SeriesMembership,
+)
 from app.domain import automatic_selection, download_attempts
 from app.importing import execution
 from app.jobs.queue import get_queue
@@ -26,14 +35,35 @@ from tests.media_fixtures import audio, epub
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize("delayed", [False, True])
+@pytest.mark.parametrize(
+    ("delayed", "naming"),
+    [
+        (False, "structured"),
+        (True, "structured"),
+        (False, "credits"),
+        (False, "series"),
+        (False, "structured-series"),
+        (False, "study-guide"),
+        (False, "wrong-series-volume"),
+    ],
+)
 async def test_abb_automatic_acquisition_preserves_audio_and_confirms_inventory(
-    client, admin, database, ready_route, abb_http, monkeypatch, delayed
+    client, admin, database, ready_route, abb_http, monkeypatch, delayed, naming
 ):
     route = ready_route
     work_id = route["plan"]["document"]["groups"][0]["work_id"]
     source = route["source"] / "selected.mp3"
-    audio(source, tags={"isbn": "9781234567897", "language": "en"})
+    conflict = naming in {"study-guide", "wrong-series-volume"}
+    file_title = {
+        "study-guide": "First Harbor: A Study Guide",
+        "wrong-series-volume": "First Harbor: Harbor Stories, Book 4",
+    }.get(naming, "First Harbor: Harbor Stories, Book 5" if "series" in naming else "First Harbor")
+    audio(
+        source,
+        title=file_title,
+        author="Alex Morgan; Co Writer" if "series" in naming else "Alex Morgan",
+        tags={"language": "en"},
+    )
     await prepare_audio_route(client, database, route, work_id, source)
     epub(source.parent / "private-neighbor.epub", title="Unrelated")
     original = source.read_bytes()
@@ -61,6 +91,37 @@ async def test_abb_automatic_acquisition_preserves_audio_and_confirms_inventory(
             "M4B": "MP3",
         },
     )
+    if naming != "structured":
+        abb_http["redirect_capitals"] = True
+        abb_http["replacements"].update(
+            {
+                "Harbor - Writer": "Harbor Stories 5 - Alex Morgan"
+                if "series" in naming
+                else "First Harbor - Alex Morgan, Jordan Lee",
+                "Written by: Writer": "Written by: Alex Morgan"
+                if naming == "structured-series"
+                else "",
+            }
+        )
+    if "series" in naming:
+        async with database() as db, db.begin():
+            series = CatalogSeries(
+                owner_id=UUID(admin["id"]),
+                provider="fixture",
+                external_id="harbor",
+                name="Harbor Stories",
+                fetched_at=datetime.now(UTC),
+            )
+            db.add(series)
+            await db.flush()
+            db.add(
+                SeriesMembership(
+                    series_id=series.id,
+                    external_id="5",
+                    work_id=UUID(work_id),
+                    snapshot={"position": "5", "compilation": False},
+                )
+            )
     async with database() as db, db.begin():
         downloader = Integration(
             kind="qbittorrent",
@@ -137,6 +198,14 @@ async def test_abb_automatic_acquisition_preserves_audio_and_confirms_inventory(
         await client.get(f"/api/acquisition/automatic-selections/{response.json()['id']}")
     ).json()
     assert selected["status"] == "completed" and selected["download_id"], selected
+    if conflict:
+        async with database() as db:
+            receipt = await db.scalar(select(AutomaticImport))
+            assert receipt and receipt.state == "held", receipt.message if receipt else "No receipt"
+            assert not await db.scalar(select(ImportEntry.id))
+            assert not await db.scalar(select(DownloadFulfillment.id))
+        assert not list(route["target"].rglob("*.mp3"))
+        return
     async with database() as db:
         entries = list(await db.scalars(select(ImportEntry)))
         assert len(entries) == 1

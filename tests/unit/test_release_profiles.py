@@ -63,6 +63,122 @@ def test_indexer_exact_author_title_pair_can_replace_missing_structured_fields(
     assert assessment.identity == expected
 
 
+def test_audiobookbay_credit_and_series_position_can_corroborate_identity():
+    from app.adapters.audiobookbay import ABBRelease
+
+    work = {
+        "title": "Lantern",
+        "authors": ["Writer"],
+        "series": [{"name": "North Sea", "position": "5"}],
+    }
+
+    def posting(title):
+        return ABBRelease(
+            source_id="fixture",
+            title=title,
+            raw_title=title,
+            detail_path="/abss/example/",
+            observed_at=datetime.now(UTC),
+        )
+
+    preferences = ReleasePreferences()
+    assert assess_release(posting("Lantern - Writer, Reader"), work, preferences).identity == (
+        "corroborated"
+    )
+    assert (
+        assess_release(posting("North Sea 5 - Writer, Reader"), work, preferences).identity
+        == "corroborated"
+    )
+    assert (
+        assess_release(posting("North Sea 4 - Writer, Reader"), work, preferences).identity
+        != "corroborated"
+    )
+    assert (
+        assess_release(posting("Other Coast 5 - Writer"), work, preferences).identity
+        != "corroborated"
+    )
+    assert (
+        assess_release(
+            posting("Lantern (The North Sea Trilogy) - Writer, Reader"), work, preferences
+        ).identity
+        == "corroborated"
+    )
+    assert (
+        assess_release(posting("Lantern (North Sea, Book 5) - Writer"), work, preferences).identity
+        == "corroborated"
+    )
+    assert (
+        assess_release(
+            posting("Other Book (The North Sea Trilogy) - Writer"), work, preferences
+        ).identity
+        != "corroborated"
+    )
+    assert (
+        assess_release(posting("Lantern (A Study Guide) - Writer"), work, preferences).identity
+        != "corroborated"
+    )
+    assert (
+        assess_release(
+            posting("Lantern (Other Coast Trilogy) - Writer"), work, preferences
+        ).identity
+        != "corroborated"
+    )
+    assert (
+        assess_release(
+            posting("Lantern (North Sea Books 1-3) - Writer"), work, preferences
+        ).identity
+        != "corroborated"
+    )
+    assert (
+        assess_release(
+            posting("Lantern (The North Sea Trilogy) - Writer"),
+            {"title": "Lantern", "authors": ["Writer"]},
+            preferences,
+        ).identity
+        != "corroborated"
+    )
+
+
+def test_saved_search_without_series_still_matches_a_book_that_has_none():
+    from app.domain.book_sources import same_identity
+
+    current = {"id": "1", "title": "Lantern", "authors": ["Writer"], "series": []}
+    arrived = {**current, "series": [{"name": "North Sea", "position": "5"}]}
+    assert same_identity(current, {"id": "1", "title": "Lantern", "authors": ["Writer"]})
+    assert same_identity(arrived, {"id": "1", "title": "Lantern", "authors": ["Writer"]})
+    assert same_identity(arrived, current)
+    assert not same_identity(
+        arrived, {**current, "series": [{"name": "North Sea", "position": "4"}]}
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "North Sea 5.5 - Writer, Reader",
+        "Lantern (North Sea, Book 4) - Writer",
+        "Lantern (North Sea, Book 5.5) - Writer",
+        "Lantern (North Sea Books 5 & 6) - Writer",
+    ],
+)
+def test_abb_series_identity_preserves_the_complete_position(title):
+    from app.adapters.audiobookbay import ABBRelease
+
+    candidate = ABBRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        detail_path="/abss/example/",
+        observed_at=datetime.now(UTC),
+    )
+    work = {
+        "title": "Lantern",
+        "authors": ["Writer"],
+        "series": [{"name": "North Sea", "position": "5"}],
+    }
+    assert assess_release(candidate, work, ReleasePreferences()).identity != "corroborated"
+
+
 def test_builtin_ebook_format_preference_order():
     assert ReleasePreferences().ebook_formats == [
         "epub",

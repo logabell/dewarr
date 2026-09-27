@@ -50,6 +50,10 @@ async def abb_http(monkeypatch):
         state["entered"].set()
         if state["gate"]:
             await state["gate"].wait()
+        if state.get("redirect_capitals") and request.url.params.get(
+            "s", ""
+        ).lower() != request.url.params.get("s", ""):
+            return httpx.Response(302, headers={"location": "/"})
         html = (
             abb_fixture.detail(digest=state["descriptor"].infohash_v1)
             if request.url.path == abb_fixture.PATH

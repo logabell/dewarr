@@ -74,6 +74,12 @@ async def test_hydrates_freezes_and_searches_once_without_authorizing_downloads(
     assert launched["catalog_preparation"]["state"] == "completed"
     assert not launched["catalog_preparation"]["warnings"]
     assert len(launched["query_plan"]["queries"]) == 2
+    async with database() as db:
+        operation = await db.get(Operation, UUID(value["id"]))
+        assert operation.payload["work"]["series"]
+        assert operation.payload["work"] == await book_sources.identity(
+            db, await db.get(Work, target["work"]), UUID(admin["id"])
+        )
     await book_sources.run(UUID(value["id"]), "mam")
     assert (await read(client, value["id"])).json()["status"] == "completed"
     assert len(source_http["calls"]) == 2
