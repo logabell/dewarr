@@ -64,7 +64,7 @@ async def page(query, kind, external_id, cursor, filters):
     if kind not in {"author", "series"}:
         raise invalid()
     statement = (
-        QUERY.replace("SOURCE_EXTRA", "canonical_id" if kind == "series" else "")
+        QUERY.replace("SOURCE_EXTRA", "canonical_id" if kind == "series" else "cached_image")
         .replace("SOURCE", "authors" if kind == "author" else "series")
         .replace("PREDICATE", AUTHOR if kind == "author" else SERIES)
     )
@@ -150,7 +150,14 @@ async def page(query, kind, external_id, cursor, filters):
             record["filter_reason"] = filter_reason(record, filters, kind)
             records.append(record)
         return ListPage(
-            {"external_id": external_id, "name": source["name"], "count": count}, records, cursor
+            {
+                "external_id": external_id,
+                "name": source["name"],
+                "count": count,
+                "image_url": cover_url((source.get("cached_image") or {}).get("url")),
+            },
+            records,
+            cursor,
         )
     except (KeyError, TypeError, ValueError, ArithmeticError, AttributeError, ValidationError):
         raise invalid() from None

@@ -268,6 +268,7 @@ async def run(operation_id):
                     "name": stage["info"]["name"],
                     "complete": True,
                     "last_count": len(records),
+                    "image_url": stage["info"].get("image_url"),
                 }
             )
             row.baseline_at = row.baseline_at or now

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import type { Work } from "../api/client";
 import type { components } from "../api/schema";
 import BookCover from "./BookCover";
+import { AuthorFollows } from "./FollowCatalog";
 import { languageName } from "./LanguageSelect";
 import { HardcoverRating } from "./BookReaderDetails";
 
@@ -44,6 +45,7 @@ export function BookHero({
   editions,
   editionsMore,
   headingRef,
+  canFollowAuthors = false,
   children,
 }: {
   providerBook?: { provider: string; external_id: string };
@@ -60,6 +62,7 @@ export function BookHero({
   editions?: number;
   editionsMore?: boolean;
   headingRef?: Ref<HTMLHeadingElement>;
+  canFollowAuthors?: boolean;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -130,6 +133,9 @@ export function BookHero({
               ))
             : "Author unknown"}
         </p>
+        {canFollowAuthors && !!details?.authors?.length && (
+          <AuthorFollows authors={details.authors} />
+        )}
         {work?.availability.audio && (
           <p className="narrator-line">
             {work.availability.primary_audio_narrators?.length

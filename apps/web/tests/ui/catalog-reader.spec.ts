@@ -76,6 +76,7 @@ for (const unlinked of [false, true]) {
           },
           csrf_token: "test",
         };
+      else if (url.pathname === "/api/following") data = [];
       else if (url.pathname === "/api/setup/onboarding")
         data = { status: "completed" };
       else if (url.pathname === `/api/catalog/works/${id}`) data = work();

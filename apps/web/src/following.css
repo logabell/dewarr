@@ -1,0 +1,490 @@
+/* Following shares the reader palette and controls; author shelves own layout. */
+.following-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 16px 0 24px;
+}
+.following-heading h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(32px, 4vw, 46px);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  margin: 6px 0 10px;
+}
+.following-heading > div > p:last-child {
+  color: var(--muted);
+  margin: 0;
+}
+.following-page .book-tabs {
+  margin-bottom: 28px;
+}
+.follow-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 16px;
+}
+.follow-section-heading h2 {
+  font-size: 18px;
+  font-weight: 550;
+  margin: 0;
+}
+.follow-section-heading > a,
+.follow-view-books {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.follow-release-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.follow-releases:not(.follow-release-shelf) .follow-release-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.follow-release-shelf {
+  margin-bottom: 34px;
+}
+.follow-book {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.follow-book-copy {
+  min-width: 0;
+}
+.follow-book-title {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.follow-book p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.follow-book-date {
+  color: var(--accent);
+}
+.follow-book-owned {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+}
+.follow-book-cover {
+  width: 60px;
+  flex-shrink: 0;
+}
+.following-page .book-cover {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 3px 6px 6px 3px;
+}
+.following-page .book-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.following-page .cover-formats {
+  display: none;
+}
+.following-page .type-cover {
+  padding: 8px;
+}
+.following-page .type-cover span {
+  font-size: 12px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.following-page .type-cover svg,
+.following-page .type-cover small {
+  display: none;
+}
+.follow-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 16px 0 8px;
+}
+.follow-toolbar form {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.follow-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.follow-toolbar select {
+  min-width: 150px;
+  max-width: 100%;
+}
+.follow-search-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.follow-search-field input {
+  min-width: 0;
+  flex: 1;
+}
+.follow-search-field button {
+  flex-shrink: 0;
+}
+.follow-author {
+  border-bottom: 1px solid var(--line);
+  padding: 26px 0;
+}
+.follow-author-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  align-items: start;
+  gap: 28px;
+}
+.follow-author-identity {
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+}
+.follow-author-identity > div {
+  min-width: 0;
+}
+.follow-portrait {
+  width: 62px;
+  aspect-ratio: 4 / 5;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  align-self: start;
+  background: var(--surface);
+  border-radius: 10px;
+  overflow: hidden;
+  color: var(--muted);
+}
+.follow-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.follow-author h2 {
+  font:
+    500 24px/1.2 Georgia,
+    "Times New Roman",
+    serif;
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+.follow-author h2 a {
+  color: inherit;
+}
+.follow-counts {
+  display: flex;
+  gap: 3px 12px;
+  flex-wrap: wrap;
+}
+button.follow-count {
+  justify-content: flex-start;
+  gap: 4px;
+  font-weight: 400;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  line-height: 1.5;
+}
+button.follow-count:first-child {
+  flex-basis: 100%;
+}
+button.follow-count strong {
+  color: #f3f4f6;
+  font-weight: 550;
+}
+button.follow-count:hover:not(:disabled),
+button.follow-count[aria-expanded="true"] {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.follow-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.follow-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.follow-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.follow-freshness {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+.follow-book.compact {
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  align-items: start;
+}
+.follow-book.compact .follow-book-cover {
+  width: 55px;
+}
+.follow-latest-books {
+  display: flex;
+  gap: 14px;
+}
+.follow-latest-books > a {
+  min-width: 0;
+  width: 68px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.follow-latest-books > a > span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  margin-top: 7px;
+}
+.follow-view-books {
+  margin-top: 12px;
+}
+.follow-next > .muted,
+.follow-latest > .muted {
+  font-size: 12px;
+}
+.follow-expanded-heading {
+  margin-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.follow-expanded-heading h3 {
+  font-size: 15px;
+  margin: 0;
+}
+.follow-books-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+.follow-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.follow-empty {
+  padding: 42px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.follow-empty h2 {
+  color: #f3f4f6;
+  font:
+    500 26px/1.3 Georgia,
+    serif;
+  margin: 16px 0;
+}
+.follow-empty p {
+  margin: 14px auto;
+  max-width: 55ch;
+}
+.follow-empty .reader-action-link {
+  margin-top: 8px;
+}
+.follow-load-more {
+  margin: 28px 0;
+  text-align: center;
+}
+.follow-settings {
+  margin-top: 28px;
+}
+.follow-settings > details {
+  margin-block: 24px;
+}
+.catalog-follow-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  vertical-align: middle;
+}
+.catalog-follow-control > a {
+  display: inline-flex;
+}
+.follow-feedback {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.follow-feedback[role="alert"] {
+  color: #ffc1c6;
+}
+.book-author-follows {
+  max-width: 540px;
+  margin: 12px 0;
+}
+.book-author-follows summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+}
+.book-author-follows ul {
+  padding: 12px 0;
+  list-style: none;
+  margin: 0;
+}
+.book-author-follows li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.book-author-table .catalog-follow-control {
+  display: flex;
+  margin-top: 10px;
+}
+@media (max-width: 1150px) {
+  .follow-author-main {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 24px;
+  }
+  .follow-latest {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .follow-latest .follow-label,
+  .follow-latest .follow-view-books {
+    margin: 0;
+  }
+  .follow-latest-books > a {
+    width: 48px;
+  }
+  .follow-latest-books > a > span {
+    display: none;
+  }
+  .follow-release-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .follow-release-grid > article:last-child:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 720px) {
+  .following-heading {
+    gap: 16px;
+    padding-top: 4px;
+  }
+  .follow-author-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+  .follow-author h2 {
+    font-size: 25px;
+  }
+  .follow-portrait {
+    width: 56px;
+  }
+  .follow-release-grid,
+  .follow-releases:not(.follow-release-shelf) .follow-release-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .follow-latest {
+    grid-column: auto;
+  }
+  .follow-toolbar {
+    gap: 12px;
+  }
+  .follow-toolbar form {
+    flex-basis: 100%;
+  }
+  .follow-toolbar > label {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+  .follow-toolbar select {
+    min-width: 0;
+    width: 100%;
+  }
+  .follow-books-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .follow-counts {
+    gap: 6px 16px;
+  }
+}
+@media (pointer: coarse) {
+  .following-page button,
+  .following-page .reader-action-link,
+  .catalog-follow-control > button,
+  .catalog-follow-control > a,
+  .book-author-follows summary {
+    min-height: 44px;
+  }
+  .follow-toolbar input,
+  .follow-toolbar select {
+    font-size: 16px;
+  }
+}
+
+.follow-release-month {
+  margin: 26px 0;
+}
+.follow-release-month > h3 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0 0 14px;
+}

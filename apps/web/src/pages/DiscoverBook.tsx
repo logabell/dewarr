@@ -215,6 +215,7 @@ function BookPage({
             <p className="notice">{preview.data.warning}</p>
           )}
           <BookHero
+            canFollowAuthors={canEdit}
             providerBook={{ provider, external_id: externalId }}
             title={book.title}
             authors={book.authors || []}
@@ -583,7 +584,11 @@ function BookPage({
               )}
             </section>
             {(tab === "authors" || tab === "reviews") && (
-              <BookReaderDetails externalId={externalId} section={tab} />
+              <BookReaderDetails
+                canEdit={canEdit}
+                externalId={externalId}
+                section={tab}
+              />
             )}
           </div>
         </>

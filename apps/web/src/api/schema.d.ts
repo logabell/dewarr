@@ -2027,6 +2027,57 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/following/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Overview */
+    get: operations["overview_api_following_overview_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/following/releases": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Releases */
+    get: operations["releases_api_following_releases_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/following/{list_id}/books": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Followed Books */
+    get: operations["followed_books_api_following__list_id__books_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/following/{list_id}": {
     parameters: {
       query?: never;
@@ -8202,6 +8253,62 @@ export interface components {
       /** Error */
       error?: string | null;
     };
+    /** FollowBook */
+    FollowBook: {
+      /**
+       * Work Id
+       * Format: uuid
+       */
+      work_id: string;
+      /** External Id */
+      external_id: string;
+      /** Title */
+      title: string;
+      /** Authors */
+      authors: string[];
+      /** Cover Url */
+      cover_url?: string | null;
+      /** Release Date */
+      release_date?: string | null;
+      /**
+       * Upcoming
+       * @default false
+       */
+      upcoming: boolean;
+      /**
+       * Included
+       * @default true
+       */
+      included: boolean;
+      /**
+       * Ebook
+       * @default false
+       */
+      ebook: boolean;
+      /**
+       * Audio
+       * @default false
+       */
+      audio: boolean;
+      /**
+       * Stale
+       * @default false
+       */
+      stale: boolean;
+      /** Follow Names */
+      follow_names?: string[];
+    };
+    /** FollowBooks */
+    FollowBooks: {
+      /** Items */
+      items: components["schemas"]["FollowBook"][];
+      /** Total */
+      total: number;
+      /** Offset */
+      offset: number;
+      /** Limit */
+      limit: number;
+    };
     /** FollowEdit */
     FollowEdit: {
       /** Expected Generation */
@@ -8240,6 +8347,25 @@ export interface components {
       /** Language */
       language?: string | null;
     };
+    /** FollowOverview */
+    FollowOverview: {
+      /** Items */
+      items: components["schemas"]["FollowSummary"][];
+      /** Total */
+      total: number;
+      /** Authors */
+      authors: number;
+      /** Series */
+      series: number;
+      /** Pending Sync */
+      pending_sync: boolean;
+      /** Catalog Revision */
+      catalog_revision: string;
+      /** Offset */
+      offset: number;
+      /** Limit */
+      limit: number;
+    };
     /** FollowReadingList */
     FollowReadingList: {
       /**
@@ -8274,6 +8400,59 @@ export interface components {
        * Format: uuid
        */
       receipt_id: string;
+    };
+    /** FollowSummary */
+    FollowSummary: {
+      /**
+       * List Id
+       * Format: uuid
+       */
+      list_id: string;
+      /**
+       * Source Kind
+       * @enum {string}
+       */
+      source_kind: "author" | "series";
+      /** External Id */
+      external_id: string;
+      /** Name */
+      name: string;
+      /** Image Url */
+      image_url?: string | null;
+      /**
+       * Followed At
+       * Format: date-time
+       */
+      followed_at: string;
+      /** Enabled */
+      enabled: boolean;
+      /** State */
+      state: string;
+      /** Message */
+      message: string;
+      /** Complete */
+      complete: boolean;
+      /** Last Success At */
+      last_success_at: string | null;
+      /** Mode */
+      mode: string;
+      /** Active */
+      active: boolean;
+      /** Total Books */
+      total_books?: number | null;
+      /** Library Books */
+      library_books?: number | null;
+      /** Upcoming Books */
+      upcoming_books?: number | null;
+      /** Undated Books */
+      undated_books?: number | null;
+      /** Recent Books */
+      recent_books?: number | null;
+      /** Missing Books */
+      missing_books?: number | null;
+      next_release?: components["schemas"]["FollowBook"] | null;
+      /** Latest Books */
+      latest_books?: components["schemas"]["FollowBook"][];
     };
     /** FollowView */
     FollowView: {
@@ -18542,6 +18721,111 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["CatalogFollowView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  overview_api_following_overview_get: {
+    parameters: {
+      query?: {
+        kind?: "author" | "series";
+        q?: string;
+        filter?: "all" | "upcoming" | "recent" | "missing" | "paused";
+        sort?: "recent" | "name" | "release" | "library";
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FollowOverview"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  releases_api_following_releases_get: {
+    parameters: {
+      query?: {
+        filter?: "upcoming" | "recent";
+        kind?: ("author" | "series") | null;
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FollowBooks"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  followed_books_api_following__list_id__books_get: {
+    parameters: {
+      query?: {
+        filter?: "all" | "library" | "upcoming" | "recent" | "missing";
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        list_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FollowBooks"];
         };
       };
       /** @description Validation Error */

@@ -6198,6 +6198,293 @@
         }
       }
     },
+    "/api/following/overview": {
+      "get": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Overview",
+        "operationId": "overview_api_following_overview_get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "author",
+                "series"
+              ],
+              "type": "string",
+              "default": "author",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "upcoming",
+                "recent",
+                "missing",
+                "paused"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "recent",
+                "name",
+                "release",
+                "library"
+              ],
+              "type": "string",
+              "default": "recent",
+              "title": "Sort"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowOverview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/following/releases": {
+      "get": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Releases",
+        "operationId": "releases_api_following_releases_get",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "upcoming",
+                "recent"
+              ],
+              "type": "string",
+              "default": "upcoming",
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "author",
+                    "series"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 24,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowBooks"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/following/{list_id}/books": {
+      "get": {
+        "tags": [
+          "following"
+        ],
+        "summary": "Followed Books",
+        "operationId": "followed_books_api_following__list_id__books_get",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "library",
+                "upcoming",
+                "recent",
+                "missing"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 24,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowBooks"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/following/{list_id}": {
       "patch": {
         "tags": [
@@ -24851,6 +25138,124 @@
         ],
         "title": "FolderOption"
       },
+      "FollowBook": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Work Id"
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "release_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Date"
+          },
+          "upcoming": {
+            "type": "boolean",
+            "title": "Upcoming",
+            "default": false
+          },
+          "included": {
+            "type": "boolean",
+            "title": "Included",
+            "default": true
+          },
+          "ebook": {
+            "type": "boolean",
+            "title": "Ebook",
+            "default": false
+          },
+          "audio": {
+            "type": "boolean",
+            "title": "Audio",
+            "default": false
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "default": false
+          },
+          "follow_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Follow Names"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id",
+          "external_id",
+          "title",
+          "authors"
+        ],
+        "title": "FollowBook"
+      },
+      "FollowBooks": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FollowBook"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "FollowBooks"
+      },
       "FollowEdit": {
         "properties": {
           "expected_generation": {
@@ -24919,6 +25324,57 @@
         "type": "object",
         "title": "FollowFilters"
       },
+      "FollowOverview": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FollowSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "authors": {
+            "type": "integer",
+            "title": "Authors"
+          },
+          "series": {
+            "type": "integer",
+            "title": "Series"
+          },
+          "pending_sync": {
+            "type": "boolean",
+            "title": "Pending Sync"
+          },
+          "catalog_revision": {
+            "type": "string",
+            "title": "Catalog Revision"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "authors",
+          "series",
+          "pending_sync",
+          "catalog_revision",
+          "offset",
+          "limit"
+        ],
+        "title": "FollowOverview"
+      },
       "FollowReadingList": {
         "properties": {
           "provider": {
@@ -24981,6 +25437,182 @@
           "receipt_id"
         ],
         "title": "FollowResult"
+      },
+      "FollowSummary": {
+        "properties": {
+          "list_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "List Id"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "series"
+            ],
+            "title": "Source Kind"
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "followed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Followed At"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "total_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Books"
+          },
+          "library_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Books"
+          },
+          "upcoming_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upcoming Books"
+          },
+          "undated_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undated Books"
+          },
+          "recent_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Books"
+          },
+          "missing_books": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing Books"
+          },
+          "next_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FollowBook"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_books": {
+            "items": {
+              "$ref": "#/components/schemas/FollowBook"
+            },
+            "type": "array",
+            "title": "Latest Books"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_id",
+          "source_kind",
+          "external_id",
+          "name",
+          "followed_at",
+          "enabled",
+          "state",
+          "message",
+          "complete",
+          "last_success_at",
+          "mode",
+          "active"
+        ],
+        "title": "FollowSummary"
       },
       "FollowView": {
         "properties": {

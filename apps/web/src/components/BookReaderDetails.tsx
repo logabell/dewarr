@@ -1,4 +1,5 @@
 import { useState } from "react";
+import FollowCatalog from "./FollowCatalog";
 import { browseCache, refreshPending } from "../queryPolicies";
 import BookSourceIcon from "./BookSourceIcon";
 import { useQuery } from "@tanstack/react-query";
@@ -45,9 +46,11 @@ export function HardcoverRating({ details }: { details?: Details }) {
 export default function BookReaderDetails({
   externalId,
   section = "all",
+  canEdit = false,
 }: {
   externalId: string;
   section?: "all" | "authors" | "reviews";
+  canEdit?: boolean;
 }) {
   const query = useReaderDetails(externalId);
   const data = query.data;
@@ -94,6 +97,13 @@ export default function BookReaderDetails({
                       <Link to={`/authors/hardcover/${author.external_id}`}>
                         {author.name}
                       </Link>
+                      {canEdit && (
+                        <FollowCatalog
+                          kind="author"
+                          externalId={author.external_id}
+                          name={author.name}
+                        />
+                      )}
                     </td>
                     <td>
                       <p className={author.bio ? "reader-prose" : "muted"}>

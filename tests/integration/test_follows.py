@@ -536,3 +536,191 @@ async def test_refollow_requires_new_baseline_before_future_only_activation(
     saved = await activate(client, f, plan)
     await tick(database, saved)
     assert not f["calls"]
+
+
+async def test_follow_overview_counts_library_and_dates_before_paging(
+    client, database, admin, follow_fixture, catalog
+):
+    remote, follow = follow_fixture
+    initial = await client.get("/api/following/overview")
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["items"][0]["total_books"] is None
+    assert initial.json()["pending_sync"]
+    for params in ({"filter": "upcoming"}, {"kind": "series"}, {"offset": 20}):
+        hidden = (await client.get("/api/following/overview", params=params)).json()
+        assert hidden["items"] == [] and hidden["pending_sync"]
+        assert hidden["catalog_revision"] == initial.json()["catalog_revision"]
+    today = datetime.now(UTC).date()
+    future = (today + timedelta(days=12)).isoformat()
+    remote.records = [
+        record(10, "Older book", release_date="1990-01-01"),
+        record(20, release_date="2000-01-01"),
+        record(30, "Next book", release_date=future),
+        record(40, "Announced book", coming_soon=True),
+        record(50, "Box set", filter_reason="Box set", release_date=today.isoformat()),
+        record(60, "Latest book", release_date=today.isoformat()),
+        record(70, "Undated back catalog"),
+    ]
+    await bind_work(database, admin, 20, str(catalog["work"]))
+    await observe(client, database, follow, initial=True)
+    response = await client.get("/api/following/overview", params={"limit": 1})
+    assert response.status_code == 200, response.text
+    assert not response.json()["pending_sync"]
+    assert response.json()["catalog_revision"] != initial.json()["catalog_revision"]
+    summary = response.json()["items"][0]
+    assert (summary["total_books"], summary["library_books"]) == (7, 1)
+    assert (summary["upcoming_books"], summary["undated_books"]) == (2, 1)
+    assert (summary["recent_books"], summary["missing_books"]) == (1, 2)
+    assert summary["next_release"]["title"] == "Next book"
+    assert summary["latest_books"][0]["title"] == "Latest book"
+    assert summary["complete"]
+    books = await client.get(
+        f"/api/following/{follow['list_id']}/books", params={"filter": "missing", "limit": 1}
+    )
+    assert books.status_code == 200, books.text
+    assert books.json()["total"] == 2 and len(books.json()["items"]) == 1
+    owned = await client.get(
+        f"/api/following/{follow['list_id']}/books", params={"filter": "library"}
+    )
+    assert owned.json()["items"][0]["ebook"] and not owned.json()["items"][0]["audio"]
+    assert (await client.get("/api/following/overview", params={"q": "not here"})).json()[
+        "total"
+    ] == 0
+    assert (await client.get("/api/following/overview", params={"kind": "series"})).json()[
+        "total"
+    ] == 0
+    remote.fail = True
+    await observe(client, database, follow)
+    saved = (await client.get("/api/following/overview")).json()["items"][0]
+    assert saved["state"] == "failed" and saved["total_books"] == 7
+    assert saved["latest_books"] == summary["latest_books"]
+
+
+async def test_follow_projection_deduplicates_identities_and_is_owner_scoped(
+    client, database, admin, follow_fixture, catalog
+):
+    from app.db.models import BookList, Work
+    from app.security import decrypt_secrets
+    from tests.integration.test_discovery import login_member
+
+    remote, follow = follow_fixture
+    future = (datetime.now(UTC).date() + timedelta(days=12)).isoformat()
+    remote.records = [record(10, release_date=future), record(20, release_date=future)]
+    await observe(client, database, follow, initial=True)
+    async with database() as db, db.begin():
+        observations = list(
+            await db.scalars(select(ListObservation).order_by(ListObservation.external_id))
+        )
+        first, alias = observations
+        (await db.get(Work, alias.work_id)).redirect_to = first.work_id
+        # Another followed source includes the same canonical book.
+        item = BookList(owner_id=UUID(admin["id"]), name="Co-author")
+        db.add(item)
+        await db.flush()
+        original = await db.get(ListSubscription, UUID(follow["subscription"]["id"]))
+        config = decrypt_secrets(original.encrypted_config)
+        other = ListSubscription(
+            list_id=item.id,
+            provider="hardcover",
+            source_kind="author",
+            encrypted_config=encrypt_secrets({**config, "name": "Co-author", "external_id": "99"}),
+            last_success_at=datetime.now(UTC),
+        )
+        db.add(other)
+        await db.flush()
+        db.add(
+            ListObservation(
+                subscription_id=other.id,
+                external_id="10",
+                work_id=first.work_id,
+                snapshot=first.snapshot,
+                last_seen_at=datetime.now(UTC),
+            )
+        )
+    summary = (await client.get("/api/following/overview", params={"q": "Writer"})).json()["items"][
+        0
+    ]
+    assert summary["total_books"] == 1
+    releases = await client.get("/api/following/releases")
+    assert releases.status_code == 200, releases.text
+    assert releases.json()["total"] == 1
+    assert releases.json()["items"][0]["follow_names"] == ["Co-author", "Writer"]
+    # An exclusion on either alias must not leak into recommendations for this author.
+    async with database() as db, db.begin():
+        (await db.get(ListObservation, alias.id)).excluded = True
+    summary = (await client.get("/api/following/overview", params={"q": "Writer"})).json()["items"][
+        0
+    ]
+    assert summary["total_books"] == 1 and summary["upcoming_books"] == 0
+    await login_member(client, "member")
+    assert (await client.get("/api/following/overview")).json()["items"] == []
+    assert (await client.get("/api/following/releases")).json()["items"] == []
+    assert (await client.get(f"/api/following/{follow['list_id']}/books")).status_code == 404
+
+
+@pytest.mark.parametrize("old_days,new_days", [(12, 30), (-1, 30), (12, -1), (12, None)])
+async def test_release_feed_uses_latest_eligible_snapshot_before_date_filtering(
+    client, database, admin, follow_fixture, old_days, new_days
+):
+    from app.db.models import BookList
+    from app.security import decrypt_secrets
+
+    remote, follow = follow_fixture
+    today = datetime.now(UTC).date()
+    earlier = (today + timedelta(days=old_days)).isoformat()
+    updated = (today + timedelta(days=new_days)).isoformat() if new_days is not None else None
+    remote.records = [record(10, "Rescheduled book", release_date=earlier)]
+    await observe(client, database, follow, initial=True)
+    async with database() as db, db.begin():
+        original = await db.get(ListSubscription, UUID(follow["subscription"]["id"]))
+        observation = await db.scalar(
+            select(ListObservation).where(ListObservation.subscription_id == original.id)
+        )
+        config = decrypt_secrets(original.encrypted_config)
+        item = BookList(owner_id=UUID(admin["id"]), name="Co-author")
+        db.add(item)
+        await db.flush()
+        newer = ListSubscription(
+            list_id=item.id,
+            provider="hardcover",
+            source_kind="author",
+            encrypted_config=encrypt_secrets({**config, "external_id": "99", "name": "Co-author"}),
+            last_success_at=datetime.now(UTC),
+        )
+        db.add(newer)
+        await db.flush()
+        latest = ListObservation(
+            subscription_id=newer.id,
+            external_id="10",
+            work_id=observation.work_id,
+            snapshot={
+                **observation.snapshot,
+                "release_date": updated,
+                "coming_soon": updated is None,
+            },
+            last_seen_at=datetime.now(UTC),
+        )
+        db.add(latest)
+        await db.flush()
+        latest_id = latest.id
+    for selection in ("upcoming", "recent"):
+        response = await client.get("/api/following/releases", params={"filter": selection})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        upcoming = new_days is None or new_days > 0
+        if (selection == "upcoming") == upcoming:
+            assert result["total"] == 1
+            assert result["items"][0]["release_date"] == updated
+            assert result["items"][0]["follow_names"] == ["Co-author", "Writer"]
+        else:
+            assert result["total"] == 0 and result["items"] == []
+    # An excluded source must neither supply dates nor appear in attribution.
+    async with database() as db, db.begin():
+        (await db.get(ListObservation, latest_id)).excluded = True
+    result = (
+        await client.get(
+            "/api/following/releases", params={"filter": "upcoming" if old_days > 0 else "recent"}
+        )
+    ).json()
+    assert result["items"][0]["release_date"] == earlier
+    assert result["items"][0]["follow_names"] == ["Writer"]

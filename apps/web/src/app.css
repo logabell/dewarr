@@ -9,6 +9,7 @@
 @import "./import-review.css" layer(app);
 @import "./library-review.css" layer(app);
 @import "./book-detail.css" layer(app);
+@import "./following.css" layer(app);
 @import "./controls.css" layer(controls);
 
 .brand img {

@@ -214,6 +214,7 @@ function BookDetailContent({
         </Link>
       </div>
       <BookHero
+        canFollowAuthors={canEdit}
         title={work.title}
         authors={work.authors}
         work={work}
@@ -518,6 +519,7 @@ function BookDetailContent({
             <Loading />
           ) : hardcover ? (
             <BookReaderDetails
+              canEdit={canEdit}
               externalId={hardcover.external_id}
               section={tab}
             />

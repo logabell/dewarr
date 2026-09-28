@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
@@ -13,7 +13,7 @@ from app.api.dependencies import Database, Member
 from app.api.list_subscriptions import SubscriptionView
 from app.api.list_subscriptions import view as subscription_view
 from app.db.models import AuditEvent, BookList, CatalogAccount, ListSubscription, Operation
-from app.domain import list_policies
+from app.domain import following_overview, list_policies
 from app.domain.follows import source
 from app.domain.list_subscriptions import begin, owned_list
 from app.domain.operations import transaction_lock
@@ -81,6 +81,80 @@ async def following(user: Member, db: Database):
     return items
 
 
+@router.get("/overview", response_model=following_overview.FollowOverview)
+async def overview(
+    user: Member,
+    db: Database,
+    kind: Literal["author", "series"] = "author",
+    q: str = Query(default="", max_length=200),
+    filter: Literal["all", "upcoming", "recent", "missing", "paused"] = "all",
+    sort: Literal["recent", "name", "release", "library"] = "recent",
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    rows = await following_overview.sources(db, user)
+    return await following_overview.summaries(
+        db,
+        user,
+        rows,
+        kind=kind,
+        q=q.strip(),
+        filter=filter,
+        sort=sort,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get("/releases", response_model=following_overview.FollowBooks)
+async def releases(
+    user: Member,
+    db: Database,
+    filter: Literal["upcoming", "recent"] = "upcoming",
+    kind: Literal["author", "series"] | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=24, ge=1, le=50),
+):
+    rows = await following_overview.sources(db, user)
+    if kind:
+        rows = [(row, summary) for row, summary in rows if summary.source_kind == kind]
+    return await following_overview.books(
+        db,
+        user,
+        rows,
+        selection=filter,
+        offset=offset,
+        limit=limit,
+        releases=True,
+    )
+
+
+@router.get("/{list_id}/books", response_model=following_overview.FollowBooks)
+async def followed_books(
+    list_id: UUID,
+    user: Member,
+    db: Database,
+    filter: following_overview.BookFilter = "all",
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=24, ge=1, le=50),
+):
+    rows = [
+        (row, summary)
+        for row, summary in await following_overview.sources(db, user)
+        if summary.list_id == list_id
+    ]
+    if not rows:
+        raise HTTPException(404, "Follow not found")
+    return await following_overview.books(
+        db,
+        user,
+        rows,
+        selection=filter,
+        offset=offset,
+        limit=limit,
+    )
+
+
 @router.post("", response_model=CatalogFollowView, status_code=201)
 async def follow(body: CatalogFollowInput, user: Member, db: Database):
     await transaction_lock(db, f"follows:{user.id}")
@@ -103,7 +177,9 @@ async def follow(body: CatalogFollowInput, user: Member, db: Database):
                 await owned_list(db, user, item.id)
                 row.generation += 1
                 row.enabled, row.next_sync_at = True, datetime.now(UTC)
-                config.update(unfollowed=False, complete=False)
+                config.update(
+                    unfollowed=False, complete=False, followed_at=datetime.now(UTC).isoformat()
+                )
                 row.encrypted_config = encrypt_secrets(config)
                 await begin(db, user, item.id, f"follow:{row.id}:{row.generation}")
             result = await view(db, item, row, config)
@@ -117,6 +193,7 @@ async def follow(body: CatalogFollowInput, user: Member, db: Database):
         "external_id": str(body.external_id),
         "name": body.name,
         "filters": body.filters.model_dump(mode="json"),
+        "followed_at": datetime.now(UTC).isoformat(),
     }
     row = ListSubscription(
         list_id=item.id,
