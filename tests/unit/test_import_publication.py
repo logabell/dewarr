@@ -74,6 +74,150 @@ def test_publication_preserves_original_and_keeps_receipts_outside_library(speci
     assert publish_item(spec) == receipt
 
 
+@pytest.mark.parametrize(
+    "code,interruption",
+    [
+        (errno.EPERM, None),
+        (errno.EACCES, None),
+        (errno.EXDEV, None),
+        (errno.EOPNOTSUPP, None),
+        (errno.EMLINK, None),
+        (errno.ENOSYS, None),
+        (errno.EPERM, "copy-created"),
+        (errno.EPERM, "file-staged"),
+        (errno.EPERM, "published-before-receipt"),
+    ],
+)
+def test_actual_file_link_failure_copies_and_resumes(
+    specification, monkeypatch, code, interruption
+):
+    spec = specification
+    original = spec.source_root / "pack/book.epub"
+    before = original.read_bytes()
+    link = os.link
+
+    def deny_download_link(source, *args, **kwargs):
+        if source == "book.epub":
+            raise OSError(code, "Download cannot be hardlinked")
+        return link(source, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", deny_download_link)
+    reservations = []
+
+    def reserve(needed, added):
+        reservations.append(needed)
+        assert added == len(before)
+
+    def crash(phase):
+        if phase == interruption:
+            raise RuntimeError("Interrupted fallback")
+
+    if interruption:
+        with pytest.raises(RuntimeError, match="Interrupted fallback"):
+            publish_item(spec, checkpoint=crash, reserve_copy=reserve)
+    receipt = publish_item(spec, reserve_copy=reserve)
+    published = spec.destination_root / spec.folder / spec.files[0].name
+    assert published.read_bytes() == before == original.read_bytes()
+    assert published.stat().st_ino != original.stat().st_ino
+    assert receipt["copy_fallbacks"] == {spec.files[0].name: code}
+    assert reservations == [len(before) + len(b"<package/>")]
+    assert publication.remaining_import_bytes(spec) == 0
+    assert publish_item(spec) == receipt
+
+
+@pytest.mark.parametrize("code", [errno.EIO, errno.ENOSPC, errno.EEXIST])
+def test_unexpected_link_error_is_not_hidden_by_copy(specification, monkeypatch, code):
+    def fail_link(*args, **kwargs):
+        raise OSError(code, "Storage failure")
+
+    monkeypatch.setattr(os, "link", fail_link)
+    with pytest.raises(OSError) as caught:
+        publish_item(specification)
+    assert caught.value.errno == code
+    assert not (specification.destination_root / specification.folder).exists()
+
+
+def test_copy_fallback_reserves_before_writing_and_keeps_choice_for_retry(
+    specification, monkeypatch
+):
+    def deny_link(*args, **kwargs):
+        raise OSError(errno.EPERM, "Download cannot be hardlinked")
+
+    monkeypatch.setattr(os, "link", deny_link)
+
+    def no_capacity(needed, added):
+        raise PublicationError("Waiting for copy capacity")
+
+    with pytest.raises(PublicationError, match="Waiting for copy capacity"):
+        publish_item(specification, reserve_copy=no_capacity)
+    assert not list(specification.staging_root.rglob("*.epub"))
+    assert publication.remaining_import_bytes(specification) == (
+        specification.files[0].identity["size"] + len(b"<package/>")
+    )
+
+
+def test_mixed_transfers_only_reserve_unfinished_copies(specification, monkeypatch):
+    spec = specification
+    for name in ("second.epub", "third.epub"):
+        epub(spec.source_root / "pack" / name)
+    snapshot = inspect_download(spec.source_root, "pack")
+    spec = spec.model_copy(
+        update={
+            "files": [
+                PublishFile(
+                    source=file["path"],
+                    name=file["path"],
+                    sha256=file["sha256"],
+                    identity=file["identity"],
+                )
+                for file in snapshot["files"]
+            ],
+        }
+    )
+    link = os.link
+    reservations = []
+
+    def selective_link(source, *args, **kwargs):
+        if source in {"second.epub", "third.epub"}:
+            raise OSError(errno.EPERM, "Downloader-owned file cannot be hardlinked")
+        return link(source, *args, **kwargs)
+
+    def reserve(needed, added):
+        reservations.append(needed)
+        # The earlier copy is on disk already; only this next copy needs space.
+        assert needed == added + len(b"<package/>")
+
+    monkeypatch.setattr(os, "link", selective_link)
+    receipt = publish_item(spec, reserve_copy=reserve)
+    assert len(reservations) == 2
+    assert set(receipt["copy_fallbacks"]) == {"second.epub", "third.epub"}
+    for file in spec.files:
+        source = spec.source_root / "pack" / file.source
+        destination = spec.destination_root / spec.folder / file.name
+        assert source.read_bytes() == destination.read_bytes()
+        assert (source.stat().st_ino == destination.stat().st_ino) == (file.name == "book.epub")
+
+
+@pytest.mark.parametrize("point", ["copy-created", "file-staged"])
+def test_cancel_copy_fallback_preserves_source(specification, monkeypatch, point):
+    original = specification.source_root / "pack/book.epub"
+    before = original.read_bytes()
+
+    def deny_link(*args, **kwargs):
+        raise OSError(errno.EPERM, "Download cannot be hardlinked")
+
+    def crash(phase):
+        if phase == point:
+            raise RuntimeError("Interrupted fallback")
+
+    monkeypatch.setattr(os, "link", deny_link)
+    with pytest.raises(RuntimeError, match="Interrupted fallback"):
+        publish_item(specification, checkpoint=crash)
+    assert cancel_files(specification)["state"] == "cancelled"
+    assert original.read_bytes() == before
+    assert not list(specification.staging_root.glob("item-*"))
+
+
 def test_rename_publication_keeps_the_seeding_inode_and_adds_sidecars(specification):
     spec = specification.model_copy(update={"mode": "rename"})
     original = spec.source_root / "pack/book.epub"
@@ -355,7 +499,7 @@ def test_unknown_staging_file_is_not_deleted_to_make_manifest_fit(specification)
     assert extra.read_text() == "preserve me"
 
 
-def test_actual_link_and_rename_probe_cleans_only_its_artifacts(specification):
+def test_access_check_cleans_only_its_artifacts(specification):
     spec = specification
     source = spec.source_root / "pack/book.epub"
     before = source.read_bytes()
@@ -366,7 +510,7 @@ def test_actual_link_and_rename_probe_cleans_only_its_artifacts(specification):
         spec.destination_root,
         spec.staging_root,
     )
-    assert result["hardlink"] and result["no_replace"]
+    assert result["hardlink"]
     assert source.read_bytes() == before
     assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
 
@@ -386,10 +530,10 @@ def test_probe_cross_device_link_does_not_silently_choose_copy(specification, mo
         spec.staging_root,
     )
     assert not result["hardlink"] and result["hardlink_error"] == "EXDEV"
-    assert result["no_replace"]
+    assert result["copy"]
 
 
-def test_probe_collision_does_not_remove_preexisting_folder(specification, monkeypatch):
+def test_probe_collision_does_not_remove_preexisting_file(specification, monkeypatch):
     spec = specification
 
     @dataclass
@@ -397,8 +541,8 @@ def test_probe_collision_does_not_remove_preexisting_folder(specification, monke
         hex: str = "collision"
 
     monkeypatch.setattr(publication, "uuid4", Fixed)
-    existing = spec.destination_root / ".book-search-probe-collision"
-    existing.mkdir()
+    existing = spec.destination_root / ".book-search-check-collision"
+    existing.write_text("keep")
     with pytest.raises(FileExistsError):
         probe_destination(
             spec.source_root,
@@ -407,7 +551,7 @@ def test_probe_collision_does_not_remove_preexisting_folder(specification, monke
             spec.destination_root,
             spec.staging_root,
         )
-    assert existing.is_dir()
+    assert existing.read_text() == "keep"
     assert not list(spec.staging_root.iterdir())
 
 
@@ -458,8 +602,7 @@ def test_mapped_owner_supports_probe_publication_recovery_and_retry(
         spec.destination_root,
         spec.staging_root,
     )
-    assert report["copy"] and report["hardlink"] and report["no_replace"]
-    assert report["no_replace_mode"] == report["receipt_mode"] == "fallback"
+    assert report["copy"] and report["hardlink"]
     assert not list(spec.staging_root.iterdir())
     original = (spec.source_root / "pack/book.epub").read_bytes()
     receipt = publish_item(spec)
@@ -485,7 +628,7 @@ def test_mapped_owner_share_without_hardlinks_can_still_copy(
         spec.destination_root,
         spec.staging_root,
     )
-    assert report["copy"] and report["no_replace"] and not report["hardlink"]
+    assert report["copy"] and not report["hardlink"]
     assert publish_item(spec)["state"] == "published"
     assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == (
         spec.source_root / "pack/book.epub"
@@ -577,59 +720,6 @@ def test_mapped_owner_still_requires_private_staging(specification):
     with pytest.raises(PublicationError, match="current permissions are 0775"):
         publish_item(specification)
     assert not list(specification.staging_root.iterdir())
-
-
-def test_probe_preserves_replaced_destination_during_cleanup(specification, monkeypatch):
-    spec = specification
-    original = publication.no_replace
-    replacements = []
-
-    def replace_after_publish(source_fd, source_name, destination_fd, destination_name):
-        mode = original(source_fd, source_name, destination_fd, destination_name)
-        if not destination_name.startswith(".book-search-probe-"):
-            return mode
-        destination = spec.destination_root / destination_name
-        destination.rename(spec.destination_root / "moved-original-probe")
-        destination.mkdir()
-        replacements.append(destination)
-
-    monkeypatch.setattr(publication, "no_replace", replace_after_publish)
-    with pytest.raises(PublicationError, match="unrecognized replacement preserved"):
-        probe_destination(
-            spec.source_root,
-            spec.source_relative,
-            spec.files[0],
-            spec.destination_root,
-            spec.staging_root,
-        )
-    assert replacements and replacements[0].is_dir()
-    assert (spec.destination_root / "moved-original-probe").is_dir()
-    assert not list(spec.staging_root.iterdir())
-
-
-@pytest.mark.usefixtures("path_bound_directory_handles")
-def test_probe_accepts_a_post_rename_directory_inode_change(specification, monkeypatch):
-    spec = specification
-    real_stat = os.stat
-
-    def changed_inode(path, *args, **kwargs):
-        info = real_stat(path, *args, **kwargs)
-        if str(path).startswith(".book-search-probe-") and kwargs.get("dir_fd") is not None:
-            values = list(info)
-            values[1] += 1
-            return os.stat_result(values)
-        return info
-
-    monkeypatch.setattr(publication.os, "stat", changed_inode)
-    result = probe_destination(
-        spec.source_root,
-        spec.source_relative,
-        spec.files[0],
-        spec.destination_root,
-        spec.staging_root,
-    )
-    assert result["no_replace"]
-    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
 
 
 def test_concurrent_publishers_cannot_create_two_items(specification):
@@ -847,36 +937,6 @@ def test_copy_publication_without_rename_flag_or_hardlinks(
     assert len(journals) == 1 and journals[0].stat().st_size
 
 
-@pytest.mark.parametrize("links", [True, False])
-def test_probe_verifies_fallback_and_cleans_up(specification, no_rename_flag, monkeypatch, links):
-    if not links:
-        refuse_hardlinks(monkeypatch)
-    spec = specification
-    result = probe_destination(
-        spec.source_root,
-        spec.source_relative,
-        spec.files[0],
-        spec.destination_root,
-        spec.staging_root,
-    )
-    assert result["no_replace"] and result["hardlink"] == links
-    assert result["no_replace_mode"] == result["receipt_mode"] == "fallback"
-    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
-
-
-def test_native_probe_reports_its_mode(specification):
-    spec = specification
-    result = probe_destination(
-        spec.source_root,
-        spec.source_relative,
-        spec.files[0],
-        spec.destination_root,
-        spec.staging_root,
-    )
-    assert result["no_replace_mode"] == result["receipt_mode"] == "native"
-    assert result["warnings"] == []
-
-
 def test_interrupted_journal_claim_does_not_block_publication(specification):
     spec = specification
     (spec.staging_root / f"{spec.entry_id}.json").touch()
@@ -902,23 +962,6 @@ def test_directory_fsync_is_optional_on_smb(specification, monkeypatch):
 
     monkeypatch.setattr(os, "fsync", smb_fsync)
     assert publish_item(specification)["state"] == "published"
-
-
-def test_probe_explains_missing_file_locks(specification, monkeypatch):
-    def no_locks(*args):
-        raise OSError(errno.ENOLCK, "No locks available")
-
-    monkeypatch.setattr(publication.fcntl, "flock", no_locks)
-    spec = specification
-    with pytest.raises(PublicationError, match="nobrl"):
-        probe_destination(
-            spec.source_root,
-            spec.source_relative,
-            spec.files[0],
-            spec.destination_root,
-            spec.staging_root,
-        )
-    assert not list(spec.staging_root.iterdir()) and not list(spec.destination_root.iterdir())
 
 
 def test_smb_noserverino_mounts_are_reported(tmp_path):

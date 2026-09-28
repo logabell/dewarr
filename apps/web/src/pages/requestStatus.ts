@@ -39,6 +39,8 @@ export function statusLabel(request: StatusRequest, target: StatusTarget) {
     return "Needs review";
   if (["uncertain", "held"].includes(target.attempt_state || ""))
     return "Download needs attention";
+  if (["queued", "preflight"].includes(target.attempt_state || ""))
+    return "Queued";
   if (target.attempt_state && liveDownloadStates.has(target.attempt_state))
     return "Downloading";
   if (target.state === "awaiting-inventory") return "Check inventory";

@@ -6213,15 +6213,6 @@ export interface components {
       status: string;
       /** Message */
       message: string;
-      /** Maximum Bytes */
-      maximum_bytes: number;
-      /** Maximum Pack Bytes */
-      maximum_pack_bytes?: number | null;
-      /**
-       * Maximum Inspections
-       * @default 5
-       */
-      maximum_inspections: number;
       /** Inspections */
       inspections: number;
       /** Decisions */
@@ -7727,7 +7718,11 @@ export interface components {
     DownloadConstraints: {
       /** Blocked Formats */
       blocked_formats?: string[];
-      /** Maximum Bytes */
+      /**
+       * Maximum Bytes
+       * @deprecated
+       * @description Legacy compatibility value; transfer sizes are not capped
+       */
       maximum_bytes?: number | null;
     };
     /** DownloadContext */
@@ -9158,16 +9153,6 @@ export interface components {
     };
     /** Limits */
     Limits: {
-      /**
-       * Active Transfers
-       * @default 3
-       */
-      active_transfers: number;
-      /**
-       * Automatic Per Day
-       * @default 10
-       */
-      automatic_per_day: number;
       /**
        * Minimum Free Bytes
        * @default 5368709120
@@ -11173,7 +11158,11 @@ export interface components {
       recording_style?: "any" | "narrated" | "dramatized";
       /** Blocked Formats */
       blocked_formats?: string[];
-      /** Maximum Bytes */
+      /**
+       * Maximum Bytes
+       * @deprecated
+       * @description Legacy compatibility value; transfer sizes are not capped
+       */
       maximum_bytes?: number | null;
     };
     /** PresetInfo */
@@ -11898,11 +11887,6 @@ export interface components {
         [key: string]: components["schemas"]["RecoveryPolicy"];
       };
       /**
-       * Attempt Cap
-       * @default 3
-       */
-      attempt_cap: number;
-      /**
        * Approve Reports
        * @default false
        */
@@ -12332,7 +12316,11 @@ export interface components {
       recording_style: "any" | "narrated" | "dramatized";
       /** Blocked Formats */
       blocked_formats?: string[];
-      /** Maximum Bytes */
+      /**
+       * Maximum Bytes
+       * @deprecated
+       * @description Legacy compatibility value; transfer sizes are not capped
+       */
       maximum_bytes?: number | null;
     };
     /** RepairInput */

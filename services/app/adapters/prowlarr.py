@@ -124,7 +124,7 @@ class ProwlarrRelease(Release):
                     rf"\[\s*({formats})\s*\]|\(\s*({formats})\s*\)", self.title, re.I
                 )
             ]
-            if suffix := re.search(rf"\.({formats})$", self.title, re.I):
+            if suffix := re.search(rf"(?:\.|\s)({formats})\s*$", self.title, re.I):
                 labels.append(suffix[1])
             self.formats = list(dict.fromkeys(label.lower() for label in labels))
             if self.formats:

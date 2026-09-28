@@ -80,7 +80,13 @@ class ReleasePreferences(ScopePreferences):
         default="any", exclude_if=lambda value: value == "any"
     )
     blocked_formats: list[str] = Field(default_factory=list, max_length=20)
-    maximum_bytes: int | None = Field(default=None, gt=0, le=2**53 - 1)
+    maximum_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        le=2**53 - 1,
+        json_schema_extra={"deprecated": True},
+        description="Legacy compatibility value; transfer sizes are not capped",
+    )
 
     @field_validator("ebook_formats", "audio_formats", "blocked_formats")
     @classmethod
@@ -402,7 +408,9 @@ def indexer_title_authors(release, work):
         else release.title,
         flags=re.I,
     )
-    title = re.sub(r"\.(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)$", "", title, flags=re.I)
+    title = re.sub(
+        r"(?:\.|\s)(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)\s*$", "", title, flags=re.I
+    )
     actual = normalized(title)
     expected_titles = {
         normalized(parse_title_labels(work["title"]).title),
@@ -545,11 +553,6 @@ def assess_release(release, work, preferences, medium="all"):
         blocked.append("Blocked format: " + ", ".join(sorted(forbidden)))
     if not formats:
         review.append("File formats are unknown until torrent or file inspection")
-    if preferences.maximum_bytes is not None:
-        if release.size_bytes is None:
-            review.append("Transfer size is unknown")
-        elif release.size_bytes > preferences.maximum_bytes:
-            blocked.append("Transfer exceeds the profile size limit")
     origin = release.source + (":" + release.indexer_id if release.indexer_id else "")
     preferred = (
         preferences.audio_formats if release.medium == "audio" else preferences.ebook_formats
@@ -643,9 +646,6 @@ def enforce_profile(release, descriptor, snapshot):
         raise HTTPException(
             422, f"The selected {label} contains a blocked format: " + ", ".join(sorted(forbidden))
         )
-    size = getattr(descriptor, "torrent_bytes", descriptor.content_bytes)
-    if preferences.maximum_bytes is not None and size > preferences.maximum_bytes:
-        raise HTTPException(422, f"The inspected {label} exceeds the profile size limit")
 
 
 def enforce_inspected_profile(files, snapshot):
@@ -656,8 +656,3 @@ def enforce_inspected_profile(files, snapshot):
         raise HTTPException(
             422, "The downloaded files contain a blocked format: " + ", ".join(sorted(forbidden))
         )
-    if (
-        preferences.maximum_bytes is not None
-        and sum(file["identity"]["size"] for file in files) > preferences.maximum_bytes
-    ):
-        raise HTTPException(422, "The downloaded files exceed the frozen profile size limit")

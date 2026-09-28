@@ -1,13 +1,59 @@
 # ruff: noqa: F811
 import json
+import os
 
 import pytest
 
 from app.importing.cancel_files import cancel_files
+from app.importing.filesystem import identity
 from app.importing.layout import STAGING_NAME
 from app.importing.publication import PublicationSpec, publish_item
 from app.importing.recovery import journal_census
+from tests.filesystem_fixtures import group_mapped_media  # noqa: F401
 from tests.unit.test_import_publication import specification  # noqa: F401
+
+
+@pytest.mark.parametrize("mode", ["copy", "hardlink"])
+def test_group_mapped_share_can_verify_and_import(specification, group_mapped_media, mode):
+    from app.importing.publication import probe_destination, probe_download_folder
+
+    spec = specification.model_copy(
+        update={"mode": mode, "journal_root": specification.staging_root.parent / "journals"}
+    )
+    spec.journal_root.mkdir(mode=0o700)
+    group_mapped_media(spec.source_root, spec.destination_root, spec.staging_root)
+    original = spec.source_root / "pack/book.epub"
+    spec.files[0].identity = identity(original.stat())
+    before = original.read_bytes(), original.stat().st_mode
+    mask = os.umask(0o002)
+    try:
+        # Both automatic setup and a selected-file check need the same access
+        # as a real publication, including reopening media owned by the NAS UID.
+        for report in (
+            probe_download_folder(
+                spec.source_root,
+                "pack",
+                spec.destination_root,
+                spec.staging_root,
+                journal_root=spec.journal_root,
+            ),
+            probe_destination(
+                spec.source_root,
+                spec.source_relative,
+                spec.files[0],
+                spec.destination_root,
+                spec.staging_root,
+                journal_root=spec.journal_root,
+            ),
+        ):
+            assert report["copy"] and report["hardlink"]
+        assert not list(spec.staging_root.iterdir())
+        assert publish_item(spec)["state"] == "published"
+    finally:
+        os.umask(mask)
+    assert (spec.destination_root / spec.folder / "First Harbor.epub").read_bytes() == before[0]
+    assert (original.read_bytes(), original.stat().st_mode) == before
+    assert all(path.stat().st_mode & 0o077 == 0 for path in spec.journal_root.iterdir())
 
 
 @pytest.mark.parametrize("protected", [False, True])

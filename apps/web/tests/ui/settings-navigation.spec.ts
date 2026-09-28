@@ -6,6 +6,7 @@ for (const role of ["admin", "member", "viewer"]) {
   }, testInfo) => {
     const errors: string[] = [];
     const endpoints: string[] = [];
+    let reservePercent = 5;
     page.on("pageerror", (error) => errors.push(error.message));
     await page.route("**/api/**", (route) => {
       const url = new URL(route.request().url());
@@ -26,7 +27,20 @@ for (const role of ["admin", "member", "viewer"]) {
         data = { status: "completed" };
       else if (url.pathname === "/api/request-quotas/me")
         data = { bypass: false, windows: [], pending_remaining: null };
-      else if (
+      else if (url.pathname === "/api/acquisition/capacity") {
+        if (route.request().method() === "PUT")
+          reservePercent = route.request().postDataJSON()
+            .limits.minimum_free_percent;
+        data = {
+          limits: {
+            minimum_free_bytes: 0,
+            minimum_free_percent: reservePercent,
+          },
+          revision: String(reservePercent),
+          occupied_slots: 0,
+          reserved_bytes: 0,
+        };
+      } else if (
         url.pathname === "/api/requests" ||
         url.pathname === "/api/acquisition/downloads"
       )
@@ -76,6 +90,22 @@ for (const role of ["admin", "member", "viewer"]) {
       categories.getByRole("link", { name: "Download clients" }),
     ).toHaveCount(role === "admin" ? 1 : 0);
     if (role === "admin") {
+      await categories
+        .getByRole("link", { name: "Download clients", exact: true })
+        .click();
+      await page.getByText("Storage reserve", { exact: true }).click();
+      await page.getByLabel("Minimum free storage (%)").fill("0");
+      await page.getByRole("button", { name: "Save storage reserve" }).click();
+      await expect(
+        page.getByText("Storage reserve saved.", { exact: true }),
+      ).toBeVisible();
+      expect(reservePercent).toBe(0);
+      await expect(
+        page.getByLabel("Automatic transfers per 24 hours", { exact: false }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByLabel("Active downloads per downloader"),
+      ).toHaveCount(0);
       await page.goto("/settings#storage");
       await expect(
         page.getByRole("button", { name: "Choose ebooks folder" }),

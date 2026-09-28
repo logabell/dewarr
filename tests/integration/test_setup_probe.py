@@ -114,6 +114,30 @@ async def current(client):
     return response.json()[0]
 
 
+@pytest.mark.parametrize("failure", ["different-mounts", "legacy-journal-permissions"])
+async def test_setup_uses_the_import_storage_contract(
+    client, admin, database, empty_route, monkeypatch, failure
+):
+    if failure == "different-mounts":
+        monkeypatch.setattr(
+            destinations,
+            "filesystem_mounts",
+            lambda: [(empty_route[name], "ext4", set()) for name in ("target", "staging")],
+        )
+        expected = "different mounts"
+    else:
+        empty_route["staging"].chmod(0o775)
+        expected = "must be private"
+    response = await start(client, empty_route)
+    assert response.status_code == 202, response.text
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    assert not (await current(client))["publication_available"]
+    async with database() as db:
+        operation = await db.get(Operation, UUID(response.json()["id"]))
+        assert operation.status == "failed"
+        assert expected in operation.message
+
+
 @pytest.mark.parametrize("missing", ["root", "save_folder"])
 async def test_missing_soulseek_download_folder_reports_mapped_path(
     client, admin, database, empty_route, missing
@@ -137,7 +161,7 @@ async def test_missing_soulseek_download_folder_reports_mapped_path(
         assert str(empty_route["target"]) not in operation.message
 
 
-@pytest.mark.parametrize("kind", ["qbittorrent", "slskd"])
+@pytest.mark.parametrize("kind", ["qbittorrent", "slskd", "sabnzbd"])
 @pytest.mark.parametrize("filesystem", ["local", "smb", "read-only"])
 async def test_empty_folder_can_qualify_before_any_plan_or_download(
     client, admin, database, empty_route, kind, filesystem, request
@@ -354,57 +378,6 @@ async def test_seeding_rename_is_optional_and_does_not_require_a_hardlink(
     )
     assert activated.status_code == 200, activated.text
     assert activated.json()["seeding_rename"] is True and activated.json()["publication_available"]
-
-
-async def test_probe_operation_error_does_not_blame_missing_mount(
-    client, admin, empty_route, monkeypatch
-):
-    real_move = publication.no_replace
-
-    def fail_library_move(source_fd, source_name, destination_fd, destination_name):
-        if source_name.startswith("probe-"):
-            raise OSError(errno.ENOENT, "Synthetic rename failure")
-        return real_move(source_fd, source_name, destination_fd, destination_name)
-
-    monkeypatch.setattr(publication, "no_replace", fail_library_move)
-    assert (await start(client, empty_route)).status_code == 202
-    await get_queue().run_worker_async(wait=False, concurrency=1)
-    checked = await current(client)
-    assert not checked["publication_available"]
-    assert checked["probe"]["status"] == "failed"
-    assert checked["probe"]["failure_step"] == "checking safe library publication"
-    assert "(ENOENT)" in checked["probe"]["message"]
-    assert "folders were opened successfully" in checked["probe"]["message"]
-    assert not list(empty_route["staging"].iterdir())
-    assert not list(empty_route["target"].iterdir())
-
-
-async def test_probe_cleanup_failure_cannot_activate_and_keeps_diagnostics(
-    client, admin, empty_route, monkeypatch
-):
-    real_rmdir = publication.os.rmdir
-
-    def denied(path, *, dir_fd=None):
-        if str(path).startswith(".book-search-probe-"):
-            raise OSError(errno.EACCES, "Storage denied temporary folder cleanup")
-        return real_rmdir(path, dir_fd=dir_fd)
-
-    monkeypatch.setattr(publication.os, "rmdir", denied)
-    assert (await start(client, empty_route)).status_code == 202
-    await get_queue().run_worker_async(wait=False, concurrency=1)
-    checked = await current(client)
-    assert not checked["publication_available"]
-    report = checked["probe"]
-    assert report["status"] == "failed"
-    assert report["failure_step"] == "cleaning up temporary probe files"
-    assert report["error_code"] == "EACCES"
-    assert "EACCES" in report["message"]
-    assert report["cleanup_failures"][0]["path"].startswith(str(empty_route["target"]))
-    activated = await client.post(
-        f"/api/organization/library-folders/{checked['id']}/activate",
-        json={"expected_revision": checked["revision"]},
-    )
-    assert activated.status_code == 409
 
 
 @pytest.mark.parametrize("failure", ["disabled", "failed_probe", "changed_during_probe"])
@@ -641,3 +614,77 @@ async def test_automatic_route_verification_resumes_after_worker_restart(
     await setup_verification.verify_download_routes(admin["id"], job_id=1235)
     async with database() as db:
         assert await db.scalar(select(func.count()).select_from(Operation)) == 1
+
+
+@pytest.mark.parametrize("kind", ["library", "staging"])
+@pytest.mark.parametrize("step", ["create", "write", "remove"])
+async def test_folder_access_failure_names_path_and_worker(
+    client, admin, empty_route, monkeypatch, kind, step
+):
+    import os
+
+    path = empty_route["target" if kind == "library" else "staging"]
+    root_id = path.stat().st_ino
+    real_open, real_write, real_unlink = os.open, publication.write_all, os.unlink
+    target_fds = set()
+
+    def opening(name, flags, *args, **kwargs):
+        parent = kwargs.get("dir_fd")
+        matched = parent is not None and os.fstat(parent).st_ino == root_id and flags & os.O_CREAT
+        if matched and step == "create":
+            raise PermissionError(errno.EACCES, "Share denies file creation")
+        fd = real_open(name, flags, *args, **kwargs)
+        if matched:
+            target_fds.add(fd)
+        return fd
+
+    def writing(fd, content):
+        if step == "write" and fd in target_fds:
+            raise PermissionError(errno.EACCES, "Share denies file writes")
+        return real_write(fd, content)
+
+    def unlinking(name, *, dir_fd=None):
+        if step == "remove" and dir_fd is not None and os.fstat(dir_fd).st_ino == root_id:
+            raise PermissionError(errno.EACCES, "Share denies file removal")
+        return real_unlink(name, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", opening)
+    monkeypatch.setattr(publication, "write_all", writing)
+    monkeypatch.setattr(os, "unlink", unlinking)
+    assert (await start(client, empty_route)).status_code == 202
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    report = checked["probe"]
+    assert not checked["publication_available"] and report["status"] == "failed"
+    assert (
+        report["failure_step"]
+        == {
+            "create": "creating a temporary file",
+            "write": "writing a temporary file",
+            "remove": "removing a temporary file",
+        }[step]
+    )
+    assert report["folder_kind"] == kind and report["path"] == str(path)
+    assert str(path) in report["message"] and f"uid {os.geteuid()}" in report["message"]
+    assert "EACCES" in report["message"] and "ACL" in report["message"]
+    activated = await client.post(
+        f"/api/organization/library-folders/{checked['id']}/activate",
+        json={"expected_revision": checked["revision"]},
+    )
+    assert activated.status_code == 409
+
+
+async def test_library_setup_does_not_require_lock_or_rename_probes(
+    client, admin, empty_route, monkeypatch
+):
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EOPNOTSUPP, "Unsupported filesystem operation")
+
+    monkeypatch.setattr(publication.fcntl, "flock", unsupported)
+    monkeypatch.setattr(publication, "no_replace", unsupported)
+    assert (await start(client, empty_route)).status_code == 202
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    checked = await current(client)
+    assert checked["publication_available"]
+    assert checked["probe"]["status"] == "verified"
+    assert "no_replace" not in checked["probe"]

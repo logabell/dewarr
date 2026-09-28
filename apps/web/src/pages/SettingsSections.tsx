@@ -12,7 +12,7 @@ const Downloaders = lazy(() => import("./Downloaders"));
 const Preferences = lazy(() => import("./DownloadPreferences"));
 const Naming = lazy(() => import("./Organization"));
 const Recovery = lazy(() => import("./DownloadRecoverySettings"));
-const Quotas = lazy(() => import("./RequestQuotas"));
+const Capacity = lazy(() => import("./CapacitySettings"));
 const AccountSignIn = lazy(() => import("./AccountSignIn"));
 const Accounts = lazy(() => import("./Accounts"));
 
@@ -59,6 +59,7 @@ export function settingsSections(role: string, permissions: string[] = []) {
             content: (
               <>
                 <Downloaders embedded />
+                <Capacity />
                 <SettingsGroup
                   id="recovery"
                   title="Download recovery"
@@ -91,15 +92,6 @@ export function settingsSections(role: string, permissions: string[] = []) {
             content: (
               <>
                 <Accounts embedded />
-                {admin && (
-                  <SettingsGroup
-                    id="quotas"
-                    title="Request quotas"
-                    description="Set request limits for everyone, a role, or an individual user."
-                  >
-                    <Quotas />
-                  </SettingsGroup>
-                )}
               </>
             ),
           },

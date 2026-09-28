@@ -12,6 +12,7 @@ from app.importing.publication import (
     entry_lock,
     generated_files,
     has_publication_marker,
+    needs_hardlink,
     object_id,
     private_staging,
     publication_lock,
@@ -50,7 +51,7 @@ def remove_stage(staging, receipt, spec, checkpoint):
                     identities[filename] = object_id(file)
                 continue
             expected = receipt.get("partial_files", {}).get(filename)
-            if filename in media and spec.mode == "hardlink":
+            if filename in media and needs_hardlink(spec, media[filename], receipt):
                 expected = media[filename].identity
             with beneath(folder, filename) as file:
                 if not expected or not same_object(file, expected):

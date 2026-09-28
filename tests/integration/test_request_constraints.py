@@ -91,7 +91,7 @@ async def test_download_limits_do_not_trigger_replacement_of_owned_media(client,
         assert not await db.scalar(select(AcquisitionReservation.id))
 
 
-@pytest.mark.parametrize("constraints", [{"blocked_formats": ["m4b"]}, {"maximum_bytes": 23}])
+@pytest.mark.parametrize("constraints", [{"blocked_formats": ["m4b"]}])
 async def test_manual_selection_cannot_bypass_another_request_limit(
     client, database, catalog, selection_route, constraints
 ):
@@ -125,8 +125,7 @@ async def test_limits_freeze_into_import_profile_and_survive_request_withdrawal(
 
     with pytest.raises(HTTPException, match="blocked format"):
         enforce_inspected_profile([{"extension": "flac", "identity": {"size": 12}}], profile)
-    with pytest.raises(HTTPException, match="size limit"):
-        enforce_inspected_profile([{"extension": "m4b", "identity": {"size": 25}}], profile)
+    enforce_inspected_profile([{"extension": "m4b", "identity": {"size": 25}}], profile)
 
 
 @pytest.mark.parametrize(
@@ -134,7 +133,7 @@ async def test_limits_freeze_into_import_profile_and_survive_request_withdrawal(
     [
         ({"blocked_formats": ["flac"], "maximum_bytes": 24}, True),
         ({"blocked_formats": ["m4b"]}, False),
-        ({"maximum_bytes": 23}, False),
+        ({"maximum_bytes": 23}, True),
     ],
 )
 @pytest.mark.parametrize("committed", [False, True])
@@ -204,14 +203,16 @@ async def test_automatic_selection_inherits_shared_limits_before_fetching_or_pre
     saved = await start(client, source)
     await automatic_selection.run(UUID(saved["id"]))
     result = (await client.get(f"/api/acquisition/automatic-selections/{saved['id']}")).json()
-    assert result["status"] == "held", result
+    assert result["status"] == ("held" if "blocked_formats" in constraint else "completed"), result
     async with database() as db:
-        assert not await db.scalar(select(AcquisitionSelection.id))
+        assert bool(await db.scalar(select(AcquisitionSelection.id))) == (
+            "maximum_bytes" in constraint
+        )
         assert not await db.scalar(select(DownloadAttempt.id))
     if "blocked_formats" in constraint:
         assert not source["resolver"].calls
     else:
-        assert result["maximum_bytes"] == 11
+        assert "maximum_bytes" not in result
 
 
 async def test_list_preview_and_requests_preserve_limits_with_independent_manual_reason(

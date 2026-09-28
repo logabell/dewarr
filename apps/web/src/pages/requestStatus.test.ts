@@ -29,6 +29,19 @@ test("an active transfer stays Downloading", () => {
   );
 });
 
+test("queued and preflight attempts have not started transferring", () => {
+  for (const attempt_state of ["queued", "preflight"]) {
+    assert.equal(
+      statusLabel(active, {
+        state: "wanted",
+        attempt_state,
+        next_action: "downloads",
+      }),
+      "Queued",
+    );
+  }
+});
+
 test("uncertain and held transfers need attention rather than claiming to download", () => {
   for (const attempt_state of ["uncertain", "held"]) {
     assert.equal(

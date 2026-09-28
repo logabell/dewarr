@@ -20,14 +20,17 @@ export default function CapacitySettings() {
       className="panel editor"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Transfer and storage limits</summary>
-      <p>Applies to new transfers. Active downloads are not stopped.</p>
+      <summary>Storage reserve</summary>
+      <p>
+        Downloads have no daily or concurrent transfer cap. Storage is checked
+        before downloading and importing.
+      </p>
       <Notice error={settings.error} />
-      {saved && <p role="status">Limits saved.</p>}
+      {saved && <p role="status">Storage reserve saved.</p>}
       {settings.data && (
         <>
           <p>
-            {settings.data.occupied_slots} occupied download slots ·{" "}
+            {settings.data.occupied_slots} active transfers ·{" "}
             {(settings.data.reserved_bytes / 1024 ** 3).toFixed(2)} GiB reserved
             across filesystems
           </p>
@@ -64,43 +67,13 @@ function Editor({
   });
   return (
     <form
-      aria-label="Transfer and storage limits"
+      aria-label="Storage reserve"
       onSubmit={(e) => {
         e.preventDefault();
         save.mutate();
       }}
     >
       <Notice error={save.error} />
-      <label>
-        Active downloads per downloader
-        <input
-          type="number"
-          required
-          min={1}
-          max={100}
-          value={limits.active_transfers}
-          onChange={(e) =>
-            setLimits({ ...limits, active_transfers: Number(e.target.value) })
-          }
-        />
-      </label>
-      <label>
-        Automatic transfers per 24 hours
-        <input
-          type="number"
-          required
-          min={1}
-          max={10000}
-          value={limits.automatic_per_day}
-          onChange={(e) =>
-            setLimits({ ...limits, automatic_per_day: Number(e.target.value) })
-          }
-        />
-      </label>
-      <p className="muted">
-        The daily budget applies to scheduled automatic dispatch. Explicit
-        manual downloads still require a slot and storage capacity.
-      </p>
       <label>
         Minimum free storage (GiB)
         <input
@@ -142,7 +115,7 @@ function Editor({
         pauses new downloads.
       </p>
       <button className="primary" disabled={save.isPending}>
-        {save.isPending ? "Saving capacity limits…" : "Save capacity limits"}
+        {save.isPending ? "Saving storage reserve…" : "Save storage reserve"}
       </button>
     </form>
   );

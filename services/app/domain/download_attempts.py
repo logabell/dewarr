@@ -288,11 +288,6 @@ async def start(
             )
         )
         return existing
-    if selection.frozen.get("download_recovery"):
-        from app.domain.download_recovery import configuration, history
-
-        if len(await history(db, selection)) >= (await configuration(db)).attempt_cap:
-            raise HTTPException(409, "The replacement attempt limit has been reached")
     if not automatic and any(automatic_dispatch.consent(item) for item in members):
         raise HTTPException(409, "Automatic selections must use their authorized dispatch workflow")
     for item in members:

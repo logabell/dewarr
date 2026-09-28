@@ -56,9 +56,6 @@ class AutomaticSelectionView(BaseModel):
     id: UUID
     status: str
     message: str
-    maximum_bytes: int
-    maximum_pack_bytes: int | None = None
-    maximum_inspections: int = automatic.MAX_INSPECTIONS
     inspections: int
     decisions: list[CandidateDecision]
     selection_id: UUID | None = None
@@ -85,8 +82,6 @@ async def view(db, user, operation):
         id=operation.id,
         status=operation.status,
         message=operation.message,
-        maximum_bytes=operation.payload["maximum_bytes"],
-        maximum_pack_bytes=operation.payload.get("maximum_pack_bytes"),
         inspections=len(operation.payload["inspected"]),
         decisions=[
             {

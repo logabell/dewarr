@@ -148,6 +148,23 @@ export default function QuickAdd({
           ? "Starting ebook and audiobook request…"
           : "Starting your request…"
     : undefined;
+  const coverStatus = starting
+    ? "Starting…"
+    : feedbackError
+      ? "Retry needed"
+      : status.data?.status === "completed"
+        ? status.data.message.startsWith("Already available")
+          ? "Available"
+          : "Queued"
+        : status.data?.status === "held"
+          ? "Needs review"
+          : status.data?.status === "failed"
+            ? "Failed"
+            : status.data?.status === "cancelled"
+              ? "Cancelled"
+              : "Searching…";
+  const coverNeedsReview =
+    !!status.data && ["held", "failed"].includes(status.data.status);
   const label =
     preference === "audio"
       ? "Audiobook"
@@ -229,37 +246,32 @@ export default function QuickAdd({
             <Headphones size={18} aria-hidden="true" />
           </button>
         </div>
-        {missingPreference ? (
-          <PreferencePrompt cover />
-        ) : (
-          <Notice error={feedbackError} />
-        )}
-        {starting ? (
-          <span className="cover-quick-status" role="status">
-            {starting}
-          </span>
-        ) : (
-          engaged &&
-          status.data &&
+        {missingPreference && <PreferencePrompt cover />}
+        {(starting || feedbackError || (engaged && status.data)) &&
           !missingPreference && (
-            <span className="cover-quick-status" role="status">
-              {["held", "failed"].includes(status.data.status)
-                ? "Request needs attention."
-                : status.data.message}{" "}
-              <Link
-                to={
-                  id && ["held", "failed"].includes(status.data.status)
-                    ? `/books/${id}?tab=sources`
-                    : "/requests"
-                }
-              >
-                {id && ["held", "failed"].includes(status.data.status)
-                  ? "Review sources"
-                  : "View downloads"}
-              </Link>
+            <span
+              className="cover-quick-status"
+              role={feedbackError ? "alert" : "status"}
+              title={feedbackError?.message || starting || status.data?.message}
+            >
+              {starting || feedbackError ? (
+                coverStatus
+              ) : (
+                <Link
+                  to={
+                    id && coverNeedsReview
+                      ? `/books/${id}?tab=sources`
+                      : status.data?.request_id
+                        ? `/requests#request-${status.data.request_id}`
+                        : "/requests"
+                  }
+                  aria-label={`${coverStatus} — ${coverNeedsReview && id ? "Review sources" : "View downloads"}`}
+                >
+                  {coverStatus}
+                </Link>
+              )}
             </span>
-          )
-        )}
+          )}
       </div>
     );
   return (

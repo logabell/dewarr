@@ -127,7 +127,9 @@ test("cover shortcuts acquire missing formats without navigating, including prov
   await provider
     .getByRole("button", { name: "Download audiobook", exact: true })
     .click();
-  await expect(provider.getByRole("alert")).toContainText(
+  await expect(provider.getByRole("alert")).toHaveText("Retry needed");
+  await expect(provider.getByRole("alert")).toHaveAttribute(
+    "title",
     "Please retry download",
   );
   fail = false;
@@ -138,6 +140,9 @@ test("cover shortcuts acquire missing formats without navigating, including prov
   await expect(
     provider.getByRole("button", { name: "Download audiobook", exact: true }),
   ).toBeDisabled();
+  await expect(provider.locator(".cover-quick-status")).toHaveText(
+    "Searching…",
+  );
   expect(imports).toHaveLength(1);
   expect(writes.at(-1)).toEqual({
     work_id: "imported",

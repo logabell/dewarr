@@ -1,4 +1,4 @@
-"""Durable transfer slots, rolling automatic budgets and shared filesystem reservations."""
+"""Durable transfer accounting and shared filesystem reservations."""
 
 import asyncio
 import os
@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import or_, select, text
 
 from app.db.models import (
     AutomaticImport,
@@ -31,8 +31,6 @@ MIB = 1024**2
 
 class Limits(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    active_transfers: int = Field(default=3, ge=1, le=100)
-    automatic_per_day: int = Field(default=10, ge=1, le=10000)
     minimum_free_bytes: int = Field(default=5 * 1024**3, ge=0, le=2**53 - 1)
     minimum_free_percent: int = Field(default=5, ge=0, le=50)
 
@@ -43,7 +41,13 @@ class CapacityWait(Exception):
 
 async def settings(db):
     row = await db.get(CapacitySettings, 1, populate_existing=True)
-    return Limits.model_validate(row.configuration) if row else Limits()
+    return (
+        Limits.model_validate(
+            {key: value for key, value in row.configuration.items() if key in Limits.model_fields}
+        )
+        if row
+        else Limits()
+    )
 
 
 async def storage_generation(db):
@@ -233,59 +237,6 @@ async def admit(db, attempt, selection, observation):
     # Historical submissions still need accounting, even when already over capacity.
     if not attempt.external_may_exist:
         await current_observation(db, observation)
-        older = await db.scalar(
-            select(DownloadAttempt.id)
-            .join(DownloadCapacity)
-            .where(
-                DownloadAttempt.endpoint_key == attempt.endpoint_key,
-                DownloadAttempt.id != attempt.id,
-                DownloadAttempt.state.in_(["queued", "preflight"]),
-                DownloadAttempt.external_may_exist.is_(False),
-                DownloadCapacity.slot_active.is_(False),
-                DownloadAttempt.next_check_at <= datetime.now(UTC),
-                or_(
-                    DownloadAttempt.created_at < attempt.created_at,
-                    (DownloadAttempt.created_at == attempt.created_at)
-                    & (DownloadAttempt.id < attempt.id),
-                ),
-            )
-            .limit(1)
-        )
-        if older:
-            raise CapacityWait("Waiting for an earlier queued download to check capacity")
-        occupied = await db.scalar(
-            select(func.count())
-            .select_from(DownloadAttempt)
-            .outerjoin(DownloadCapacity)
-            .where(
-                DownloadAttempt.endpoint_key == attempt.endpoint_key,
-                DownloadAttempt.id != attempt.id,
-                or_(
-                    DownloadCapacity.slot_active.is_(True),
-                    DownloadCapacity.attempt_id.is_(None)
-                    & DownloadAttempt.external_may_exist.is_(True)
-                    & (DownloadAttempt.state != "complete"),
-                ),
-            )
-        )
-        if occupied >= limits.active_transfers:
-            raise CapacityWait("Waiting for a free downloader slot")
-        if row.automatic:
-            debit = await db.scalar(
-                select(func.count())
-                .select_from(DownloadCapacity)
-                .join(DownloadAttempt)
-                .where(
-                    DownloadCapacity.attempt_id != attempt.id,
-                    DownloadCapacity.automatic.is_(True),
-                    or_(
-                        DownloadCapacity.submitted_at >= datetime.now(UTC) - timedelta(hours=24),
-                        DownloadCapacity.slot_active.is_(True),
-                    ),
-                )
-            )
-            if debit >= limits.automatic_per_day:
-                raise CapacityWait("Waiting for the rolling 24-hour automatic transfer budget")
         # Do not spend storage whose prior external reservations are still unknown.
         if await db.scalar(
             select(DownloadAttempt.id)

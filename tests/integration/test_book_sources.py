@@ -348,7 +348,10 @@ async def test_profiles_enforce_selection_and_keep_frozen_preferences(
     blocked = (
         await client.post(
             "/api/acquisition/profiles",
-            json={"name": "Small transfers", "preferences": {"maximum_bytes": 1}},
+            json={
+                "name": "Blocked formats",
+                "preferences": {"blocked_formats": ["m4b", "mp3", "epub", "pdf"]},
+            },
         )
     ).json()
     selected = {**selection_route, "profile_id": blocked["id"], "profile_generation": 1}

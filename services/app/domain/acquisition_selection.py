@@ -95,7 +95,6 @@ async def verified_probe(db, destination, configuration, mapping):
             and probe.get("source_key") == mapping["source_key"]
             and probe.get("source_path")
             == str((await import_sources(db)).get(mapping["source_key"]))
-            and probe.get("no_replace")
             and (
                 probe.get("seeding_rename")
                 if configuration.get("seeding_rename")
@@ -247,17 +246,6 @@ async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_sele
         raise HTTPException(409, "The saved release descriptor needs inspection again")
     release = parse_release(artifact.source_key, artifact.release_snapshot)
     profile = await for_selection(db, user, intent, body)
-    if automatic_evidence:
-        maximum = automatic_evidence["maximum_bytes"]
-        profile = profile.model_copy(
-            update={
-                "preferences": profile.preferences.model_copy(
-                    update={
-                        "maximum_bytes": min(profile.preferences.maximum_bytes or maximum, maximum),
-                    }
-                )
-            }
-        )
     spec = RequestSpec.model_validate(intent.specification)
     if (
         body.slot == "either"

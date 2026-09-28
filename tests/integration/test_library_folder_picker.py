@@ -106,9 +106,7 @@ async def test_picker_persists_mounts_verifies_and_sets_both_defaults(
     await get_queue().run_worker_async(wait=False, concurrency=1)
     verified = (await client.get("/api/organization/destinations")).json()[0]
     assert verified["publication_available"], verified
-    staging = (
-        route["target"] if library_mount else route["target"].parent
-    ) / ".book-search-staging"
+    staging = route["target"] / ".book-search-staging"
     assert staging.is_dir()
     response = await client.post(
         f"/api/organization/library-folders/{chosen['id']}/activate",
@@ -246,7 +244,7 @@ async def test_repick_replaces_staging_saved_by_an_earlier_failed_choice(
     assert "inside its container" in response.json()["detail"]
     response = await client.put("/api/organization/library-folders/audio", json=body)
     assert response.status_code == 200, response.text
-    staging = route["target"].parent / ".book-search-staging"
+    staging = route["target"] / ".book-search-staging"
     assert await saved_staging(database) == str(staging) and staging.is_dir()
 
 
@@ -297,7 +295,7 @@ async def test_staging_stays_while_unfinished_imports_use_it(
         if key.startswith("retired-")
     )
     assert response.status_code == 200, response.text
-    assert await saved_staging(database) == str(route["target"].parent / ".book-search-staging")
+    assert await saved_staging(database) == str(route["target"] / ".book-search-staging")
 
 
 async def test_library_folder_browser_is_read_only_and_confined(

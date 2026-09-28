@@ -1,4 +1,3 @@
-import QuotaSummary from "../components/QuotaSummary";
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -66,7 +65,12 @@ function chipState(label: string) {
   if (label === "Preparing download") return "downloading";
   if (label === "In library") return "satisfied";
   if (label === "Downloading" || label === "Importing") return "downloading";
-  if (label === "Pending" || label === "Paused" || label === "Check inventory")
+  if (
+    label === "Queued" ||
+    label === "Pending" ||
+    label === "Paused" ||
+    label === "Check inventory"
+  )
     return "paused";
   if (label === "Declined" || label === "Withdrawn") return "cancelled";
   return "wanted";
@@ -262,7 +266,6 @@ export default function ActivityRequests({
   });
   return (
     <section className="requests-board" aria-label="Requests">
-      <QuotaSummary />
       <Notice
         error={
           requests.error ||
@@ -610,6 +613,9 @@ function RequestCard({
                     ? "Choose Review files to continue"
                     : "Administrator review required"}
                 </p>
+              )}
+              {label === "Queued" && target.attempt_message && (
+                <p className="request-status-hint">{target.attempt_message}</p>
               )}
             </td>
             <td>

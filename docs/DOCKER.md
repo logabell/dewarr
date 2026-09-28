@@ -31,9 +31,9 @@ Most configuration belongs in the app: connect libraries, reading accounts, sour
 | `./data:/data` | Shared downloads and library files. Replace `./data` with your existing media parent folder. |
 | `postgres:/var/lib/postgresql` | PostgreSQL 18 data in a persistent Docker volume. |
 
-Dewarr initializes `/config` and runs the app as `PUID:PGID`. Give that user/group read/write access to each library. Download folders can be read-only to Dewarr for copy imports, while the download client uses its own writable mount. Setup normally creates and removes an owned test file to check hardlinks; if source writes are denied, it checks folder readability and destination publication and selects copy mode. Individual completed files are still inspected and verified before import. Seeding-rename routes require source write access. Imports in copy and hardlink modes preserve original downloads. `UMASK` defaults to `002`: new media folders use `0775` and copied/generated files use `0664`, subject to the share's ACLs. Set `UMASK=022` for group read-only files. Use a common `PGID` (or Compose `group_add`) and consistent downloader permissions when several services need write access. Dewarr never recursively changes media ownership or permissions; hardlinks retain the source inode's permissions.
+Dewarr initializes `/config` and runs the app as `PUID:PGID`. Give that user/group read/write access to each library. Download folders can be read-only to Dewarr for copy imports, while the download client uses its own writable mount. Setup normally creates and removes an owned test file to check hardlinks; if source writes are denied, it checks download readability and library writability and selects copy mode. Individual completed files are still inspected and verified before import. Seeding-rename routes require source write access. Imports in copy and hardlink modes preserve original downloads. `UMASK` defaults to `002`: new media folders use `0775` and copied/generated files use `0664`, subject to the share's ACLs. Set `UMASK=022` for group read-only files. Use a common `PGID` (or Compose `group_add`) and consistent downloader permissions when several services need write access. Dewarr never recursively changes media ownership or permissions; hardlinks retain the source inode's permissions.
 
-Dewarr chooses staging separately for each destination. It prefers `.book-search-staging` beside the library when that is writable and on the same mount. For a library-only mount such as `/library`, it uses `/library/.book-search-staging`. Ebook and audiobook libraries can live on independent NAS shares. Each staging directory must support safe publication into its own library; downloads can be on another filesystem and use copy mode.
+Dewarr chooses staging automatically. New Audiobookshelf destinations use the hidden `.book-search-staging` folder inside the selected library, so its parent needs no write access. Grimmory also uses this location when its watcher is disabled; watched libraries and Bookdrop keep staging outside their watched folder. Existing staging locations are preserved. Ebook and audiobook libraries can live on independent NAS shares. Each staging directory must support safe publication into its own library; downloads can be on another filesystem and use copy mode.
 
 Folder names are arbitrary; the checks use locations, permissions and mount boundaries. Ebooks and audiobooks may share the same library root. Choose **Use the same folder as …** when setting up the second format. Dewarr labels the shared connection and reuses its staging location. New naming plans add Ebook/Audiobook labels to separate version folders; existing books are not moved or automatically merged. See [Library folder architecture](LIBRARY-FOLDERS.md) for the distinction between sharing a root and combining formats inside one book folder.
 
@@ -55,7 +55,7 @@ Choose those folders in Settings and verify your library routes. If Audiobookshe
 
 ### Choosing folders and path mappings
 
-In **Settings → Libraries**, choose the library folder first. If Dewarr sees that folder at a different path, choose **Other folder** to browse the volumes mounted inside Dewarr. The browser shows directories, not files on your computer. Select the corresponding existing folder; this does not move your library. **Save & verify folder** checks filesystem operations and library access before activating the route.
+In **Settings → Libraries**, choose the library folder first. If Dewarr sees that folder at a different path, choose **Other folder** to browse the volumes mounted inside Dewarr. The browser shows directories, not files on your computer. Select the corresponding existing folder; this does not move your library. **Save & verify folder** checks readable downloads, writable library/staging folders, and backend library access before activating the route. The write check creates and removes a small file using normal media permissions. Setup does not exercise file locks, journal publication, directory collision behavior, or remote marker visibility.
 
 Setup checks local download/library access and the library server's settings.
 The saved mapping translates between the two services' paths; Dewarr does not
@@ -69,7 +69,7 @@ Each download client keeps its own download folder. Finished books use the desti
 
 Being in the same Compose stack does not guarantee matching paths: each service has its own volume configuration. No translation is needed when both containers see the same files at the same path. A path mapping only translates a path; it cannot mount a missing volume or enable hardlinks.
 
-On WSL2 Windows-backed mounts (DrvFs), hardlinks can be unavailable even when both folders are on the same filesystem. Dewarr automatically uses copy mode when hardlink checks fail and safe publication checks pass. Original downloads remain available for seeding. A failed publication or permission check still blocks activation, and the error identifies the failed operation; changing a path mapping cannot repair filesystem capabilities.
+On WSL2 Windows-backed mounts (DrvFs), hardlinks can be unavailable even when both folders are on the same filesystem. Dewarr automatically uses copy mode when hardlinks are unavailable and the folders are accessible. Original downloads remain available for seeding. A real read/write permission failure still needs to be corrected; the error identifies its path and operation.
 
 ### Soulseek / slskd
 
@@ -79,9 +79,7 @@ If slskd reports `/media/downloads` but Dewarr sees those files at `/data/downlo
 
 ### Network shares (NFS and SMB)
 
-NFS and SMB/CIFS libraries require staging on the same mounted share as the library. Dewarr tests native no-replace rename on the actual mount; support depends on the server, client, and filesystem. When the native operation is unavailable, Dewarr tests a fallback. The directory fallback refuses existing targets and relies on ordinary rename refusing non-empty directories; unlike native no-replace, it cannot eliminate a race with another app creating an empty target directory. Keep other writers out of Dewarr's staging area.
-
-On Windows SMB shares, an open child file can prevent its parent directory from being renamed. Dewarr closes its probe marker before publication and reopens it at the destination to verify ownership. Native-capable routes do not need to pass fallback-specific rename tests. A real access denial or busy-file error still fails verification with the operation and error code; it is not treated as evidence that native rename is unsupported.
+Network libraries use the same simple access checks as local folders. Staging stays on the library mount. Recovery locks live in application storage for new routes and are acquired during imports, not tested as a library connection requirement. Real imports still refuse to overwrite an existing book and report failures at the operation that needs the filesystem capability.
 
 For a Linux VM mounting Unraid over NFS, pass the VM's mounted media tree into
 Dewarr as a Docker bind mount. NFS can map the container's uid to a server-side
@@ -92,12 +90,12 @@ Legacy lock files must belong to the same server-side owner as their journal fol
 If access is denied, check the NFS export's permissions and identity mapping;
 the `uid` and `dir_mode` options below apply to SMB/CIFS, not NFS.
 
-SMB/CIFS mounts need a few options, because the share, not Linux, decides ownership and permissions:
+For SMB/CIFS, use the share’s normal permissions:
 
 - Dewarr needs read/write access to the share. Where Unix ownership is not provided by the server, `uid=<PUID>,gid=<PGID>` can make the mount accessible to the container user. Dewarr validates operations rather than requiring that the reported uid equal `PUID`.
 - New routes allow ordinary shared media permissions, including synthetic `dir_mode`/`file_mode` settings. Their journals live in `/config/import-journals`; do not impose `dir_mode=0700` on the whole media share for Dewarr. Legacy routes with journals on the share still need private journal-folder permissions.
 - `serverino` (the default): Dewarr tracks files by inode number. With `noserverino` those numbers can change between checks. The route test warns when it sees this.
-- File locks are tested on the journal filesystem. For new routes, fix `/config` access if this check fails; changing SMB media lock options is unnecessary.
+- Import locks use the journal filesystem. A lock failure during an import concerns `/config` for new routes, not the SMB media mount.
 
 Shares without hardlink support, such as many NAS SMB exports, fall back to copying.
 
@@ -110,9 +108,7 @@ shared view lets mergerfs place hardlinks on the same branch and matches the pat
 for Sonarr and Radarr.
 
 mergerfs can report a different directory inode after a rename because its default `hybrid-hash`
-mode derives directory identities from their paths. Dewarr supports that behavior: route tests and
-interrupted imports use private random ownership markers while a directory moves, then record the
-identity at its final library path. File hardlinks are still verified independently. See the
+mode derives directory identities from their paths. Connection checks do not rename directories or require stable directory identities. Actual imports recognize their staged contents after a move and retain their recovery record. See the
 [mergerfs inode calculation documentation](https://github.com/trapexit/mergerfs/blob/master/mkdocs/docs/config/inodecalc.md)
 for the available policies and their tradeoffs.
 

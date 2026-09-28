@@ -16,7 +16,7 @@ test("recovery settings preserve source overrides and manage the release blockli
   const form = page.getByRole("form", { name: "Download recovery settings" });
   await expect(
     form.getByLabel("Maximum attempts", { exact: false }),
-  ).toHaveValue("3");
+  ).toHaveCount(0);
   const mam = form.getByRole("group", { name: "MyAnonamouse", exact: true });
   await expect(
     mam.getByLabel("No progress or zero seeders", { exact: false }),
@@ -24,7 +24,6 @@ test("recovery settings preserve source overrides and manage the release blockli
   await mam
     .getByLabel("No progress or zero seeders", { exact: false })
     .fill("168");
-  await form.getByLabel("Maximum attempts", { exact: false }).fill("4");
   await form.getByRole("button", { name: "Save recovery settings" }).click();
   await expect
     .poll(
@@ -33,16 +32,16 @@ test("recovery settings preserve source overrides and manage the release blockli
           await (
             await page.request.get("/api/acquisition/recovery/settings")
           ).json()
-        ).attempt_cap,
+        ).sources.mam.stall_hours,
     )
-    .toBe(4);
+    .toBe(168);
   await page.reload();
   await expect(
     mam.getByLabel("No progress or zero seeders", { exact: false }),
   ).toHaveValue("168");
   await expect(
     form.getByLabel("Maximum attempts", { exact: false }),
-  ).toHaveValue("4");
+  ).toHaveCount(0);
   const block = {
     id: "12345678-1234-4234-8234-123456789abc",
     work_id: "12345678-1234-4234-8234-123456789abd",
@@ -82,7 +81,6 @@ test("recovery settings preserve source overrides and manage the release blockli
   await mam
     .getByLabel("No progress or zero seeders", { exact: false })
     .fill("");
-  await form.getByLabel("Maximum attempts", { exact: false }).fill("3");
   await form.getByRole("button", { name: "Save recovery settings" }).click();
   await expect
     .poll(
@@ -91,9 +89,9 @@ test("recovery settings preserve source overrides and manage the release blockli
           await (
             await page.request.get("/api/acquisition/recovery/settings")
           ).json()
-        ).attempt_cap,
+        ).sources.mam.stall_hours,
     )
-    .toBe(3);
+    .toBe(null);
 
   const auth = await (await page.request.get("/api/auth/me")).json();
   const headers = {

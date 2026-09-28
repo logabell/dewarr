@@ -1,5 +1,7 @@
 import asyncio
+import errno
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -9,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db.models import (
+    ImportCapacity,
     ImportDestination,
     ImportEntry,
     ImportRun,
@@ -20,6 +23,7 @@ from app.db.models import (
     Version,
     Work,
 )
+from app.domain import capacity
 from app.importing import execution
 from app.jobs.queue import get_queue
 from app.jobs.tasks import schedule_import_confirmation
@@ -77,6 +81,61 @@ async def start(client, route, key="import-fixture"):
             },
         },
     )
+
+
+@pytest.mark.parametrize("wait_for_space", [False, True])
+async def test_file_level_hardlink_failure_copies_with_capacity_accounting(
+    client, admin, database, ready_route, monkeypatch, wait_for_space
+):
+    route = ready_route
+    original = route["source"] / "pack/book.epub"
+    before = original.read_bytes()
+    link = os.link
+    reserve = capacity.reserve_import
+    reservations = []
+    waiting = wait_for_space
+
+    def deny_download_link(source, *args, **kwargs):
+        if source == "book.epub":
+            raise OSError(errno.EPERM, "Downloader-owned file cannot be hardlinked")
+        return link(source, *args, **kwargs)
+
+    async def reserve_import(db, entry, spec, observation):
+        reservations.append(observation["required_bytes"])
+        if waiting and len(reservations) == 2:
+            limits = await capacity.settings(db)
+            for space in observation["filesystems"].values():
+                floor = max(
+                    limits.minimum_free_bytes,
+                    space["total"] * limits.minimum_free_percent // 100,
+                )
+                space["available"] = floor + reservations[0]
+        await reserve(db, entry, spec, observation)
+
+    monkeypatch.setattr(os, "link", deny_download_link)
+    monkeypatch.setattr(capacity, "reserve_import", reserve_import)
+    result = await start(client, route)
+    assert result.status_code == 202, result.text
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    current = (await client.get(f"/api/organization/imports/{result.json()['id']}")).json()
+    entry = current["entries"][0]
+    assert reservations[1] == reservations[0] + len(before)
+    if wait_for_space:
+        assert entry["state"] == "queued", current
+        assert not list(route["stage"].rglob("*.epub"))
+        assert not list(route["target"].rglob("*.epub"))
+        waiting = False
+        await execution.execute(UUID(entry["operation_id"]))
+        current = (await client.get(f"/api/organization/imports/{result.json()['id']}")).json()
+        entry = current["entries"][0]
+        assert reservations[2] == reservations[1]
+    assert entry["state"] == "confirmed", current
+    published = list(route["target"].rglob("*.epub"))
+    assert len(published) == 1
+    assert published[0].read_bytes() == before == original.read_bytes()
+    assert published[0].stat().st_ino != original.stat().st_ino
+    async with database() as db:
+        assert not (await db.get(ImportCapacity, UUID(entry["id"]))).resources
 
 
 @pytest.mark.parametrize("ready_route", ["sibling", "nested", "protected"], indirect=True)

@@ -15,6 +15,7 @@ from app.adapters.nzbget import NzbClient
 from app.adapters.sabnzbd import SabClient
 from app.config import get_settings
 from app.db.models import AutomaticImport, DownloadFulfillment, ImportEntry, Integration
+from app.domain import automatic_selection
 from app.domain import download_attempts as downloads
 from app.importing import automatic
 from app.jobs.queue import get_queue
@@ -110,7 +111,15 @@ class CompletedClient:
     ["single-file", "extracted-folder", "retry-held", "untagged", "wrong-book", "invalid-file"],
 )
 async def test_completed_usenet_output_imports_once(
-    client, admin, database, ready_route, prowlarr_http, monkeypatch, kind, scenario
+    client,
+    admin,
+    database,
+    ready_route,
+    prowlarr_http,
+    monkeypatch,
+    kind,
+    scenario,
+    automatically=False,
 ):
     route = ready_route
     work_id = route["plan"]["document"]["groups"][0]["work_id"]
@@ -169,22 +178,33 @@ async def test_completed_usenet_output_imports_once(
         await db.flush()
         downloader_id = str(downloader.id)
     wanted = await request(
-        client, body({"work": work_id}, "ebook", ebook_library_id=route["library_id"])
-    )
-    prepared = await prepare(
         client,
-        {
-            "intent_id": wanted["request"]["id"],
-            "slot": "ebook",
-            "artifact_id": artifact.json()["id"],
-            "downloader_id": downloader_id,
-            "downloader_generation": 1,
-            "destination_id": route["destination"]["id"],
-            "destination_revision": route["destination"]["revision"],
-            "confirmed_work_id": work_id,
-        },
+        body(
+            {"work": work_id},
+            "ebook",
+            ebook_library_id=route["library_id"],
+            download_constraints={"maximum_bytes": 1} if automatically else None,
+        ),
     )
-    assert prepared.status_code == 201, prepared.text
+    prepared = (
+        None
+        if automatically
+        else await prepare(
+            client,
+            {
+                "intent_id": wanted["request"]["id"],
+                "slot": "ebook",
+                "artifact_id": artifact.json()["id"],
+                "downloader_id": downloader_id,
+                "downloader_generation": 1,
+                "destination_id": route["destination"]["id"],
+                "destination_revision": route["destination"]["revision"],
+                "confirmed_work_id": work_id,
+            },
+        )
+    )
+    if prepared is not None:
+        assert prepared.status_code == 201, prepared.text
     approved = await client.put(
         f"/api/organization/destinations/{route['destination']['id']}/automatic-import",
         json={
@@ -211,8 +231,40 @@ async def test_completed_usenet_output_imports_once(
             )
 
         monkeypatch.setattr(automatic, "manifest_matches", legacy_check)
-    started = await start(client, prepared.json())
-    assert started.status_code == 202, started.text
+    if automatically:
+        searched = await client.post(
+            f"/api/catalog/works/{work_id}/source-searches",
+            json={"medium": "ebook"},
+            headers={"Idempotency-Key": "automatic-usenet-search"},
+        )
+        assert searched.status_code == 202, searched.text
+        await get_queue().run_worker_async(wait=False, concurrency=1)
+        selected = await client.post(
+            "/api/acquisition/automatic-selections",
+            json={
+                "intent_id": wanted["request"]["id"],
+                "slot": "ebook",
+                "search_id": searched.json()["id"],
+                "downloader_id": downloader_id,
+                "downloader_generation": 1,
+                "destination_id": route["destination"]["id"],
+                "destination_revision": route["destination"]["revision"],
+                "download_when_ready": True,
+            },
+            headers={"Idempotency-Key": "automatic-usenet-download"},
+        )
+        assert selected.status_code == 202, selected.text
+        await get_queue().run_worker_async(wait=False, concurrency=1)
+        selection = (
+            await client.get(f"/api/acquisition/automatic-selections/{selected.json()['id']}")
+        ).json()
+        assert selection["status"] == "completed", selection
+        download_id = selection["download_id"]
+        await automatic_selection.run(UUID(selected.json()["id"]))
+    else:
+        started = await start(client, prepared.json())
+        assert started.status_code == 202, started.text
+        download_id = started.json()["id"]
     await get_queue().run_worker_async(wait=False, concurrency=1)
     async with database() as db:
         auto = await db.scalar(select(AutomaticImport))
@@ -248,5 +300,23 @@ async def test_completed_usenet_output_imports_once(
     ledger = (await client.get(f"/api/requests/{wanted['request']['id']}")).json()
     assert ledger["targets"][0]["state"] == "satisfied"
     await automatic.run(auto.id)
-    await downloads.run(UUID(started.json()["id"]))
+    await downloads.run(UUID(download_id))
     assert grab.submissions == 1
+
+
+@pytest.mark.parametrize("kind", ["sabnzbd", "nzbget"])
+@pytest.mark.parametrize("scenario", ["extracted-folder", "untagged", "wrong-book"])
+async def test_automatic_usenet_search_download_and_import(
+    client, admin, database, ready_route, prowlarr_http, monkeypatch, kind, scenario
+):
+    await test_completed_usenet_output_imports_once(
+        client,
+        admin,
+        database,
+        ready_route,
+        prowlarr_http,
+        monkeypatch,
+        kind,
+        scenario,
+        automatically=True,
+    )

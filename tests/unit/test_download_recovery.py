@@ -87,7 +87,7 @@ def test_mam_stalls_default_off_and_source_override_wins():
     assert policy_for(config, selection).stall_hours is None
     config.sources["mam"] = RecoveryPolicy(stall_hours=168)
     assert policy_for(config, selection).stall_hours == 168
-    assert config.attempt_cap == 3
+    assert "attempt_cap" not in config.model_dump()
 
 
 def test_indexer_scoped_release_keys_and_cross_source_hashes():

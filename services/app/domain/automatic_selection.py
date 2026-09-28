@@ -36,7 +36,6 @@ from app.domain.automatic_eligibility import (
     EBOOKS,
     collection_candidate,
     eligibility,
-    limit_bytes,
 )
 from app.domain.book_sources import checked
 from app.domain.downloaders import client_protocol, connection_or_404
@@ -50,7 +49,6 @@ from app.domain.release_profiles import (
     same_profile,
     source_popularity,
 )
-from app.domain.request_constraints import constrained_preferences
 from app.domain.request_scope import SCOPE_FIELDS
 from app.domain.source_artifacts import persist_artifact
 from app.domain.source_network import source_call
@@ -61,7 +59,6 @@ from app.jobs.retry import SourceSearchRetry
 from app.security import decrypt_secrets
 
 KIND = "acquisition.auto-select"
-MAX_INSPECTIONS = 5
 TERMINAL = {"completed", "held", "failed", "cancelled"}
 
 
@@ -398,14 +395,6 @@ async def begin(
             "pack_catalog": await pack_coverage.catalog(db, user, work)
             if profile.preferences.allows_series_packs
             else None,
-            "maximum_bytes": limit_bytes(
-                constrained_preferences(profile.preferences, rule), rule["medium"]
-            ),
-            "maximum_pack_bytes": limit_bytes(
-                constrained_preferences(profile.preferences, rule), rule["medium"], pack=True
-            )
-            if profile.preferences.allows_series_packs
-            else None,
             "inspected": [],
             "verified": {},
             "decisions": [],
@@ -602,7 +591,7 @@ async def reject_candidate(db, operation, result_id, reasons):
     operation.payload = payload
     operation.status, operation.message = (
         "queued",
-        "This torrent needs review; checking the next candidate",
+        "This release needs review; checking the next candidate",
     )
     operation.job_id = await enqueue(db, KIND, operation_id=str(operation.id))
 
@@ -613,11 +602,7 @@ def eligible_candidates(ranked, payload):
     return [
         item
         for item in ranked
-        if not item[3]
-        and (
-            str(item[1].id) in verified
-            or (str(item[1].id) not in inspected and len(inspected) < MAX_INSPECTIONS)
-        )
+        if not item[3] and (str(item[1].id) in verified or str(item[1].id) not in inspected)
     ]
 
 
@@ -754,7 +739,7 @@ async def run(identifier):
             "running",
             "Inspecting the highest ranked eligible Soulseek folder"
             if getattr(preview, "source", None) == "slskd"
-            else "Inspecting the highest ranked eligible torrent",
+            else "Inspecting the highest ranked eligible release",
         )
         owner_id = operation.owner_id
         from app.domain.pack_expansion import pinned_source
@@ -1024,7 +1009,14 @@ async def run(identifier):
                     ),
                     "release": fresh.model_dump(mode="json"),
                     "formats": sorted(
-                        {PurePosixPath(f.path).suffix.lower().lstrip(".") for f in descriptor.files}
+                        (
+                            set(fresh.formats)
+                            if fresh.protocol == "nzb"
+                            else {
+                                PurePosixPath(f.path).suffix.lower().lstrip(".")
+                                for f in descriptor.files
+                            }
+                        )
                         & primary_formats
                     ),
                 }
@@ -1045,12 +1037,6 @@ async def run(identifier):
                     )
                     operation.job_id = await enqueue(db, KIND, operation_id=str(identifier))
                     return
-                maximum = limit_bytes(
-                    constrained_preferences(profile.preferences, rule),
-                    rule["medium"],
-                    pack=bool(coverage),
-                )
-                operation.payload = {**operation.payload, "maximum_bytes": maximum}
                 if (
                     body.download_when_ready
                     and not coverage
@@ -1118,7 +1104,6 @@ async def run(identifier):
                             "operation_id": str(identifier),
                             "search_id": str(body.search_id),
                             "result_id": str(row.id),
-                            "maximum_bytes": operation.payload["maximum_bytes"],
                             "inspections": len(payload["inspected"]),
                             "reported_seeders": fresh.seeders,
                             **(

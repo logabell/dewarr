@@ -13,7 +13,13 @@ PRIMARY_FORMATS = {
 class DownloadConstraints(BaseModel):
     model_config = ConfigDict(extra="forbid")
     blocked_formats: list[str] = Field(default_factory=list, max_length=20)
-    maximum_bytes: int | None = Field(default=None, gt=0, le=2**53 - 1)
+    maximum_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        le=2**53 - 1,
+        json_schema_extra={"deprecated": True},
+        description="Legacy compatibility value; transfer sizes are not capped",
+    )
 
     @field_validator("blocked_formats")
     @classmethod

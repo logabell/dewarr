@@ -50,13 +50,16 @@ class RecoveryConfiguration(BaseModel):
     sources: dict[str, RecoveryPolicy] = Field(
         default_factory=lambda: {"mam": RecoveryPolicy(stall_hours=None)}, max_length=100
     )
-    attempt_cap: int = Field(default=3, ge=1, le=20)
     approve_reports: bool = False
 
 
 async def configuration(db):
     row = await db.get(DownloadRecoverySettings, 1)
-    return RecoveryConfiguration.model_validate(row.configuration if row else {})
+    return RecoveryConfiguration.model_validate(
+        {key: value for key, value in row.configuration.items() if key != "attempt_cap"}
+        if row
+        else {}
+    )
 
 
 def policy_for(config, selection):
@@ -346,7 +349,7 @@ async def run(identifier):
                         return
                     if replacement.status not in automatic_selection.TERMINAL:
                         return
-                    # Exhausted saved results may be refreshed once, without resetting the cap.
+                    # Exhausted saved results may be refreshed once before waiting for new releases.
                     if not row.evidence.get("fresh_search") and not replacement.payload.get(
                         "selection_id"
                     ):
@@ -355,20 +358,6 @@ async def run(identifier):
                     else:
                         await hold(db, row, replacement.message)
                         return
-                config = await configuration(db)
-                attempts = await history(db, selection)
-                if len(attempts) >= config.attempt_cap:
-                    row.evidence = {**row.evidence, "attempts": attempts}
-                    await hold(
-                        db,
-                        row,
-                        f"Gave up after {len(attempts)} attempts: "
-                        + "; ".join(
-                            f"{i + 1}. {a['release_title']}: {a['reason']}"
-                            for i, a in enumerate(attempts)
-                        ),
-                    )
-                    return
                 if target.state != "wanted":
                     raise HTTPException(409, "Replacement request is paused or withdrawn")
                 if (

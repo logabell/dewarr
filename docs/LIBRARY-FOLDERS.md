@@ -8,14 +8,14 @@ For Grimmory Bookdrop intake, metadata ownership and direct-import compatibility
 
 A direct-import destination is a format-specific route into an existing library. Ebook and audiobook routes may use one root and one staging location, or independent mounts. Their verification, supported formats, import preferences and catalog identities remain separate. No new storage service or database table is needed.
 
-User-chosen directory names have no semantic meaning. `/collection`, `/Reading Room`, and `/shelf-42` are equally valid library mount points. A top-level container mount is not the host filesystem root. Paths reported by another container are a separate namespace: `/remote-collection` in a library server can map to `/shelf-42` in Dewarr. The mapping is explicit configuration. Setup verifies local filesystem operations and backend library settings; confirmation after publication verifies that the library server actually detected the imported book. Matching path strings or an API connection alone does not prove shared storage.
+User-chosen directory names have no semantic meaning. `/collection`, `/Reading Room`, and `/shelf-42` are equally valid library mount points. A top-level container mount is not the host filesystem root. Paths reported by another container are a separate namespace: `/remote-collection` in a library server can map to `/shelf-42` in Dewarr. The mapping is explicit configuration. Setup checks readable downloads, writable media folders, and backend library settings; confirmation after publication verifies that the library server actually detected the imported book. Matching path strings or an API connection alone does not prove shared storage.
 
 An import still follows one pipeline:
 
 1. Discover the downloader's completed files through its saved path mapping.
 2. Inspect file formats and match catalog versions; do not infer medium from root names.
 3. Freeze and preview names, source identities and metadata.
-4. Prepare a complete version folder on the destination mount, hardlinking when the verified route supports it and copying otherwise.
+4. Prepare a complete version folder on the destination mount, preferring hardlinks when available. If an actual downloaded file cannot be hardlinked because of its permissions, mount, or filesystem support, copy that file instead. Read access to downloads is sufficient; ownership or write access is not required for copying.
 5. Publish without replacing an existing folder, then ask the library server to scan and confirm the exact files/version before declaring ownership.
 
 A read-only download mount is valid for copy imports. Seeding rename remains an explicit advanced operation with different write requirements.
@@ -28,7 +28,7 @@ The recommended immediate Dewarr behavior is a shared root with distinct version
 
 ```text
 /shelf-42/
-  .book-search-staging/       # only if sibling staging is unavailable
+  .book-search-staging/       # automatic staging for new ABS destinations
   Alex Morgan/
     First Harbor (Ebook)/
       First Harbor.epub
@@ -46,11 +46,15 @@ Automatically adding a missing format to an existing book folder is a separate f
 
 ## Staging and mount boundaries
 
-Staging must share the library's mount so complete folders can be published safely. Prefer a writable sibling. If the selected directory is a mount root, its parent is unavailable, or the parent is on another mount, use Dewarr's reserved direct hidden child. Only this private namespace is name-specific; user library and download names are unrestricted. New routes keep journals/locks in application storage, independent of media permissions.
+Staging must share the library's mount so complete folders can be published safely. New Audiobookshelf destinations use the reserved direct hidden child, avoiding any requirement to write to the library's parent. Grimmory uses it when its watcher is disabled; otherwise staging remains outside the watched library. Existing valid staging is retained. Only this private namespace is name-specific; user library and download names are unrestricted. New routes keep journals/locks in application storage, independent of media permissions.
 
 Two routes using the same local root reuse the same valid staging route. A saved automatic staging choice that now overlaps the selected library incorrectly is reselected. An explicit `BOOK_IMPORT_STAGING_ROOT` override remains authoritative and receives a path-specific error if invalid. Unfinished imports continue to block changing their saved storage; historical journals are retained.
 
 Re-saving an existing route preserves its journal location, including legacy journals kept in staging. Another route using the same staging folder must not silently switch that recovery protocol.
+
+The picker and background verification use the same mount and journal-storage checks. A legacy custom staging folder containing journals must satisfy the existing private-storage requirement before setup reports it ready. New media-only staging does not require private permissions.
+
+File-level copy fallback reserves additional space before writing and keeps that choice in the existing import receipt. If space is unavailable, the import waits and retries. Completed copies are credited when calculating remaining space; files that can be hardlinked still use hardlinks. Source files remain untouched.
 
 During setup, Dewarr repairs overly broad permissions on its empty, owned legacy `.book-search-staging` folder using descriptor-based `fchmod(0700)` and verifies the result. Newly created protected journal folders receive the same treatment. Already-private folders retain their permissions, including setgid. Shared media-only staging retains the share's permissions. Arbitrary staging paths and nonempty permissive recovery folders require operator review; their contents cannot be made trustworthy merely by changing the parent mode. NAS permission errors remain explicit if the mount rejects or ignores the change.
 

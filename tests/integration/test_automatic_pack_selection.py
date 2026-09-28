@@ -61,19 +61,19 @@ async def test_catalog_pack_prepares_once_with_explicit_corroboration_not_extra_
     client, database, source, series_pack
 ):
     operation = await start(client, source)
-    assert operation["maximum_bytes"] == 10 * 1024**3
-    assert operation["maximum_pack_bytes"] == 50 * 1024**3
+    assert "maximum_bytes" not in operation
+    assert "maximum_pack_bytes" not in operation
     await automatic.run(UUID(operation["id"]))
     value = await detail(client, operation["id"])
     assert value["status"] == "completed", value
-    assert value["maximum_bytes"] == 50 * 1024**3
+    assert "maximum_bytes" not in value
     assert len(value["decisions"][0]["coverage"]["members"]) == 2
     async with database() as db:
         selected = await db.get(AcquisitionSelection, UUID(value["selection_id"]))
         proof = selected.frozen["automatic_selection"]
         assert proof["coverage"]["evidence"] == "catalog-and-manifest"
         assert proof["pack_catalog"]["series"][0]["id"] == str(series_pack)
-        assert selected.frozen["profile"]["preferences"]["maximum_bytes"] == 50 * 1024**3
+        assert selected.frozen["profile"]["preferences"]["maximum_bytes"] is None
     await automatic.run(UUID(operation["id"]))
     assert len(source["resolver"].calls) == 1
 
@@ -161,7 +161,7 @@ async def test_disabled_pack_preference_rejects_before_fetch(client, database, s
             ).model_dump(mode="json"),
         }
     operation = await start(client, source)
-    assert operation["maximum_pack_bytes"] is None
+    assert "maximum_pack_bytes" not in operation
     await automatic.run(UUID(operation["id"]))
     value = await detail(client, operation["id"])
     assert value["status"] == "held" and not source["resolver"].calls

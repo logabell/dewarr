@@ -576,6 +576,7 @@ async def access_catalog(actor: CurrentUser, db: Database):
         permissions=[
             PermissionInfo(name=name, label=label, description=description, group=group)
             for name, _bit, label, group, description in CATALOG
+            if name != "bypass_quotas"
         ],
         presets=[
             PresetInfo(

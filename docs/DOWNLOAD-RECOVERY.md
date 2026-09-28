@@ -1,9 +1,8 @@
 # Failed download recovery
 
-Administrators configure recovery under **Settings → Download recovery**. The
+Administrators configure recovery under **Settings → Download clients → Download recovery**. The
 defaults are a 24-hour no-progress/zero-seeder window, a five-minute downloader
-error grace period, and three total attempts per requested format, including the
-first download. MAM disables stall detection by default because quiet torrents
+error grace period. There is no cap on replacement attempts. MAM disables stall detection by default because quiet torrents
 may become available later. Source overrides replace the default policy; an
 indexer override such as `prowlarr:12` takes precedence over `prowlarr`.
 
@@ -14,8 +13,9 @@ client connection must reconcile before it can cause a replacement.
 A rejected release is blocklisted for its book and medium, including its known
 artifact and torrent identities. Recovery tries saved eligible results, then
 refreshes the original request's search once if necessary. Original frozen
-constraints still apply alongside current permissions, configuration, quotas
-and capacity. Exhaustion or the attempt cap pauses the request with an explanation.
+format and identity constraints still apply alongside current permissions,
+configuration and disk capacity. Exhausted source results pause the request with
+an explanation. Previously saved attempt caps are ignored.
 Removing a blocklist entry permits selection again, but never releases a recorded
 transfer's identity claim or causes it to be submitted a second time.
 
@@ -29,7 +29,7 @@ Other existing copies can still satisfy their requests.
 Cleanup defaults to leaving the transfer in its client. Optional qBittorrent
 pause/remove actions reverify identity and configuration and never request file
 deletion. Other clients retain their transfers. Leaving a transfer running keeps
-its capacity slot occupied; preserved downloaded files keep their storage
+its transfer recorded as active; preserved downloaded files keep their storage
 reservations. Replacement imports use separate deterministic folders and preserve
 the original library files and import receipts. Rejected inspections cannot be
 imported again.

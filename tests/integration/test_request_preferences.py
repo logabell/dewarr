@@ -393,9 +393,7 @@ async def test_manual_selection_rejects_other_request_and_freezes_bound_policy(
         assert selected.frozen["profile"] == search["profile"]
 
 
-async def test_bound_search_cannot_weaken_independent_request_size_limit(
-    client, database, policy_fixture
-):
+async def test_bound_search_ignores_legacy_request_size_limit(client, database, policy_fixture):
     from app.jobs.queue import get_queue
 
     f = policy_fixture
@@ -405,7 +403,7 @@ async def test_bound_search_cannot_weaken_independent_request_size_limit(
     search = await bound_search(client, f, wanted)
     await get_queue().run_worker_async(wait=False, concurrency=1)
     result = (await client.get(f"/api/source-searches/{search['id']}")).json()
-    assert result["items"] and result["items"][0]["assessment"]["blocked"]
+    assert result["items"] and not result["items"][0]["assessment"]["blocked"]
     body = {
         **{k: v for k, v in f["source"]["body"].items() if k != "download_when_ready"},
         "intent_id": wanted["id"],
@@ -418,8 +416,7 @@ async def test_bound_search_cannot_weaken_independent_request_size_limit(
         json=body,
         headers={"Idempotency-Key": "independent-limit-selection"},
     )
-    assert response.status_code == 422, response.text
-    assert response.json()["detail"] == "The inspected torrent exceeds the profile size limit"
+    assert response.status_code == 201, response.text
 
 
 async def test_saved_request_policy_blocks_lossy_migration_downgrade(

@@ -81,8 +81,9 @@ def describe_os_error(error: OSError, path: Path | None = None) -> str:
     """Explain a mount or permission failure in terms a Docker user can act on."""
     subject = str(path) if path else "a folder"
     denied = (
-        f"Dewarr (uid {os.geteuid()}) was denied access to {subject}. Give PUID/PGID read "
-        "and write access to the library, staging and download folders."
+        f"Dewarr (uid {os.geteuid()}) was denied access to {subject}. "
+        f"Check PUID/PGID (gid {os.getegid()}) and the share ACLs: imports need read access "
+        "to downloads and write access to the library and staging folders."
     )
     messages = {
         errno.EACCES: denied,

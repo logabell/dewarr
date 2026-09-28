@@ -1,4 +1,3 @@
-import QuotaSummary from "../components/QuotaSummary";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "../components/InfiniteScroll";
 import { EffectiveScope } from "./ScopeFields";
@@ -181,7 +180,6 @@ export default function Wanted({
   };
   return (
     <section className="panel editor library-access" aria-label="Wanted media">
-      <QuotaSummary />
       <h2 ref={heading} tabIndex={-1}>
         Wanted media
       </h2>

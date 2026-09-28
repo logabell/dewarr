@@ -14,17 +14,13 @@ export default function DownloadConstraints({
 }: {
   value?: components["schemas"]["DownloadConstraints"] | null;
 }) {
-  if (!value || (!value.blocked_formats?.length && !value.maximum_bytes))
-    return null;
+  if (!value || !value.blocked_formats?.length) return null;
   return (
     <p className="muted">
       Download restrictions:{" "}
       {[
         value.blocked_formats?.length
           ? `exclude ${value.blocked_formats.map((format) => format.toUpperCase()).join(", ")}`
-          : null,
-        value.maximum_bytes
-          ? `up to ${transferSize(value.maximum_bytes)} per transfer`
           : null,
       ]
         .filter(Boolean)

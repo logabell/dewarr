@@ -17,12 +17,6 @@ DISC_FOLDER = re.compile(r"(?:^|[\s_(\[])(?:cd|disc|disk|part)\s*\d+\b", re.I)
 PACK = re.compile(
     r"\b(omnibus|box[ -]?set|anthology|complete series|books?\s+\d+\s*[-–]\s*\d+)\b", re.I
 )
-DEFAULT_MAXIMUM = {"ebook": 1024**3, "audio": 10 * 1024**3}
-
-
-def limit_bytes(preferences, medium, *, pack=False):
-    ceiling = pack_coverage.MAX_PACK_BYTES if pack else DEFAULT_MAXIMUM[medium]
-    return min(preferences.maximum_bytes or ceiling, ceiling)
 
 
 def collection_candidate(release, work, catalog=None):
@@ -119,13 +113,32 @@ def eligibility(
             reasons.append("The source does not confirm the required abridgment")
     if version:
         reasons.extend(version_reasons(release, version))
-    ceiling = limit_bytes(preferences, rule["medium"], pack=is_pack and bool(pack_sources))
-    if release.size_bytes is not None and release.size_bytes > ceiling:
-        reasons.append("Reported transfer size exceeds the automatic selection limit")
+    if release.protocol == "nzb":
+        # Article subjects describe encoded transport files, often obfuscated
+        # RAR/PAR2 volumes. Only the client's completed, unpacked output can
+        # establish media contents. Keep source identity/constraints above and
+        # validate actual files again in the automatic importer.
+        if is_pack:
+            reasons.append("Usenet collections need extracted-file coverage review")
+        supported = EBOOKS if rule["medium"] == "ebook" else AUDIO
+        formats = set(release.formats)
+        if formats and not formats & supported:
+            reasons.append("Reported formats are not supported by the automatic importer")
+        preferred = (
+            preferences.ebook_formats if rule["medium"] == "ebook" else preferences.audio_formats
+        )
+        if formats and not formats.intersection(preferred):
+            reasons.append("No preferred media format is reported by the source")
+        if (
+            unattended
+            and formats
+            and not formats <= ({"epub"} if rule["medium"] == "ebook" else {"m4b", "mp3"})
+        ):
+            reasons.append(
+                "This media format requires reviewed importing rather than automatic acquisition"
+            )
+        return list(dict.fromkeys(reasons))
     if descriptor:
-        inspected_bytes = getattr(descriptor, "torrent_bytes", descriptor.content_bytes)
-        if inspected_bytes > ceiling:
-            reasons.append("Inspected transfer size exceeds the automatic selection limit")
         formats = {PurePosixPath(f.path).suffix.lower().lstrip(".") for f in descriptor.files}
         if formats & set(preferences.blocked_formats):
             reasons.append("The inspected torrent contains a blocked format")

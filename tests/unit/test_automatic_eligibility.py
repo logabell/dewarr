@@ -5,7 +5,7 @@ import pytest
 
 from app.adapters.mam import MAMRelease
 from app.adapters.torrent_descriptor import TorrentDescriptor
-from app.domain.automatic_eligibility import eligibility, limit_bytes
+from app.domain.automatic_eligibility import eligibility
 from app.domain.release_profiles import ReleasePreferences
 
 WORK = {"title": "Harbor", "authors": ["Writer"]}
@@ -59,7 +59,6 @@ def descriptor(paths):
         ({"seeders": 0}, "seeder"),
         ({"raw_title": "Harbor sample"}, "partial"),
         ({"raw_title": "Harbor Books 1-3"}, "Collection"),
-        ({"size_bytes": 11 * 1024**3}, "limit"),
         ({"formats": ["aax"]}, "supported"),
     ],
 )
@@ -185,6 +184,80 @@ def test_single_book_manifests_are_distinct_from_packs_and_alternative_encodings
     assert (not reasons) is allowed, reasons
 
 
+@pytest.mark.parametrize("format_label", ["MP3", "[MP3]", "(mp3)", ".mp3"])
+def test_usenet_audio_title_labels_identify_the_catalog_book(format_label):
+    from app.adapters.nzb_descriptor import inspect_nzb
+    from app.adapters.prowlarr import ProwlarrRelease
+    from app.importing.linked_download import agrees_with_request
+    from app.importing.match_evidence import MatchEvidence
+    from tests.nzb_fixture import nzb_bytes
+
+    title = (
+        "Annie Jacobsen - Operation Paperclip: The Secret Intelligence Program "
+        f"(2014) {format_label}"
+    )
+    value = ProwlarrRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        medium="audio",
+        language="en",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+    work = {
+        "title": "Operation Paperclip: The Secret Intelligence Program",
+        "authors": ["Annie Jacobsen"],
+    }
+    assert value.formats == ["mp3"]
+    assert not eligibility(
+        value,
+        work,
+        RULE,
+        ReleasePreferences(),
+        unattended=True,
+        descriptor=inspect_nzb(nzb_bytes(filename="encoded.part01.rar")),
+    )
+    assert agrees_with_request(
+        SimpleNamespace(**work, language="en", metadata_fields={}),
+        value.model_dump(),
+        MatchEvidence(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "preferences", "reason"),
+    [
+        ({"authors": ["Other Writer"]}, {}, "corroborate"),
+        ({"medium": "ebook"}, {}, "medium"),
+        ({"language": "fr"}, {}, "language"),
+        ({"raw_title": "Harbor sample"}, {}, "partial"),
+        ({}, {"blocked_formats": ["m4b"]}, "blocked"),
+        ({"formats": ["aax"]}, {}, "supported"),
+        ({"formats": ["flac"]}, {}, "reviewed importing"),
+        ({}, {"audio_formats": ["mp3"]}, "preferred"),
+        ({"raw_title": "Harbor Books 1-3"}, {}, "coverage review"),
+    ],
+)
+def test_usenet_transport_exception_preserves_selection_constraints(change, preferences, reason):
+    from app.adapters.nzb_descriptor import inspect_nzb
+    from tests.nzb_fixture import nzb_bytes
+
+    value = release().model_copy(update={"protocol": "nzb", **change})
+    reasons = eligibility(
+        value,
+        WORK,
+        RULE,
+        ReleasePreferences(**preferences),
+        unattended=True,
+        descriptor=inspect_nzb(nzb_bytes(filename="encoded.rar")),
+    )
+    assert any(reason in item.lower() for item in reasons), reasons
+
+
 def test_narrator_agreement_does_not_prove_exact_recording_and_unknown_abridgment_is_held():
     version = SimpleNamespace(medium="audio", language="en", narrators=["Reader"], identifiers={})
     assert any(
@@ -295,13 +368,14 @@ def test_same_invalid_isbn_never_establishes_edition_identity():
     )
 
 
-def test_automatic_limit_counts_padding_and_profiles_cannot_raise_installation_ceiling():
-    assert limit_bytes(ReleasePreferences(maximum_bytes=50 * 1024**3), "ebook") == 1024**3
-    assert limit_bytes(ReleasePreferences(maximum_bytes=1024), "audio") == 1024
-    manifest = descriptor(["Harbor.m4b"]).model_copy(update={"torrent_bytes": 10 * 1024**3 + 1})
-    assert any(
-        "transfer size" in reason
-        for reason in eligibility(release(), WORK, RULE, ReleasePreferences(), descriptor=manifest)
+def test_large_transfers_ignore_legacy_profile_and_automatic_size_caps():
+    manifest = descriptor(["Harbor.m4b"]).model_copy(update={"torrent_bytes": 100 * 1024**3})
+    assert not eligibility(
+        release().model_copy(update={"size_bytes": 100 * 1024**3}),
+        WORK,
+        RULE,
+        ReleasePreferences(maximum_bytes=1),
+        descriptor=manifest,
     )
 
 

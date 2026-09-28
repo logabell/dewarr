@@ -192,7 +192,3 @@ async def require_selection(db, selection):
         user = await db.get(User, selection.owner_id, populate_existing=True)
         if proof.get("pack_catalog") != await pack_coverage.catalog(db, user, work):
             raise HTTPException(409, "Series coverage changed before download; review this request")
-    descriptor = selection.frozen["descriptor"]
-    transfer_bytes = descriptor.get("torrent_bytes", descriptor["content_bytes"])
-    if transfer_bytes > proof["maximum_bytes"]:
-        raise HTTPException(409, "The whole download exceeds this automatic acquisition limit")

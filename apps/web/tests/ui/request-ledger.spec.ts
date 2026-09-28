@@ -69,8 +69,12 @@ test("requests show transfer telemetry, review actions and counts in compact row
         attempt_id: "transfer",
         attempt_state: attemptState,
         attempt_message:
-          "Submission is not yet visible; only checking for the existing transfer",
-        progress: attemptState === "uncertain" ? null : progress,
+          attemptState === "queued"
+            ? "Waiting for free disk space after existing reservations and reserve"
+            : "Submission is not yet visible; only checking for the existing transfer",
+        progress: ["queued", "uncertain"].includes(attemptState)
+          ? null
+          : progress,
         download_speed: 2516582,
         eta_seconds: 185,
         can_recheck: true,
@@ -180,6 +184,13 @@ test("requests show transfer telemetry, review actions and counts in compact row
   );
   progress = 0.67;
   await expect(downloading).toContainText("67%", { timeout: 10000 });
+  attemptState = "queued";
+  await expect(downloading).toContainText("Queued", { timeout: 10000 });
+  await expect(downloading).toContainText(
+    "Waiting for free disk space after existing reservations and reserve",
+  );
+  await expect(downloading).not.toContainText("Connecting");
+  await expect(downloading).not.toContainText("2.4 MiB/s");
   attemptState = "uncertain";
   await expect(downloading).toContainText("Download needs attention", {
     timeout: 10000,

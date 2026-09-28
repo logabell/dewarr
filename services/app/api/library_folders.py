@@ -327,6 +327,11 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
         local,
         explicit,
         current or (shared_route.staging_root if shared_route else None),
+        inside_library=body.workflow == "library"
+        and (
+            integration.kind == "audiobookshelf"
+            or (integration.kind == "grimmory" and config.watcher_enabled is False)
+        ),
     )
     pending = 0
     if current:

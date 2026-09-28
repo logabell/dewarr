@@ -197,22 +197,6 @@ function Editor({
       <fieldset className="policy-section" disabled={save.isPending}>
         <legend>Replacement rules</legend>
         <div className="policy-fields">
-          <label>
-            Maximum attempts per requested format
-            <input
-              type="number"
-              min={1}
-              max={20}
-              required
-              value={value.attempt_cap}
-              onChange={(event) =>
-                setValue({ ...value, attempt_cap: Number(event.target.value) })
-              }
-            />
-            <span className="field-hint">
-              Includes the first download. Between 1 and 20 attempts.
-            </span>
-          </label>
           <label className="check-label">
             <input
               type="checkbox"

@@ -42,7 +42,7 @@ def observation(available=100 * GIB):
 
 async def limits(database, **changes):
     async with database() as db, db.begin():
-        db.add(CapacitySettings(id=1, configuration=capacity.Limits(**changes).model_dump()))
+        db.add(CapacitySettings(id=1, configuration={**capacity.Limits().model_dump(), **changes}))
 
 
 async def another_selection(client, database, selection_route):
@@ -105,7 +105,7 @@ async def automatic_start(database, admin, selected, key):
         return str(attempt.id)
 
 
-async def test_concurrent_admission_reserves_one_endpoint_slot_and_cancel_releases_it(
+async def test_legacy_concurrent_cap_does_not_block_other_downloads(
     client, database, selected, selection_route
 ):
     await limits(database, active_transfers=1)
@@ -113,10 +113,10 @@ async def test_concurrent_admission_reserves_one_endpoint_slot_and_cancel_releas
     first = (await start(client, selected)).json()["id"]
     other = (await start(client, second, "second-capacity-attempt")).json()["id"]
     results = await asyncio.gather(admit(database, first), admit(database, other))
-    assert results.count("reserved") == 1
+    assert results.count("reserved") == 2
     async with database() as db:
         rows = list(await db.scalars(select(DownloadCapacity)))
-        assert sum(row.slot_active for row in rows) == 1
+        assert sum(row.slot_active for row in rows) == 2
     assert (await client.delete(f"/api/acquisition/downloads/{first}")).status_code == 200
     assert await admit(database, other) == "reserved"
 
@@ -168,7 +168,7 @@ async def test_space_is_rechecked_after_network_preflight_before_submission(
         assert pool.submitted_at is None and pool.resources == {}
 
 
-async def test_unknown_submission_keeps_slot_and_daily_debit_even_after_24_hours(
+async def test_unknown_submission_keeps_storage_but_no_daily_cap(
     client, database, admin, selected, selection_route, downloader, monkeypatch
 ):
     await limits(database, active_transfers=3, automatic_per_day=1)
@@ -187,7 +187,7 @@ async def test_unknown_submission_keeps_slot_and_daily_debit_even_after_24_hours
         assert (await db.get(DownloadAttempt, UUID(first))).external_may_exist
     second = await another_selection(client, database, selection_route)
     identifier = await automatic_start(database, admin, second, "automatic-capacity-two")
-    assert "24-hour" in await admit(database, identifier)
+    assert await admit(database, identifier) == "reserved"
     assert (await client.delete(f"/api/acquisition/downloads/{first}")).status_code == 409
     assert downloader.calls.count("submit") == 1
 
@@ -247,14 +247,15 @@ async def test_settings_enforce_privilege_validation_and_optimistic_revision(
     client, database, admin
 ):
     before = (await client.get("/api/acquisition/capacity")).json()
-    assert before["limits"]["active_transfers"] == 3
+    assert "active_transfers" not in before["limits"]
+    assert "automatic_per_day" not in before["limits"]
     payload = {
         "expected_revision": before["revision"],
-        "limits": {**before["limits"], "active_transfers": 2},
+        "limits": {**before["limits"], "minimum_free_percent": 2},
     }
     assert (await client.put("/api/acquisition/capacity", json=payload)).status_code == 200
     assert (await client.put("/api/acquisition/capacity", json=payload)).status_code == 409
-    invalid = {**payload, "limits": {**payload["limits"], "active_transfers": 0}}
+    invalid = {**payload, "limits": {**payload["limits"], "minimum_free_percent": -1}}
     assert (await client.put("/api/acquisition/capacity", json=invalid)).status_code == 422
     async with database() as db, db.begin():
         (await db.get(User, UUID(admin["id"]))).role = "member"

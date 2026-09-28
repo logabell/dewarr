@@ -19605,26 +19605,6 @@
             "type": "string",
             "title": "Message"
           },
-          "maximum_bytes": {
-            "type": "integer",
-            "title": "Maximum Bytes"
-          },
-          "maximum_pack_bytes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Maximum Pack Bytes"
-          },
-          "maximum_inspections": {
-            "type": "integer",
-            "title": "Maximum Inspections",
-            "default": 5
-          },
           "inspections": {
             "type": "integer",
             "title": "Inspections"
@@ -19693,7 +19673,6 @@
           "id",
           "status",
           "message",
-          "maximum_bytes",
           "inspections",
           "decisions"
         ],
@@ -23615,7 +23594,9 @@
                 "type": "null"
               }
             ],
-            "title": "Maximum Bytes"
+            "title": "Maximum Bytes",
+            "description": "Legacy compatibility value; transfer sizes are not capped",
+            "deprecated": true
           }
         },
         "additionalProperties": false,
@@ -27438,20 +27419,6 @@
       },
       "Limits": {
         "properties": {
-          "active_transfers": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 1.0,
-            "title": "Active Transfers",
-            "default": 3
-          },
-          "automatic_per_day": {
-            "type": "integer",
-            "maximum": 10000.0,
-            "minimum": 1.0,
-            "title": "Automatic Per Day",
-            "default": 10
-          },
           "minimum_free_bytes": {
             "type": "integer",
             "maximum": 9007199254740991.0,
@@ -32878,7 +32845,9 @@
                 "type": "null"
               }
             ],
-            "title": "Maximum Bytes"
+            "title": "Maximum Bytes",
+            "description": "Legacy compatibility value; transfer sizes are not capped",
+            "deprecated": true
           }
         },
         "additionalProperties": false,
@@ -34757,13 +34726,6 @@
             "maxProperties": 100,
             "title": "Sources"
           },
-          "attempt_cap": {
-            "type": "integer",
-            "maximum": 20.0,
-            "minimum": 1.0,
-            "title": "Attempt Cap",
-            "default": 3
-          },
           "approve_reports": {
             "type": "boolean",
             "title": "Approve Reports",
@@ -35905,7 +35867,9 @@
                 "type": "null"
               }
             ],
-            "title": "Maximum Bytes"
+            "title": "Maximum Bytes",
+            "description": "Legacy compatibility value; transfer sizes are not capped",
+            "deprecated": true
           }
         },
         "additionalProperties": false,

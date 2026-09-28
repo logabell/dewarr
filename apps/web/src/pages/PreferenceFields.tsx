@@ -16,7 +16,6 @@ export const preferenceLabels: Partial<Record<keyof Preferences, string>> = {
   ebook_formats: "Ebook format preference",
   audio_formats: "Audiobook format preference",
   blocked_formats: "Blocked formats",
-  maximum_bytes: "Maximum transfer size",
   preferred_narrators: "Preferred narrators",
   search_series: "Search known series names",
   prefer_series_packs: "Prefer eligible series packs",
@@ -402,29 +401,6 @@ export default function PreferenceFields({
           ))}
         </fieldset>
         {origin("blocked_formats")}
-        <label>
-          Maximum transfer size (GiB, optional)
-          <input
-            type="number"
-            min="0.01"
-            max={Number.MAX_SAFE_INTEGER / 1024 ** 3}
-            step="any"
-            value={
-              effective.maximum_bytes == null
-                ? ""
-                : effective.maximum_bytes / 1024 ** 3
-            }
-            onChange={(event) => {
-              const bytes =
-                event.target.value === ""
-                  ? null
-                  : Math.round(Number(event.target.value) * 1024 ** 3);
-              if (bytes === null || (Number.isSafeInteger(bytes) && bytes > 0))
-                onChange({ ...overrides, maximum_bytes: bytes });
-            }}
-          />
-        </label>
-        {origin("maximum_bytes")}
       </details>
     </>
   );

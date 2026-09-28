@@ -122,3 +122,42 @@ def path_bound_directory_handles(monkeypatch):
     monkeypatch.setattr(publication.os, "close", close)
     monkeypatch.setattr(publication.os, "dup", duplicate)
     monkeypatch.setattr(publication, "no_replace", move)
+
+
+@pytest.fixture
+def group_mapped_media(monkeypatch):
+    """Model a NAS assigning file ownership to another UID in the shared group."""
+    real_open, real_mkdir = os.open, os.mkdir
+    media = set()
+
+    def key(info):
+        return info.st_dev, info.st_ino
+
+    def opening(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        info = os.fstat(fd)
+        parent = kwargs.get("dir_fd")
+        if flags & os.O_CREAT and parent is not None and key(os.fstat(parent)) in media:
+            media.add(key(info))
+        elif key(info) in media:
+            required = 0o050 if stat.S_ISDIR(info.st_mode) else 0o040
+            if info.st_mode & required != required:
+                os.close(fd)
+                raise PermissionError(errno.EACCES, "Share requires group access", str(path))
+        return fd
+
+    def mkdir(path, *args, **kwargs):
+        real_mkdir(path, *args, **kwargs)
+        parent = kwargs.get("dir_fd")
+        if parent is not None and key(os.fstat(parent)) in media:
+            media.add(key(os.stat(path, dir_fd=parent)))
+
+    def install(*roots):
+        for root in roots:
+            for path in [root, *root.rglob("*")]:
+                media.add(key(path.stat()))
+                path.chmod(0o770 if path.is_dir() else 0o660)
+        monkeypatch.setattr(os, "open", opening)
+        monkeypatch.setattr(os, "mkdir", mkdir)
+
+    return install

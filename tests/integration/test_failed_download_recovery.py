@@ -123,16 +123,18 @@ async def test_stall_blocklists_and_redelivery_dispatches_exactly_one_replacemen
     assert detail.json()["can_recheck"] is False
 
 
-async def test_attempt_cap_holds_with_durable_reasons(client, database, failed_source):
+async def test_legacy_attempt_cap_does_not_block_replacement_search(
+    client, database, failed_source
+):
     async with database() as db, db.begin():
         settings = await db.get(DownloadRecoverySettings, 1)
         settings.configuration = {**settings.configuration, "attempt_cap": 1}
     await download_recovery.run(failed_source["recovery_id"])
     async with database() as db:
         recovery = await db.get(DownloadRecovery, failed_source["recovery_id"])
-        assert recovery.state == "held" and "Gave up after 1" in recovery.message
-        assert len(recovery.evidence["attempts"]) == 1
-        assert not recovery.replacement_id
+        assert recovery.state in {"searching", "selecting"}, recovery.message
+        assert "Gave up" not in recovery.message
+        assert recovery.search_id or recovery.replacement_id
         assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 1
 
 
@@ -376,16 +378,16 @@ async def test_queue_failure_rolls_back_block_and_retry_command(
         assert await db.scalar(select(func.count()).select_from(DownloadRecovery)) == 1
 
 
-async def test_default_cap_stops_after_three_distinct_attempts(
+async def test_recovery_continues_beyond_three_distinct_attempts(
     client, database, failed_source, monkeypatch
 ):
     current = failed_source["recovery_id"]
-    for source_id, extension in [("502", "mp3"), ("503", "mp3")]:
+    for source_id, extension in [("502", "mp3"), ("503", "mp3"), ("504", "mp3")]:
         result_id, artifact_id, release = await additional_candidate(
             database, failed_source, source_id=source_id, format=extension
         )
 
-        if source_id == "503":
+        if source_id in {"503", "504"}:
             import base64
 
             from app.adapters.torrent_descriptor import inspect_torrent
@@ -393,9 +395,11 @@ async def test_default_cap_stops_after_three_distinct_attempts(
             from app.security import encrypt_secrets
             from tests.torrent_fixture import torrent_bytes
 
-            raw = torrent_bytes(name=b"Harbor", files=[{b"length": 13, b"path": [b"Harbor.mp3"]}])
+            raw = torrent_bytes(
+                name=b"Harbor", files=[{b"length": int(source_id) - 490, b"path": [b"Harbor.mp3"]}]
+            )
             descriptor = await inspect_torrent(raw)
-            release = release.model_copy(update={"size_bytes": 13})
+            release = release.model_copy(update={"size_bytes": int(source_id) - 490})
             async with database() as db, db.begin():
                 artifact = await db.get(SourceArtifact, artifact_id)
                 artifact.descriptor = descriptor.model_dump(mode="json")
@@ -430,10 +434,9 @@ async def test_default_cap_stops_after_three_distinct_attempts(
     await download_recovery.run(current)
     async with database() as db:
         row = await db.get(DownloadRecovery, current)
-        assert row.state == "held" and "Gave up after 3" in row.message
-        assert len(row.evidence["attempts"]) == 3
-        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 3
-        assert await db.scalar(select(func.count()).select_from(ReleaseBlock)) == 3
+        assert "Gave up after" not in row.message
+        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 4
+        assert await db.scalar(select(func.count()).select_from(ReleaseBlock)) == 4
 
 
 async def test_notification_bridge_uses_transactional_deduplicated_events(

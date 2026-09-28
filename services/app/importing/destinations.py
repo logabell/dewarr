@@ -201,7 +201,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         destination.probe_token = token
         operation.status, operation.message = (
             "running",
-            "Checking hardlink and no-replace behavior on worker mounts",
+            "Checking download access and library folder writability",
         )
         payload = operation.payload
         integration = await db.get(
@@ -251,9 +251,13 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             ]
         ):
             raise InspectionError("Journal storage must be outside media roots")
-        await asyncio.to_thread(prepare_staging, Path(configuration["staging_path"]), journals)
-        if journals is not None:
-            await asyncio.to_thread(prepare_journals, journals)
+        await asyncio.to_thread(
+            check_library_route,
+            Path(configuration["root_path"]),
+            Path(configuration["staging_path"]),
+            [Path(path) for path in configuration["watched_paths"]],
+            journal_root=journals,
+        )
         if payload.get("setup_downloader"):
             report = await asyncio.to_thread(
                 probe_download_folder,
@@ -278,13 +282,12 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
         copy_fallback = bool(
             not seeding_rename
             and configuration["mode"] == "hardlink"
-            and report.get("no_replace")
             and report.get("copy")
             and not report.get("hardlink")
         )
         if seeding_rename:
             report["seeding_rename"] = True
-            ok = bool(report.get("no_replace") and configuration.get("client_path"))
+            ok = bool(report.get("copy") and configuration.get("client_path"))
             if ok:
                 binding = payload.get("setup_downloader")
                 if not binding:
@@ -298,10 +301,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                     Path(configuration["root_path"]),
                 )
         else:
-            ok = (
-                bool(report.get("no_replace") and report.get(configuration["mode"]))
-                or copy_fallback
-            )
+            ok = bool(report.get(configuration["mode"])) or copy_fallback
         if ok:
             backend = configuration["backend"]
             async with factory(backend["base_url"], secret) as adapter:
@@ -355,10 +355,9 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                 f"Download folder: {describe_os_error(error, Path(report['path']))} "
                 "Review this client's folder mapping in Settings → Download clients."
                 if report.get("folder_kind") == "download" and report.get("path")
-                else f"Folder verification failed while {report['failure_step']} "
-                f"({report['error_code']}). The folders were opened successfully, but this "
-                "filesystem operation failed. Check the worker log for details."
-                if report.get("failure_step")
+                else f"Folder verification failed while {report['failure_step']}: "
+                f"{describe_os_error(error, Path(report['path']))}"
+                if report.get("failure_step") and report.get("path")
                 else describe_os_error(error)
             )
         else:
@@ -450,8 +449,10 @@ def _mount_point(path: Path, mounts) -> Path | None:
     return max(points, key=lambda point: len(point.parts), default=None)
 
 
-def choose_staging(local: Path, explicit: Path | None, current: Path | None) -> Path:
-    """Preserve working staging; use a hidden child for a library-only mount."""
+def choose_staging(
+    local: Path, explicit: Path | None, current: Path | None, *, inside_library=False
+) -> Path:
+    """Preserve existing storage; keep new staging inside libraries that exclude it."""
     if explicit:
         return explicit
     mounts = filesystem_mounts()
@@ -463,6 +464,8 @@ def choose_staging(local: Path, explicit: Path | None, current: Path | None) -> 
                 return current
         except (OSError, InspectionError):
             pass
+    if inside_library:
+        return local / STAGING_NAME
     try:
         # Linux bind mounts can share st_dev but still reject sibling renames.
         # /proc/self/mountinfo distinguishes those boundaries; ismount covers
@@ -491,7 +494,7 @@ def holds_journals(staging: Path) -> bool:
 def check_library_route(
     local: Path, staging: Path, others: list[Path], *, journal_root=None
 ) -> None:
-    """Check a library folder choice against the real mounts before it is saved."""
+    """Use the same storage contract when saving and verifying a library route."""
     if journal_root is not None and any(overlaps(journal_root, path) for path in (local, staging)):
         raise InspectionError("Journal storage must be outside media roots")
     mounts = filesystem_mounts()

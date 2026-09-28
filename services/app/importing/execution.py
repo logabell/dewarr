@@ -151,6 +151,29 @@ class RenameGuard:
         self.spec = spec
         self.db = None
 
+    async def reserve_fallback(self, needed, added):
+        # The publisher already holds its filesystem lock. Observe mounts/space
+        # directly; observe_import would try to acquire that lock again.
+        observation = {
+            **await capacity.observe_publication(self.spec),
+            "required_bytes": needed - added + capacity.MIB,
+        }
+        async with session_factory()() as db, db.begin():
+            entry = await db.get(ImportEntry, self.entry_id)
+            await context(db, entry, self.token, lock=True)
+            await capacity.reconcile_import(db, entry, observation)
+        observation = {
+            **await capacity.observe_publication(self.spec),
+            "required_bytes": needed + capacity.MIB,
+        }
+        async with session_factory()() as db, db.begin():
+            entry = await db.get(ImportEntry, self.entry_id)
+            await context(db, entry, self.token, lock=True)
+            await capacity.reserve_import(db, entry, self.spec, observation)
+
+    def reserve_copy(self, needed, added):
+        asyncio.run_coroutine_threadsafe(self.reserve_fallback(needed, added), self.loop).result()
+
     async def enter(self):
         observation = None
         if self.spec:
@@ -932,6 +955,7 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                         checkpoint=checkpoint,
                         timeout=timeout,
                         publication_guard=guard.hold,
+                        reserve_copy=guard.reserve_copy,
                         should_continue=(
                             _still_publishing(loop, entry_id, token) if spec.conversion else None
                         ),

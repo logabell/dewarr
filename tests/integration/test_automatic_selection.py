@@ -209,7 +209,7 @@ async def test_best_eligible_candidate_is_prepared_once_with_frozen_limits_and_p
         assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 0
         selected = await db.get(AcquisitionSelection, UUID(value["selection_id"]))
         assert "Automatically eligible" in selected.frozen["verification"]
-        assert selected.frozen["profile"]["preferences"]["maximum_bytes"] == 10 * 1024**3
+        assert selected.frozen["profile"]["preferences"]["maximum_bytes"] is None
         assert selected.frozen["automatic_selection"]["result_id"] == str(source["result"])
     assert len(source["resolver"].calls) == 1
 
@@ -421,7 +421,7 @@ async def test_format_preference_precedes_seed_count_then_seed_count_breaks_form
     assert calls == [second if format == "m4b" else source["result"]]
 
 
-async def test_failed_inspection_budget_survives_redelivery_and_stops_before_sixth_candidate(
+async def test_failed_inspections_try_every_candidate_once_across_redelivery(
     client, database, source, monkeypatch
 ):
     for n in range(5):
@@ -437,9 +437,9 @@ async def test_failed_inspection_budget_survives_redelivery_and_stops_before_six
     for _ in range(7):
         await automatic.run(UUID(operation["id"]))
     result = await detail(client, operation["id"])
-    assert result["status"] == "held" and result["inspections"] == 5
-    assert len(calls) == len(set(calls)) == 5
-    assert sum(d["inspected"] for d in result["decisions"]) == 5
+    assert result["status"] == "held" and result["inspections"] == 6
+    assert len(calls) == len(set(calls)) == 6
+    assert sum(d["inspected"] for d in result["decisions"]) == 6
     async with database() as db:
         assert await db.scalar(select(func.count()).select_from(AcquisitionSelection)) == 0
 
@@ -500,7 +500,7 @@ async def test_actual_formats_rerank_candidates_and_reuse_already_inspected_torr
         ]
 
 
-async def test_inspection_limit_still_selects_best_verified_candidate_without_sixth_fetch(
+async def test_ranking_can_inspect_more_than_five_candidates_without_repeating_fetches(
     client, database, source, monkeypatch
 ):
     resolved = {source["result"]: (source["artifact"], source["release"])}
@@ -527,6 +527,6 @@ async def test_inspection_limit_still_selects_best_verified_candidate_without_si
     for _ in range(7):
         await automatic.run(UUID(operation["id"]))
     value = await detail(client, operation["id"])
-    assert value["status"] == "completed" and value["inspections"] == 5
-    assert len(calls) == len(set(calls)) == 5
+    assert value["status"] == "completed" and value["inspections"] == 6
+    assert len(calls) == len(set(calls)) == 6
     assert value["artifact_id"] == str(source["artifact"])

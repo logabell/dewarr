@@ -114,7 +114,7 @@ async def test_real_destination_probe_and_idempotent_dispatch(client, admin, dat
     await get_queue().run_worker_async(wait=False, concurrency=1)
     view = (await client.get("/api/organization/destinations")).json()[0]
     assert view["probe"]["status"] == "verified"
-    assert view["probe"]["hardlink"] and view["probe"]["no_replace"]
+    assert view["probe"]["hardlink"]
     assert view["publication_available"]
     assert not list(route["target"].iterdir()) and not list(route["stage"].iterdir())
     async with database() as db:

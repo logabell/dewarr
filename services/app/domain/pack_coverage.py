@@ -13,7 +13,6 @@ from app.domain.work_graph import canonical_map, family_ids
 
 CATALOG_FRESH_FOR = timedelta(hours=24)
 MAX_ADDITIONAL_BOOKS = 20
-MAX_PACK_BYTES = 50 * 1024**3
 MAX_CATALOG_MEMBERS = 200
 PRIMARY = {
     "ebook": {"epub", "pdf", "cbz"},

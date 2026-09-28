@@ -3,7 +3,6 @@ import { expect, test, type Page } from "../fixtures";
 async function mockSettings(page: Page, role = "admin") {
   const requests: string[] = [];
   let recovery = {
-    attempt_cap: 3,
     approve_reports: true,
     defaults: {
       enabled: true,
@@ -106,13 +105,9 @@ test("recovery is grouped with clients, keeps collapsed drafts, and saves source
   await group.focus();
   await page.keyboard.press("Enter");
   const form = page.getByRole("form", { name: "Download recovery settings" });
-  await form.getByLabel("Maximum attempts", { exact: false }).fill("4");
-  await group.click();
-  await expect(form).not.toBeVisible();
-  await group.click();
   await expect(
     form.getByLabel("Maximum attempts", { exact: false }),
-  ).toHaveValue("4");
+  ).toHaveCount(0);
   await form
     .getByRole("combobox", { name: "Source", exact: true })
     .selectOption("indexer");
@@ -131,7 +126,6 @@ test("recovery is grouped with clients, keeps collapsed drafts, and saves source
     "Recovery settings saved",
   );
   expect(fixture.recovery()).toMatchObject({
-    attempt_cap: 4,
     sources: {
       "prowlarr:12": { cleanup: "pause" },
       mam: { stall_hours: null },
@@ -162,81 +156,15 @@ test("recovery is grouped with clients, keeps collapsed drafts, and saves source
   expect(errors).toEqual([]);
 });
 
-test("quotas live under users, validate limits, save overrides, and restore inheritance", async ({
+test("request quota controls are removed for administrators", async ({
   page,
-}, testInfo) => {
+}) => {
   const fixture = await mockSettings(page);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/settings#accounts");
-  await expect(page.locator(".settings-group > summary")).toContainText(
-    "Request quotas",
+  await expect(page.getByText("Request quotas", { exact: true })).toHaveCount(
+    0,
   );
   expect(fixture.requests).not.toContain("/api/request-quotas");
-  await page.goto("/settings#quotas");
-  await expect(page).toHaveURL(/group=quotas#accounts$/);
-  const form = page.getByRole("form", { name: "Request quota settings" });
-  await form.getByLabel("Apply limits to").selectOption("user:reader");
-  await form.getByRole("button", { name: "Add rolling limit" }).click();
-  await form.getByLabel("Book limit", { exact: true }).fill("5");
-  await form.getByLabel("Size limit (GiB)").fill("2");
-  await form.getByLabel("Maximum pending approvals").fill("3");
-  await form.getByRole("button", { name: "Save limits", exact: true }).click();
-  await expect(form.getByRole("status")).toHaveText("Request limits saved.");
-  expect(fixture.policies.get("user:reader")).toMatchObject({
-    windows: [
-      {
-        medium: "combined",
-        window: "week",
-        books: 5,
-        size_bytes: 2 * 1024 ** 3,
-      },
-    ],
-    pending_cap: 3,
-  });
-  await form.getByRole("button", { name: "Add rolling limit" }).click();
-  await expect(form.getByRole("status")).toHaveCount(0);
-  await form
-    .getByRole("combobox", { name: "Window", exact: true })
-    .nth(1)
-    .selectOption("week");
-  await expect(form.getByRole("alert")).toContainText("only once");
-  await expect(
-    form.getByRole("button", { name: "Save limits", exact: true }),
-  ).toBeDisabled();
-  await form
-    .getByRole("combobox", { name: "Window", exact: true })
-    .nth(1)
-    .selectOption("month");
-  await page.getByText("Per-user usage", { exact: true }).click();
-  await expect(
-    page.getByRole("table", { name: "Per-user request usage" }),
-  ).toContainText("Alex Reader");
-  await page.screenshot({
-    path: testInfo.outputPath("quotas-desktop.png"),
-    fullPage: true,
-  });
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(
-    page.locator('.page-tabs a[aria-current="page"]'),
-  ).toBeInViewport();
-  await page.screenshot({
-    path: testInfo.outputPath("quotas-mobile.png"),
-    fullPage: true,
-  });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  await form.getByRole("button", { name: "Restore inherited limits" }).click();
-  await expect(form.getByRole("status")).toHaveText(
-    "Inherited limits restored.",
-  );
-  expect(fixture.policies.has("user:reader")).toBe(false);
-  expect(errors).toEqual([]);
 });
 
 test("user managers cannot open administrator quota controls", async ({

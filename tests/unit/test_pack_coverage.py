@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 from app.domain import pack_coverage
-from app.domain.automatic_eligibility import eligibility, limit_bytes
+from app.domain.automatic_eligibility import eligibility
 from app.domain.release_profiles import ReleasePreferences
 from tests.unit.test_automatic_eligibility import RULE, WORK, descriptor, release
 
@@ -128,8 +128,6 @@ def test_wrong_author_ambiguous_series_and_per_child_constraints_cannot_be_infer
 
 
 def test_pack_limits_count_all_bytes_and_bound_additional_works():
-    assert limit_bytes(ReleasePreferences(), "ebook", pack=True) == 50 * 1024**3
-    assert limit_bytes(ReleasePreferences(maximum_bytes=1024), "audio", pack=True) == 1024
     scope = deepcopy(CATALOG)
     for i in range(20):
         scope["series"][0]["members"].append(
@@ -139,7 +137,7 @@ def test_pack_limits_count_all_bytes_and_bound_additional_works():
     assert pack_coverage.manifest(pack(), WORK, scope, descriptor(paths), "audio") is None
     assert pack_coverage.manifest(pack(), WORK, scope, descriptor(paths[:-1]), "audio")
     oversized = descriptor(paths[:2]).model_copy(update={"torrent_bytes": 50 * 1024**3 + 1})
-    assert any(
+    assert not any(
         "transfer size" in reason
         for reason in eligibility(
             pack(), WORK, RULE, ReleasePreferences(), descriptor=oversized, catalog=scope

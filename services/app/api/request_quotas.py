@@ -34,10 +34,7 @@ async def users(
 
 @router.get("", response_model=list[PolicyView])
 async def policies(admin: Admin, db: Database):
-    return [
-        PolicyView(scope=row.scope, rules=Rules.model_validate(row.configuration))
-        for row in await db.scalars(select(RequestQuotaPolicy).order_by(RequestQuotaPolicy.scope))
-    ]
+    return []
 
 
 async def validate_scope(db, scope):
@@ -55,6 +52,8 @@ async def validate_scope(db, scope):
 
 @router.put("/{scope}", response_model=PolicyView)
 async def save(scope: str, body: Rules, admin: Admin, db: Database):
+    if body.windows or body.pending_cap is not None:
+        raise HTTPException(410, "Request quotas have been removed; requests are unlimited")
     await transaction_lock(db, LOCK)
     await validate_scope(db, scope)
     row = await db.get(RequestQuotaPolicy, scope)
