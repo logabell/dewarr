@@ -6,14 +6,18 @@ import httpx
 import pytest
 
 from app.adapters.contracts import SubmissionReceipt
+from app.adapters.prowlarr import ProwlarrRelease
 from app.adapters.sabnzbd import SabClient, SabState
 from app.config import get_settings
-from app.db.models import DownloadAttempt, DownloadInspection, Integration
+from app.db.models import DownloadAttempt, DownloadInspection, Integration, Operation, SourceResult
+from app.domain import automatic_selection
 from app.domain import download_attempts as downloads
 from app.domain import downloaders as downloader_settings
 from app.security import decrypt_secrets, encrypt_secrets
 from tests.integration.test_acquisition import catalog  # noqa: F401
 from tests.integration.test_acquisition_selections import prepare, selection_route  # noqa: F401
+from tests.integration.test_automatic_dispatch import authorized  # noqa: F401
+from tests.integration.test_automatic_selection import source  # noqa: F401
 from tests.integration.test_download_attempts import start
 from tests.integration.test_prowlarr_sources import (
     configure,
@@ -21,6 +25,7 @@ from tests.integration.test_prowlarr_sources import (
     resolve,
     search,
 )
+from tests.integration.test_quick_add import defaults
 from tests.nzb_fixture import nzb_bytes
 from tests.prowlarr_fixture import release
 
@@ -160,6 +165,65 @@ class Grab:
         assert save_path == "/downloads"
         self.tag, self.category = attempt_tag, category
         return SubmissionReceipt(external_ids=["SABnzbd_nzo_test"])
+
+
+async def test_clicked_usenet_release_with_parenthesized_format_reaches_downloader(
+    client, admin, database, source, authorized, monkeypatch, prowlarr_http
+):
+    await configure(client)
+    prowlarr_http.update(
+        releases=[
+            release(
+                title="Writer - Harbor (retail) (m4b)", protocol="usenet", categories=[{"id": 3030}]
+            )
+        ],
+        bytes=nzb_bytes(name="Harbor", filename="Harbor.m4b"),
+    )
+    found = (await search(client)).json()["items"][0]
+    assert found["release"]["formats"] == ["m4b"]
+    inspected = await resolve(client, found["id"])
+    assert inspected.status_code == 200, inspected.text
+    source["artifact"] = UUID(inspected.json()["id"])
+    source["release"] = ProwlarrRelease.model_validate(found["release"])
+    async with database() as db, db.begin():
+        result = await db.get(SourceResult, UUID(found["id"]))
+        result.operation_id = authorized["search"]
+        search_row = await db.get(Operation, authorized["search"])
+        search_row.payload = {
+            **search_row.payload,
+            "workers": {},
+            "sources": {},
+            "query": "Harbor",
+            "medium": "audio",
+            "offset": 0,
+        }
+        downloader = await db.get(Integration, UUID(authorized["body"]["downloader_id"]))
+        downloader.kind = "sabnzbd"
+        downloader.encrypted_secrets = encrypt_secrets({"api_key": "private-sab-key"})
+    await defaults(client, authorized)
+    profiles = (await client.get("/api/acquisition/profiles")).json()
+    async with database() as db, db.begin():
+        search_row = await db.get(Operation, authorized["search"])
+        search_row.payload = {**search_row.payload, "profile": profiles[0]}
+    grab = Grab()
+    monkeypatch.setattr(downloads, "SabClient", lambda *args, **kwargs: grab)
+    path = f"/api/source-searches/{authorized['search']}/results/{found['id']}/download"
+    response = await client.post(path, headers={"Idempotency-Key": "clicked-nzb"})
+    assert response.status_code == 202, response.text
+    operation_id = UUID(response.json()["id"])
+    await automatic_selection.run(operation_id)
+    async with database() as db:
+        operation = await db.get(Operation, operation_id)
+        assert operation.status == "completed", operation.message
+        attempt_id = UUID(operation.payload["download_id"])
+    await downloads.run(attempt_id)
+    repeated = await client.post(path, headers={"Idempotency-Key": "clicked-nzb"})
+    assert repeated.status_code == 202, repeated.text
+    assert repeated.json()["id"] == str(operation_id)
+    await downloads.run(attempt_id)
+    assert grab.calls.count("submit") == 1
+    async with database() as db:
+        assert (await db.get(DownloadAttempt, attempt_id)).state == "downloading"
 
 
 @pytest.mark.parametrize("redirect", [None, "https://indexer.test/file?apikey=secret-indexer"])

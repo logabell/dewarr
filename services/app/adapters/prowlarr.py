@@ -118,7 +118,12 @@ class ProwlarrRelease(Release):
     def explicit_formats(self):
         if not self.formats:
             formats = r"m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi|azw|cbz|cbr"
-            labels = re.findall(rf"\[({formats})\]", self.title, re.I)
+            labels = [
+                square or round_
+                for square, round_ in re.findall(
+                    rf"\[\s*({formats})\s*\]|\(\s*({formats})\s*\)", self.title, re.I
+                )
+            ]
             if suffix := re.search(rf"\.({formats})$", self.title, re.I):
                 labels.append(suffix[1])
             self.formats = list(dict.fromkeys(label.lower() for label in labels))

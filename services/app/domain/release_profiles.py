@@ -394,7 +394,8 @@ def indexer_title_authors(release, work):
     ):
         return []
     title = re.sub(
-        r"\[(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)\]",
+        rf"\[\s*(?:{'|'.join(sorted(FORMATS))})\s*\]|"
+        rf"\(\s*(?:{'|'.join(sorted(FORMATS))})\s*\)",
         " ",
         getattr(release, "raw_title", release.title)
         if release.source == "audiobookbay"
