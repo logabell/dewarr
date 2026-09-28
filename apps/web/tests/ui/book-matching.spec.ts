@@ -143,7 +143,10 @@ test("book matching shows choices and keeps search in metadata until saved", asy
   await page
     .getByLabel("Title, author or identifier")
     .fill("Salem Stephen King");
-  await page.getByRole("button", { name: "Search books", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Find the right book" })
+    .getByRole("button", { name: "Search books", exact: true })
+    .click();
   await expect(page).toHaveURL(/tab=manage/);
   await expect.poll(() => searches).toBeGreaterThanOrEqual(2);
   await page.getByRole("button", { name: /'Salem's Lot Stephen King/ }).click();

@@ -7,6 +7,7 @@ from pydantic import Field
 from sqlalchemy import select
 
 from app.db.models import InspectionGrouping
+from app.importing.audio_order import inferred_tracks
 from app.importing.inspection import InspectedGroup
 from app.importing.naming import PlannedSourceFile, StrictModel, fingerprint
 
@@ -36,7 +37,12 @@ class GroupingContent(StrictModel):
 def proposed(snapshot):
     assigned = {file["path"] for group in snapshot["groups"] for file in group["files"]}
     return GroupingContent(
-        groups=snapshot["groups"],
+        groups=[
+            {**group, "files": inferred_tracks(group["files"])}
+            if group["medium"] == "audio"
+            else group
+            for group in snapshot["groups"]
+        ],
         excluded=[
             ExcludedFile(
                 path=file["path"], reason=file.get("reason") or "Not proposed as book media"
@@ -152,8 +158,16 @@ async def latest_grouping(db, inspection_id):
 
 async def current_grouping(db, inspection):
     latest = await latest_grouping(db, inspection.id)
-    return (
-        (latest.revision, GroupingContent.model_validate(latest.content))
-        if latest
-        else (inspection.snapshot["revision"], proposed(inspection.snapshot))
-    )
+    if latest:
+        return latest.revision, GroupingContent.model_validate(latest.content)
+    content = proposed(inspection.snapshot)
+    revision = inspection.snapshot["revision"]
+    # Old inspections can gain filename ordering without rewriting their byte
+    # evidence. Invalidate previous review tokens if the proposed order changed.
+    if any(
+        old.get("track") != new.track
+        for before, after in zip(inspection.snapshot["groups"], content.groups, strict=True)
+        for old, new in zip(before["files"], after.files, strict=True)
+    ):
+        revision = fingerprint({"inspection": revision, "grouping": content.model_dump()})
+    return revision, content

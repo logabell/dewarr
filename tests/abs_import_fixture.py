@@ -146,7 +146,13 @@ class ScanningBackend(ImportBackendFixture):
                     {
                         **file,
                         "duration": float(probe["duration"]),
-                        "index": int(probe.get("tags", {}).get("track", "1").split("/")[0]),
+                        # ABS also orders untagged tracks by their organized
+                        # filenames; an absent tag is not track 1 on every file.
+                        "index": int(
+                            probe.get("tags", {})
+                            .get("track", str(len(media["audioFiles"]) + 1))
+                            .split("/")[0]
+                        ),
                     }
                 )
             # Adding an earlier-sorting book must not reassign an existing item's

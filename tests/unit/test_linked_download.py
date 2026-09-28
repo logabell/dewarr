@@ -6,6 +6,32 @@ from app.importing.linked_download import agrees_with_request
 from app.importing.match_evidence import MatchEvidence
 
 
+def test_proxied_author_title_names_identify_untagged_completed_audio():
+    work = SimpleNamespace(
+        title="The Anxious Generation: A Descriptive Subtitle",
+        authors=["Jonathan Haidt"],
+        language="en",
+        metadata_fields={},
+    )
+    release = {
+        "source": "prowlarr",
+        "title": "Jonathan.Haidt-The.Anxious.Generation",
+        "authors": [],
+    }
+    assert agrees_with_request(work, release, MatchEvidence())
+    assert not agrees_with_request(work, release, MatchEvidence(titles=["Other Book"]))
+    assert not agrees_with_request(work, release, MatchEvidence(authors=[["other writer"]]))
+    assert not agrees_with_request(
+        work, {**release, "title": "Someone.Else-The.Anxious.Generation"}, MatchEvidence()
+    )
+    assert not agrees_with_request(
+        work,
+        {**release, "title": "Modern Childhood 2 - Jonathan Haidt"},
+        MatchEvidence(),
+        series=[{"name": "Modern Childhood", "position": "2"}],
+    )
+
+
 @pytest.mark.parametrize(
     "facts",
     [

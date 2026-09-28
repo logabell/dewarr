@@ -83,3 +83,4 @@ coverage/
 /compose.override.yml
 
 !/docs/NATIVE-LIBRARY-IMPORTS.md
+!/docs/AUTOMATIC-BOOK-MATCHING.md

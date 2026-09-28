@@ -14,8 +14,9 @@ from app.db.models import (
     Work,
     WorkMetadataSource,
 )
-from app.domain.catalog_titles import display_title, display_title_sql, titles_agree
+from app.domain.catalog_titles import display_title, display_title_sql
 from app.domain.identity import normalized
+from app.domain.title_matching import compatible_title
 from app.domain.work_graph import canonical_work
 from app.importing.file_editions import FILE_EDITION_PROVIDER
 from app.importing.match_evidence import (
@@ -29,7 +30,7 @@ from app.importing.match_evidence import (
 from app.importing.naming import StrictModel, fingerprint
 from app.importing.versioning import version_revision
 
-MATCHER_VERSION = 3
+MATCHER_VERSION = 4
 MAX_CANDIDATES = 50
 
 
@@ -116,7 +117,13 @@ def candidate_evidence(facts, version, origin, work, needs_review):
         reasons.append("Embedded edition identifier matches")
     if expected_ids and not expected_ids <= ids:
         conflicts.append("Catalog identifiers do not support all embedded assertions")
-    if titles_agree(facts.titles, (origin.title, work.title, version.title)):
+    if facts.titles and all(
+        any(
+            compatible_title(title, expected, identified=bool(shared))
+            for expected in (origin.title, work.title, version.title)
+        )
+        for title in facts.titles
+    ):
         reasons.append("Embedded title agrees")
     else:
         conflicts.append("Embedded title is missing or differs")
@@ -270,6 +277,8 @@ async def match_group(db, snapshot, grouping_revision, group):
         message = "The identifier appears on multiple catalog versions; review the match"
     elif facts.issues:
         message = facts.issues[0]
+    elif len(identified) == 1 and identified[0].conflicts:
+        message = "; ".join(identified[0].conflicts)
     elif candidates:
         message = (
             "Possible catalog matches need review; title similarity is not an edition identifier"

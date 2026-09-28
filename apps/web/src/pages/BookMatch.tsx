@@ -5,6 +5,7 @@ import { api, result, type Work } from "../api/client";
 import type { components } from "../api/schema";
 import { Notice } from "../components";
 import BookCover from "../components/BookCover";
+import BookDialog from "../components/BookDialog";
 import { basisLabel } from "../components/FollowRelease";
 import ProviderSearch, { Preview } from "./ProviderSearch";
 
@@ -72,12 +73,7 @@ export default function BookMatch({
             onClick={() => setSearching(!searching)}
             aria-expanded={searching}
           >
-            <Search size={16} />{" "}
-            {searching
-              ? "Close search"
-              : source
-                ? "Change match"
-                : "Search books"}
+            <Search size={16} /> {source ? "Change match" : "Search books"}
           </button>
         )}
       </div>
@@ -149,14 +145,17 @@ export default function BookMatch({
         </>
       )}
       {searching && (
-        <div className="book-match-search">
+        <BookDialog
+          title="Find the right book"
+          close={() => setSearching(false)}
+        >
           <ProviderSearch
             canEdit={admin}
             matchWorkId={work.id}
             initialQuery={`${work.title} ${work.authors[0] || ""}`}
             onMatched={done}
           />
-        </div>
+        </BookDialog>
       )}
       {selected && (
         <Preview

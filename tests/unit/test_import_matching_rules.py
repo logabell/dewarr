@@ -233,3 +233,16 @@ def test_unknown_narrator_and_missing_title_are_not_automatic_evidence():
         "Embedded title is missing or differs"
         in candidate_evidence(facts, version, work, work, False).conflicts
     )
+
+
+def test_identified_ebook_accepts_short_title_and_keeps_meaningful_subtitles():
+    facts, version, work = facts_and_version()
+    version.medium = "ebook"
+    work.title = version.title = "First Harbor: A Journey Through the History of Coastal Life"
+    assert not candidate_evidence(facts, version, work, work, False).conflicts
+    for title in ("First Harbor: Volume 2", "First Harbor: A Study Guide", "Second Harbor"):
+        facts.titles = [title]
+        assert (
+            "Embedded title is missing or differs"
+            in candidate_evidence(facts, version, work, work, False).conflicts
+        )

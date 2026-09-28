@@ -3,29 +3,55 @@
 from types import SimpleNamespace
 from uuid import UUID
 
+from app.db.models import Version
 from app.domain.book_sources import identity
-from app.domain.catalog_titles import display_title, optional_subtitle_base
+from app.domain.catalog_titles import display_title
 from app.domain.identity import normalized
 from app.domain.release_profiles import indexer_title_authors
 from app.domain.series_identity import title_outside_series_note
+from app.domain.title_matching import compatible_title
 from app.domain.work_graph import canonical_work
 from app.importing.file_editions import attach_file_edition
 from app.importing.match_evidence import group_evidence, language_key
 
 
+def request_file_conflicts(work, release, facts, *, series=()):
+    """Absent tags are neutral; contradictory tags need a different download or correction."""
+    catalog = {"title": work.title, "authors": work.authors, "series": list(series)}
+    credited = release.get("source") in {"audiobookbay", "prowlarr"}
+    title_agrees = bool(facts.titles) and all(
+        compatible_title(value, work.title)
+        or (credited and title_outside_series_note(value, catalog) is not None)
+        for value in facts.titles
+    )
+    authors = sorted(normalized(name) for name in work.authors)
+    conflicts = list(facts.issues)
+    if facts.titles and not title_agrees:
+        conflicts.append("The files name a different book")
+    if any(
+        names != authors and not (credited and title_agrees and set(authors) <= set(names))
+        for names in facts.authors
+    ):
+        conflicts.append("The files name a different author")
+    if work.language and any(value != language_key(work.language) for value in facts.languages):
+        conflicts.append("The files use a different language")
+    return conflicts
+
+
 def agrees_with_request(work, release, facts, *, series=()):
     # Missing tags are common in M4B files. Conflicting tags still require review.
-    if facts.issues or work.metadata_fields.get("identity_rejected"):
+    if request_file_conflicts(work, release, facts, series=series) or work.metadata_fields.get(
+        "identity_rejected"
+    ):
         return False
     title = display_title(work.title)
-    titles = {title, display_title(optional_subtitle_base(work.title))}
     authors = sorted(normalized(name) for name in work.authors)
     if not title or not authors:
         return False
     catalog = {"title": work.title, "authors": work.authors, "series": list(series)}
     credited_source = release.get("source") in {"audiobookbay", "prowlarr"}
     file_titles_agree = bool(facts.titles) and all(
-        display_title(value) in titles
+        compatible_title(value, work.title)
         or (credited_source and title_outside_series_note(value, catalog) is not None)
         for value in facts.titles
     )
@@ -34,11 +60,12 @@ def agrees_with_request(work, release, facts, *, series=()):
     )
     file_corroborated = file_titles_agree and file_authors_cover
     shown = display_title(release.get("title", ""))
-    # New credit/series forms need independent file tags, and the release must
-    # still name this book or its exact known series position.
+    # Proxied releases with an exact catalog author/title pair can identify an
+    # otherwise untagged download. The caller has verified the complete manifest.
+    # ABB series/credit forms still need independent file corroboration.
     credited_release = (
         credited_source
-        and file_corroborated
+        and (file_corroborated or release.get("source") == "prowlarr")
         and bool(
             indexer_title_authors(
                 SimpleNamespace(
@@ -47,11 +74,11 @@ def agrees_with_request(work, release, facts, *, series=()):
                     raw_title=release.get("raw_title") or release.get("title", ""),
                     authors=[],
                 ),
-                catalog,
+                catalog if file_corroborated else {**catalog, "series": []},
             )
         )
     )
-    if shown not in titles and not credited_release:
+    if not compatible_title(shown, work.title) and not credited_release:
         return False
     if facts.titles and not file_titles_agree:
         return False
@@ -62,14 +89,14 @@ def agrees_with_request(work, release, facts, *, series=()):
     release_authors = sorted(normalized(name) for name in release.get("authors", []))
     if release_authors and release_authors != authors:
         return False
-    if not release_authors and not facts.authors:
+    if not release_authors and not facts.authors and not credited_release:
         return False
     if work.language and any(value != language_key(work.language) for value in facts.languages):
         return False
     return True
 
 
-async def linked_version(db, approver, selection, inspection, group, grouping_revision):
+async def linked_version(db, approver, selection, inspection, group, grouping_revision, *, match):
     # Specific-edition requests must retain their stronger edition evidence.
     rule = selection.frozen["requirements"]
     if rule.get("version_id") or rule["medium"] != group.medium:
@@ -79,6 +106,23 @@ async def linked_version(db, approver, selection, inspection, group, grouping_re
     catalog = await identity(db, work, selection.owner_id)
     if not agrees_with_request(work, selection.frozen["release"], facts, series=catalog["series"]):
         return None
+    identified = [candidate for candidate in match.candidates if candidate.identifier_match]
+    if identified:
+        # Missing tags do not undo the saved book selection. Keep the edition
+        # when its identifier uniquely belongs to that book, but never erase
+        # contradictory tags, another work, or an ambiguous identifier.
+        missing = set()
+        if not facts.titles:
+            missing.add("Embedded title is missing or differs")
+        if not facts.authors:
+            missing.add("Embedded authors are missing or differ")
+        if (
+            len(identified) != 1
+            or identified[0].work_id != work.id
+            or set(identified[0].conflicts) - missing
+        ):
+            return None
+        return await db.get(Version, identified[0].version_id)
     version, _ = await attach_file_edition(
         db, approver, inspection.id, work.id, group.key, grouping_revision
     )

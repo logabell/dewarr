@@ -68,3 +68,24 @@ def test_automatic_chapter_merge_goes_straight_to_the_library():
     status = importer_message(merged)
     assert "M4B" in status
     assert "review" not in status.lower()
+
+
+@pytest.mark.parametrize(
+    "names,tags,accepted",
+    [
+        (["01.mp3", "02.mp3", "03.mp3"], [{}, {}, {}], True),
+        (["01.mp3", "03.mp3"], [{}, {}], False),
+        (["01.mp3", "01.MP3"], [{}, {}], False),
+        (["disc1/01.mp3", "disc2/02.mp3"], [{}, {}], False),
+        (["01.mp3", "02.mp3"], [{"disc": "1/2"}, {}], False),
+        (["01.mp3", "02.mp3"], [{"track": "2/2"}, {"track": "1/2"}], False),
+        (["01.mp3", "02.mp3"], [{"track": "1/3"}, {}], False),
+    ],
+)
+def test_completed_manifest_numbered_audio_without_totals(names, tags, accepted):
+    files = {
+        name: {"path": name, "state": "inspected", "extension": "mp3", "technical": {"tags": tag}}
+        for name, tag in zip(names, tags, strict=True)
+    }
+    group = SimpleNamespace(medium="audio", files=[SimpleNamespace(path=path) for path in files])
+    assert (content_reason(group, files, {"title": "A whole book"}) is None) is accepted

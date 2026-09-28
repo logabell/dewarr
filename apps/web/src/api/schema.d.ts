@@ -7701,6 +7701,8 @@ export interface components {
       medium: string;
       /** Destination */
       destination: string | null;
+      /** Destination Id */
+      destination_id?: string | null;
       /** Mode */
       mode: string | null;
       /** State */
@@ -7712,6 +7714,8 @@ export interface components {
        * @default false
        */
       can_retry: boolean;
+      /** File Conflicts */
+      file_conflicts?: string[];
     };
     /** DownloadFolderView */
     DownloadFolderView: {
@@ -9736,7 +9740,7 @@ export interface components {
       limit: number;
       /**
        * Matcher Version
-       * @default 3
+       * @default 4
        */
       matcher_version: number;
     };

@@ -16,6 +16,7 @@ from app.domain.catalog_titles import optional_subtitle_base, parse_title_labels
 from app.domain.narrators import NarratorNames
 from app.domain.request_scope import ScopePreferences
 from app.domain.series_identity import position_key, title_outside_series_note
+from app.domain.title_matching import compatible_title
 from app.importing.naming import fingerprint
 
 FORMATS = {
@@ -462,10 +463,7 @@ def indexer_title_authors(release, work):
 def assess_release(release, work, preferences, medium="all"):
     raw, part, dramatized = release_labels(getattr(release, "title", release.raw_title))
     title, expected = normalized(raw), normalized(parse_title_labels(work["title"]).title)
-    title_agrees = bool(title) and title in {
-        expected,
-        normalized(optional_subtitle_base(work["title"])),
-    }
+    title_agrees = compatible_title(raw, work["title"])
     authors = {normalized(a) for a in release.authors}
     work_authors = {normalized(a) for a in work["authors"]}
     known = set().union(*(identifier_values(value) for value in work.get("identifiers") or []))

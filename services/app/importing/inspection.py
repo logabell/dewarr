@@ -18,6 +18,7 @@ from defusedxml import ElementTree
 from pydantic import Field
 
 from app.domain.catalog_titles import parse_title_labels
+from app.importing.audio_order import inferred_tracks
 from app.importing.book_containers import check_zip_directory
 from app.importing.filesystem import (
     InspectionError,
@@ -340,6 +341,9 @@ def suggest_groups(files):
             },
         )
         group["files"].append({"path": str(path), "disc": disc, "track": track})
+    for group in groups.values():
+        if group["medium"] == "audio":
+            group["files"] = inferred_tracks(group["files"])
     return list(groups.values())
 
 

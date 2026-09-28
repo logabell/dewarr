@@ -157,39 +157,47 @@ export default function ImportExecution({
     >
       {!hasRuns && !query.isPending && (
         <>
-          <h3>Import into your library</h3>
-          <p className="muted">
-            Resolved books import independently. Availability updates after the
-            library confirms the item and files. Bookdrop deliveries wait for
-            your review and a linked library copy.
-          </p>
-          {media.map((medium) => (
-            <label key={medium}>
-              {medium === "ebook"
-                ? "Ebook destination"
-                : "Audiobook destination"}
-              <select
-                value={choice(medium)?.id || ""}
-                disabled={publish.isPending}
-                onChange={(event) =>
-                  setChoices((current) => ({
-                    ...current,
-                    [medium]: event.target.value,
-                  }))
-                }
-              >
-                <option value="">Choose a verified destination</option>
-                {eligible(medium).map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.workflow === "bookdrop"
-                      ? "Grimmory Bookdrop review"
-                      : row.root_key}{" "}
-                    · {row.mode === "copy" ? "Copy" : "Hardlink"}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
+          <h3>
+            {compact
+              ? "Add this book to your library"
+              : "Import into your library"}
+          </h3>
+          {!compact && (
+            <p className="muted">
+              Resolved books import independently. Availability updates after
+              the library confirms the item and files. Bookdrop deliveries wait
+              for your review and a linked library copy.
+            </p>
+          )}
+          {media
+            .filter((medium) => !compact || !choice(medium))
+            .map((medium) => (
+              <label key={medium}>
+                {medium === "ebook"
+                  ? "Ebook destination"
+                  : "Audiobook destination"}
+                <select
+                  value={choice(medium)?.id || ""}
+                  disabled={publish.isPending}
+                  onChange={(event) =>
+                    setChoices((current) => ({
+                      ...current,
+                      [medium]: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Choose a verified destination</option>
+                  {eligible(medium).map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.workflow === "bookdrop"
+                        ? "Grimmory Bookdrop review"
+                        : row.root_key}{" "}
+                      · {row.mode === "copy" ? "Copy" : "Hardlink"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           {media.some((medium) => choice(medium)?.workflow === "bookdrop") && (
             <p className="notice">
               Bookdrop receives an independent EPUB copy with its original
@@ -199,8 +207,9 @@ export default function ImportExecution({
           )}
           {!executable && (
             <p className="notice">
-              Use a fresh conventional plan with frozen metadata and version
-              evidence before publishing.
+              {compact
+                ? "Library settings need attention before this book can be added."
+                : "Use a fresh conventional plan with frozen metadata and version evidence before publishing."}
             </p>
           )}
 
@@ -214,7 +223,11 @@ export default function ImportExecution({
             }
             onClick={() => publish.mutate()}
           >
-            {publish.isPending ? "Queuing import…" : "Import resolved books"}
+            {publish.isPending
+              ? "Adding to library…"
+              : compact
+                ? "Add to library"
+                : "Import resolved books"}
           </button>
         </>
       )}
@@ -270,8 +283,7 @@ export default function ImportExecution({
                   </button>
                 )}
                 {entry.can_cancel && (
-                  <details className="import-result-options">
-                    <summary>More options</summary>
+                  <div className="import-result-options">
                     <button
                       disabled={cancel.isPending || retry.isPending}
                       onClick={() =>
@@ -286,9 +298,9 @@ export default function ImportExecution({
                       Downloaded files and already published books are
                       preserved.
                     </p>
-                  </details>
+                  </div>
                 )}
-                {entry.state === "cancelled" && (
+                {entry.state === "cancelled" && !compact && (
                   <Link
                     to={`/organization/inspections?inspection=${plan.inspection_id}`}
                   >

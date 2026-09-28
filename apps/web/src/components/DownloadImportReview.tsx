@@ -1,20 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  BookOpen,
-  Check,
-  CircleAlert,
-  Download,
-  FolderOpen,
-  Link2,
-  LoaderCircle,
-  RefreshCw,
-} from "lucide-react";
+import { useState } from "react";
+import { Check, CircleAlert, LoaderCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import ImportExecution from "./ImportExecution";
-import { libraryRelativePath } from "./importPaths";
+import DownloadMatchReview from "./DownloadMatchReview";
+import BookCover from "./BookCover";
+import BookDialog from "./BookDialog";
 
 type Inspection = components["schemas"]["InspectionView"];
 
@@ -24,6 +18,11 @@ export default function DownloadImportReview({
   inspection: Inspection;
 }) {
   const download = inspection.download!;
+  const colon = download.title.indexOf(": ");
+  const split = download.title.length > 80 && colon > 5 && colon < 90;
+  const title = split ? download.title.slice(0, colon) : download.title;
+  const subtitle = split ? download.title.slice(colon + 2) : null;
+  const [showFiles, setShowFiles] = useState(false);
   const cache = useQueryClient();
   const plan = useQuery({
     queryKey: ["frozen-import-plan", inspection.plan_id],
@@ -44,48 +43,52 @@ export default function DownloadImportReview({
       ),
     onSuccess: (value) => {
       cache.setQueryData(["inspection", inspection.id], value);
-      cache.invalidateQueries({ queryKey: ["requests", "counts"] });
+      cache.invalidateQueries({ queryKey: ["requests"] });
+      cache.invalidateQueries({
+        queryKey: ["download-review-context", inspection.id],
+      });
     },
   });
   const done = download.state === "complete";
   const blocked = ["held", "review", "cancelled", "cancel-held"].includes(
     download.state,
   );
-  const identified = !!inspection.plan_id;
-  const published = done || download.state === "awaiting-library";
   const files = inspection.snapshot?.files || [];
-  const media = files.filter(
-    (file) => file.medium && file.state === "inspected",
-  );
-  const extras = files.filter((file) =>
-    /\.(jpe?g|png|webp|cue|nfo|txt|sfv|m3u8?|opf)$/i.test(file.path),
-  ).length;
-  const unresolved = files.length - media.length - extras;
+  const media = files.filter((file) => file.medium);
+  const needsDecision =
+    (!inspection.plan_id || download.state === "cancelled") &&
+    inspection.state === "ready" &&
+    blocked;
   return (
-    <section className="download-import" aria-label="Download import">
-      <header className="download-import-book">
-        <div className="download-import-cover" aria-hidden="true">
-          {download.cover_url ? (
-            <img
-              src={`/api/catalog/cover-image?url=${encodeURIComponent(download.cover_url)}`}
-              alt=""
-            />
-          ) : (
-            <BookOpen />
-          )}
+    <section className="download-review" aria-label="Download import">
+      <header className="download-review-book">
+        <div className="download-review-cover">
+          <BookCover
+            title={title}
+            cover={download.cover_url}
+            medium={download.medium === "audio" ? "audio" : "ebook"}
+          />
         </div>
-        <div className="download-import-identity">
+        <div className="download-review-identity">
           <p className="eyebrow">
             {download.medium === "audio" ? "Audiobook" : "Ebook"}
           </p>
           <h2>
-            <Link to={`/books/${download.work_id}`}>{download.title}</Link>
+            <Link to={`/books/${download.work_id}`}>{title}</Link>
           </h2>
-          <p className="muted">{download.authors.join(", ")}</p>
-          <span className="download-import-association">
-            <Link2 size={14} aria-hidden="true" /> Linked to your requested book
-          </span>
+          {subtitle && <p className="download-review-subtitle">{subtitle}</p>}
+          <p className="download-review-author">
+            {download.authors.join(", ")}
+          </p>
+          <Link
+            className="download-review-book-link"
+            to={`/books/${download.work_id}`}
+          >
+            View book details →
+          </Link>
         </div>
+      </header>
+      <div className="download-review-status">
         <span
           className={`download-import-state ${done ? "is-complete" : blocked ? "is-held" : "is-active"}`}
         >
@@ -94,110 +97,82 @@ export default function DownloadImportReview({
           ) : blocked ? (
             <CircleAlert size={16} />
           ) : (
-            <LoaderCircle className="spin" size={16} />
+            <LoaderCircle size={16} className="spin" />
           )}
-          {done ? "In library" : blocked ? "Needs attention" : "Importing"}
+          {done
+            ? "In library"
+            : blocked
+              ? "Needs attention"
+              : "Adding to library"}
         </span>
-      </header>
-      <ol className="download-import-steps" aria-label="Import progress">
-        {[
-          { title: "Downloaded", complete: true, icon: Download },
-          { title: "Book matched", complete: identified, icon: BookOpen },
-          { title: "Files organized", complete: published, icon: FolderOpen },
-          { title: "In library", complete: done, icon: Check },
-        ].map((step, index) => (
-          <li key={step.title} className={step.complete ? "is-complete" : ""}>
-            <span aria-hidden="true">
-              {step.complete ? <Check size={16} /> : <step.icon size={16} />}
-            </span>
-            <span>{step.title}</span>
-            <span className="sr-only">
-              {step.complete ? ": complete" : `: step ${index + 1}`}
-            </span>
-          </li>
-        ))}
-      </ol>
-      <div className="download-import-route">
-        <div>
-          <span className="muted">Completed download</span>
-          <strong>
-            {media.length} book {media.length === 1 ? "file" : "files"}
-            {extras > 0 ? ` · ${extras} extra files` : ""}
-            {unresolved > 0 ? ` · ${unresolved} files need review` : ""}
-          </strong>
-        </div>
-        <div>
-          <span className="muted">Library folder</span>
-          <strong>{download.destination || "Choose a library folder"}</strong>
-        </div>
-        <div>
-          <span className="muted">File handling</span>
-          <strong>
-            {download.mode === "hardlink"
-              ? "Hardlink · keep seeding"
-              : download.mode === "copy"
-                ? "Copy · keep originals"
-                : "Not configured"}
-          </strong>
-        </div>
+        <span className="muted">
+          Download complete
+          {media.length
+            ? ` · ${media.length} ${media.length === 1 ? "file" : "files"}`
+            : ""}
+        </span>
+        <button
+          className="download-view-files"
+          onClick={() => setShowFiles(true)}
+        >
+          View files
+        </button>
       </div>
-      {!inspection.plan_id && (
-        <div className={`download-import-next ${blocked ? "is-held" : ""}`}>
+      {needsDecision ? (
+        <DownloadMatchReview
+          inspection={inspection}
+          retry={() => retry.mutate()}
+          retrying={retry.isPending}
+        />
+      ) : plan.data ? (
+        <ImportExecution plan={plan.data} compact />
+      ) : !plan.isPending || !inspection.plan_id ? (
+        <div className="download-attention" role="status">
           <h3>
-            {blocked ? "Continue this import" : "Preparing your library copy"}
+            {inspection.state === "failed"
+              ? "We couldn’t read this download"
+              : "Adding your book to the library"}
           </h3>
-          <p role="status">{download.message}</p>
-          <p className="muted">
-            Your book selection is saved. Matching, naming and library placement
-            use that selection and your library settings.
+          <p>
+            {inspection.state === "failed"
+              ? "Check that the download finished and its files are accessible, then try again."
+              : "Your book is already selected. File checks and library preparation happen automatically."}
           </p>
-          <div className="actions">
-            {download.can_retry && (
-              <button
-                className="primary"
-                disabled={retry.isPending}
-                onClick={() => retry.mutate()}
-              >
-                <RefreshCw size={16} />
-                {retry.isPending ? "Checking files…" : "Retry automatic import"}
-              </button>
-            )}
-            <Link to="/settings#naming">Library settings</Link>
-          </div>
+          {download.can_retry && (
+            <button
+              className="primary"
+              onClick={() => retry.mutate()}
+              disabled={retry.isPending}
+            >
+              Check download again
+            </button>
+          )}
         </div>
+      ) : (
+        <Loading />
       )}
       <Notice error={retry.error || plan.error} />
-      {inspection.plan_id && plan.isPending && <Loading />}
-      {plan.data && <ImportExecution plan={plan.data} compact />}
-      <details className="download-import-files">
-        <summary>Files &amp; naming</summary>
-        <p className="muted">
-          Paths below are relative to your library folder.
-        </p>
-        {plan.data?.document.plan.items.map((item) => (
-          <div className="download-import-file" key={item.group_id}>
-            <strong>{libraryRelativePath(item.folder)}</strong>
-            {(item.files || []).map((file) => (
-              <div key={file.source}>
-                <span className="muted">{file.source}</span>
-                <span>→ {libraryRelativePath(file.destination)}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-        {!plan.data &&
-          media.map((file) => (
-            <div className="download-import-file" key={file.path}>
-              {file.path}
-            </div>
-          ))}
-        {extras > 0 && (
+      {showFiles && (
+        <BookDialog title="Downloaded files" close={() => setShowFiles(false)}>
           <p className="muted">
-            Extra files stay in the download folder. They do not block an
-            otherwise valid book import.
+            Files stay in the download folder while a library copy is added.
           </p>
-        )}
-      </details>
+          <ul className="download-file-list">
+            {files.map((file) => (
+              <li key={file.path}>
+                <span>{file.path.split("/").pop()}</span>
+                <small>
+                  {file.medium
+                    ? file.state === "inspected"
+                      ? "Ready"
+                      : "Needs attention"
+                    : "Extra file"}
+                </small>
+              </li>
+            ))}
+          </ul>
+        </BookDialog>
+      )}
     </section>
   );
 }

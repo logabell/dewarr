@@ -38,17 +38,18 @@ export default function ImportReview() {
   const [source, setSource] = useState("");
   const [path, setPath] = useState("");
   const [complete, setComplete] = useState(false);
-  const [manualReview, setManualReview] = useState(false);
   const [offset, setOffset] = useState(0);
   const cache = useQueryClient();
   const attempt = useRef<{ payload: string; key: string } | null>(null);
   const roots = useQuery({
     queryKey: ["download-roots"],
+    enabled: !selectedId,
     queryFn: async () =>
       result(await api.GET("/api/organization/download-roots")),
   });
   const history = useQuery({
     queryKey: ["inspections", offset],
+    enabled: !selectedId,
     queryFn: async () =>
       result(
         await api.GET("/api/organization/inspections", {
@@ -122,120 +123,114 @@ export default function ImportReview() {
       <Notice error={selected.error} />
       {selectedId && selected.isPending && <Loading />}
       {selected.data?.download ? (
-        <>
-          <DownloadImportReview inspection={selected.data} />
-          {(!selected.data.plan_id ||
-            selected.data.download.state === "cancelled") && (
-            <details
-              className="import-review-advanced"
-              onToggle={(event) => setManualReview(event.currentTarget.open)}
-            >
-              <summary>Change book or file selection</summary>
-              {manualReview && (
-                <Review key={selected.data.id} inspection={selected.data} />
-              )}
-            </details>
-          )}
-        </>
+        <DownloadImportReview
+          key={selected.data.id}
+          inspection={selected.data}
+        />
       ) : selected.data ? (
         <Review key={selected.data.id} inspection={selected.data} />
       ) : null}
-      <details className="import-review-advanced" open={!selectedId}>
-        <summary>Import another download</summary>
-        <form
-          className="panel editor"
-          onSubmit={(event) => {
-            event.preventDefault();
-            create.mutate();
-          }}
-        >
-          <h2>Inspect a download</h2>
-          {!roots.data?.length && !roots.isPending && (
-            <p className="notice">
-              No download roots are configured. Configure read-only worker
-              mounts and BOOK_IMPORT_SOURCES before inspecting files.
-            </p>
-          )}
-          <label>
-            Download root
-            <select
-              value={source || roots.data?.[0] || ""}
-              onChange={(event) => setSource(event.target.value)}
-              disabled={create.isPending}
-            >
-              {!roots.data?.length && (
-                <option value="">No configured roots</option>
-              )}
-              {roots.data?.map((key) => (
-                <option value={key} key={key}>
-                  {key}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Download path
-            <input
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="Series pack folder or completed-book.epub"
-              maxLength={1024}
-              required
-              disabled={create.isPending}
-            />
-          </label>
-          <p className="muted">
-            Enter a completed file or folder relative to the selected root.
-          </p>
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={complete}
-              onChange={(event) => setComplete(event.target.checked)}
-              disabled={create.isPending}
-            />
-            The download has finished and its files are no longer changing
-          </label>
-          <Notice error={roots.error || create.error} />
-          <button
-            className="primary"
-            disabled={
-              !complete || !path || !roots.data?.length || create.isPending
-            }
+      {selectedId ? (
+        <Link className="import-review-back" to="/requests">
+          All requests
+        </Link>
+      ) : (
+        <section aria-label="Import another download">
+          <form
+            className="panel editor"
+            onSubmit={(event) => {
+              event.preventDefault();
+              create.mutate();
+            }}
           >
-            {create.isPending ? "Queuing…" : "Inspect files"}
-          </button>
-        </form>
-        <section className="panel editor" aria-label="Inspection history">
-          <h2>Recent inspections</h2>
-          <Notice error={history.error} />
-          {history.data?.map((row) => (
-            <div className="import-path" key={row.id}>
-              <button onClick={() => setParams({ inspection: row.id })}>
-                {row.relative_path} · {row.state}
+            <h2>Inspect a download</h2>
+            {!roots.data?.length && !roots.isPending && (
+              <p className="notice">
+                No download roots are configured. Configure read-only worker
+                mounts and BOOK_IMPORT_SOURCES before inspecting files.
+              </p>
+            )}
+            <label>
+              Download root
+              <select
+                value={source || roots.data?.[0] || ""}
+                onChange={(event) => setSource(event.target.value)}
+                disabled={create.isPending}
+              >
+                {!roots.data?.length && (
+                  <option value="">No configured roots</option>
+                )}
+                {roots.data?.map((key) => (
+                  <option value={key} key={key}>
+                    {key}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Download path
+              <input
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                placeholder="Series pack folder or completed-book.epub"
+                maxLength={1024}
+                required
+                disabled={create.isPending}
+              />
+            </label>
+            <p className="muted">
+              Enter a completed file or folder relative to the selected root.
+            </p>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={complete}
+                onChange={(event) => setComplete(event.target.checked)}
+                disabled={create.isPending}
+              />
+              The download has finished and its files are no longer changing
+            </label>
+            <Notice error={roots.error || create.error} />
+            <button
+              className="primary"
+              disabled={
+                !complete || !path || !roots.data?.length || create.isPending
+              }
+            >
+              {create.isPending ? "Queuing…" : "Inspect files"}
+            </button>
+          </form>
+          <section className="panel editor" aria-label="Inspection history">
+            <h2>Recent inspections</h2>
+            <Notice error={history.error} />
+            {history.data?.map((row) => (
+              <div className="import-path" key={row.id}>
+                <button onClick={() => setParams({ inspection: row.id })}>
+                  {row.relative_path} · {row.state}
+                </button>
+                <span className="muted">{row.message}</span>
+              </div>
+            ))}
+            {history.data?.length === 0 && (
+              <p className="muted">No inspections yet.</p>
+            )}
+            <div className="actions">
+              <button
+                disabled={offset === 0}
+                onClick={() => setOffset((value) => Math.max(0, value - 25))}
+              >
+                Previous inspections
               </button>
-              <span className="muted">{row.message}</span>
+              <button
+                disabled={(history.data?.length || 0) < 25}
+                onClick={() => setOffset((value) => value + 25)}
+              >
+                More inspections
+              </button>
             </div>
-          ))}
-          {history.data?.length === 0 && (
-            <p className="muted">No inspections yet.</p>
-          )}
-          <div className="actions">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset((value) => Math.max(0, value - 25))}
-            >
-              Previous inspections
-            </button>
-            <button
-              disabled={(history.data?.length || 0) < 25}
-              onClick={() => setOffset((value) => value + 25)}
-            >
-              More inspections
-            </button>
-          </div>
+          </section>
         </section>
-      </details>
+      )}
     </div>
   );
 }
@@ -337,8 +332,13 @@ function Review({ inspection }: { inspection: Inspection }) {
           },
         }),
       ),
-    onSuccess: (plan) =>
-      setParams({ inspection: inspection.id, plan: plan.id }),
+    onSuccess: (plan) => {
+      setParams({ inspection: inspection.id, plan: plan.id });
+      cache.setQueryData(["inspection", inspection.id], {
+        ...inspection,
+        plan_id: plan.id,
+      });
+    },
   });
   return (
     <section aria-label="Inspected download" className="library-access">

@@ -67,10 +67,12 @@ class DownloadContext(BaseModel):
     cover_url: str | None
     medium: str
     destination: str | None
+    destination_id: UUID | None = None
     mode: str | None
     state: str
     message: str
     can_retry: bool = False
+    file_conflicts: list[str] = Field(default_factory=list)
 
 
 class InspectionView(BaseModel):
@@ -241,6 +243,7 @@ async def inspection(inspection_id: UUID, admin: Admin, db: Database):
         cover_url=work.cover_url,
         medium=selection.frozen["requirements"]["medium"],
         destination=destination.backend_path if destination else None,
+        destination_id=destination.id if destination else None,
         mode=destination.mode if destination else None,
         state=state,
         message=message,
@@ -252,6 +255,26 @@ async def inspection(inspection_id: UUID, admin: Admin, db: Database):
             and not get_settings().recovery_mode
         ),
     )
+    if row.state == "ready" and row.snapshot and not plan:
+        from app.domain.book_sources import identity
+        from app.importing.grouping import current_grouping
+        from app.importing.linked_download import request_file_conflicts
+        from app.importing.match_evidence import group_evidence
+
+        _, grouping = await current_grouping(db, row)
+        catalog = await identity(db, work, selection.owner_id)
+        value.download.file_conflicts = sorted(
+            {
+                conflict
+                for group in grouping.groups
+                for conflict in request_file_conflicts(
+                    work,
+                    selection.frozen["release"],
+                    group_evidence(row.snapshot, group),
+                    series=catalog["series"],
+                )
+            }
+        )
     return value
 
 

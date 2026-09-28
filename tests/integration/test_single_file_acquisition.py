@@ -89,8 +89,11 @@ pytestmark = pytest.mark.integration
         "automatic-provider-settings",
         "automatic-unmatched",
         "automatic-linked-audio",
+        "automatic-numbered-audio",
+        "automatic-identified-missing-tags-audio",
         "automatic-subtitle-audio",
         "automatic-linked-ebook",
+        "automatic-identified-subtitle",
         "automatic-language-alias",
         "automatic-manifest",
         "automatic-disable",
@@ -121,8 +124,11 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
         "automatic-provider-retry",
         "automatic-unmatched",
         "automatic-linked-audio",
+        "automatic-numbered-audio",
+        "automatic-identified-missing-tags-audio",
         "automatic-subtitle-audio",
         "automatic-linked-ebook",
+        "automatic-identified-subtitle",
         "automatic-language-alias",
     }
     medium = (
@@ -132,11 +138,16 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             "automatic-audio",
             "automatic-provider-audio",
             "automatic-linked-audio",
+            "automatic-numbered-audio",
+            "automatic-identified-missing-tags-audio",
             "automatic-subtitle-audio",
         }
         else "ebook"
     )
     name = "selected.mp3" if medium == "audio" else "selected.epub"
+    numbered_audio = handoff == "automatic-numbered-audio"
+    if numbered_audio:
+        name = "recording/01.mp3"
     source = route["source"] / save_relative / name
     if medium == "audio":
         audio(
@@ -151,6 +162,15 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             },
         )
         seeded = await prepare_audio_route(client, database, route, old["work_id"], source)
+        if handoff == "automatic-identified-missing-tags-audio":
+            source.unlink()
+            audio(source, title="", author="", tags={"isbn": "9781234567897", "language": "en"})
+        if numbered_audio:
+            source.unlink()
+            for number in (1, 2):
+                audio(
+                    source.parent / f"{number:02}.mp3", title="", author="", narrator="", track=""
+                )
         if handoff == "automatic-subtitle-audio":
             async with database() as db, db.begin():
                 work = await db.get(Work, UUID(old["work_id"]))
@@ -176,7 +196,8 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             if handoff in {"automatic-linked-ebook", "automatic-language-alias"}
             else "en",
         )
-    epub(source.parent / "unrelated.epub", title="Not part of this torrent")
+    neighbor = source.parent.parent if numbered_audio else source.parent
+    epub(neighbor / "unrelated.epub", title="Not part of this torrent")
     original = source.read_bytes()
     pieces = b"".join(
         hashlib.sha1(original[pos : pos + 16384]).digest() for pos in range(0, len(original), 16384)
@@ -191,6 +212,25 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             }
         }
     )
+    if numbered_audio:
+        contents = {p.name: p.read_bytes() for p in sorted(source.parent.glob("*.mp3"))}
+        payload = b"".join(contents.values())
+        raw = lt.bencode(
+            {
+                b"info": {
+                    b"name": b"recording",
+                    b"files": [
+                        {b"length": len(data), b"path": [filename.encode()]}
+                        for filename, data in contents.items()
+                    ],
+                    b"piece length": 16384,
+                    b"pieces": b"".join(
+                        hashlib.sha1(payload[pos : pos + 16384]).digest()
+                        for pos in range(0, len(payload), 16384)
+                    ),
+                }
+            }
+        )
     descriptor = await inspect_torrent(raw)
     async with database() as db, db.begin():
         db.add(
@@ -255,7 +295,11 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             medium,
             **{
                 medium + "_library_id": route["library_id"],
-                **({"required_narrators": ["Jordan Lee"]} if medium == "audio" else {}),
+                **(
+                    {"required_narrators": ["Jordan Lee"]}
+                    if medium == "audio" and not numbered_audio
+                    else {}
+                ),
             },
         ),
     )
@@ -276,7 +320,15 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
     owner_client = client
     if automatic_mode:
         if medium == "ebook" and not provider_mode and handoff != "automatic-linked-ebook":
-            await edition(database, work_id=UUID(old["work_id"]))
+            catalog_title = (
+                "First Harbor: A Journey Through the History of Coastal Life"
+                if handoff == "automatic-identified-subtitle"
+                else "First Harbor"
+            )
+            await edition(database, work_id=UUID(old["work_id"]), title=catalog_title)
+            if handoff == "automatic-identified-subtitle":
+                async with database() as db, db.begin():
+                    (await db.get(Work, UUID(old["work_id"]))).title = catalog_title
         if handoff == "automatic-ambiguous":
             await edition(database, work_id=UUID(old["work_id"]))
         response = await review_account[0].put(
@@ -405,6 +457,15 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
                 assert not await db.scalar(select(ImportEntry.id))
             assert not await db.scalar(select(DownloadFulfillment.id))
         assert qbit.calls.count("submit") == 1 and not list(route["target"].rglob("*.epub"))
+        if handoff == "automatic-author-conflict":
+            context = await review_account[0].get(
+                f"/api/organization/inspections/{auto.inspection_id}"
+            )
+            assert context.status_code == 200, context.text
+            assert (
+                "The files name a different author" in context.json()["download"]["file_conflicts"]
+            )
+            assert context.json()["download"]["destination_id"] == route["destination"]["id"]
         return
     if handoff in success:
         async with database() as db:
@@ -418,6 +479,8 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
             if handoff in {
                 "automatic-unmatched",
                 "automatic-linked-audio",
+                "automatic-numbered-audio",
+                "automatic-identified-missing-tags-audio",
                 "automatic-subtitle-audio",
                 "automatic-linked-ebook",
             }:
@@ -454,9 +517,17 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
                 )
         assert qbit.calls.count("submit") == 1
         output = list(route["target"].rglob("*.mp3" if medium == "audio" else "*.epub"))
-        assert len(output) == 1 and output[0].stat().st_ino == source.stat().st_ino
-        assert output[0].read_bytes() == original == source.read_bytes()
-        assert (source.parent / "unrelated.epub").exists()
+        if numbered_audio:
+            assert len(output) == 2
+            assert {p.stat().st_ino for p in output} == {
+                p.stat().st_ino for p in source.parent.glob("*.mp3")
+            }
+            assert {p.name: p.read_bytes() for p in source.parent.glob("*.mp3")} == contents
+            assert [file["track"] for file in plan.document["groups"][0]["files"]] == [1, 2]
+        else:
+            assert len(output) == 1 and output[0].stat().st_ino == source.stat().st_ino
+            assert output[0].read_bytes() == original == source.read_bytes()
+        assert (neighbor / "unrelated.epub").exists()
         await automatic.run(auto.id)
         assert qbit.calls.count("submit") == 1
         activity = (await owner_client.get(f"/api/acquisition/downloads/{auto.attempt_id}")).json()

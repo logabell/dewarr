@@ -71,7 +71,9 @@ async def schedule_library_match(db, owner_id, integration_id, run_id):
 
 
 def evidence_hash(identity):
-    return hashlib.sha256(identity[1].encode()).hexdigest()
+    from app.domain.title_matching import TITLE_MATCH_VERSION
+
+    return hashlib.sha256(f"{TITLE_MATCH_VERSION}:{identity[1]}".encode()).hexdigest()
 
 
 async def candidates(db, integration_id, cursor=None):

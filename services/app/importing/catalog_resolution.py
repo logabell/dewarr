@@ -25,11 +25,12 @@ from app.db.session import session_factory
 from app.domain import download_reviews
 from app.domain.catalog_metadata import attach_source, preferences
 from app.domain.catalog_network import CatalogGateway
-from app.domain.catalog_titles import display_title, identity_authors, parse_title_labels
+from app.domain.catalog_titles import identity_authors, parse_title_labels
 from app.domain.hardcover_matching import MatchEvidence as BookEvidence
 from app.domain.hardcover_matching import compatible
 from app.domain.identity import normalized, work_key
 from app.domain.operations import transaction_lock
+from app.domain.title_matching import compatible_title
 from app.domain.work_graph import canonical_work, family_ids, graph_lock
 from app.importing.grouping import current_grouping
 from app.importing.match_evidence import MatchEvidence
@@ -141,8 +142,10 @@ async def schedule(db, row, matches):
     except HTTPException:
         return False
     facts = match.evidence
-    if {display_title(title) for title in facts.titles} != {display_title(work.title)} or (
-        facts.authors != [sorted(normalized(name) for name in work.authors)]
+    if (
+        not facts.titles
+        or not all(compatible_title(title, work.title) for title in facts.titles)
+        or (facts.authors != [sorted(normalized(name) for name in work.authors)])
     ):
         return False
     inspection = await db.get(DownloadInspection, row.inspection_id)

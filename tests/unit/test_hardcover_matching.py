@@ -17,6 +17,48 @@ def book(**values):
     )
 
 
+async def test_verified_isbn_accepts_minor_subtitle_variant_but_not_title_only():
+    catalog_title = (
+        "The Anxious Generation: How the Great Rewiring of Childhood "
+        "Is Causing an Epidemic of Mental Illness"
+    )
+    candidate = BookData(
+        provider="hardcover",
+        external_id="1178961",
+        title=catalog_title,
+        authors=["Jonathan Haidt"],
+        editions=[EditionData(external_id="7", identifiers={"isbn_13": "9780593655047"})],
+    )
+    evidence = MatchEvidence(
+        title=catalog_title.replace("Is Causing", "Caused"),
+        authors=candidate.authors,
+        identifiers=[("isbn", "9780593655047")],
+    )
+
+    async def call(operation, *args):
+        if operation == "identifier_search":
+            return (
+                SearchPage(provider="hardcover", items=[candidate], page=1, has_more=False),
+                False,
+                None,
+            )
+        assert operation == "fetch"
+        return candidate, False, None
+
+    assert (await lookup(evidence, call)).status == "matched"
+    assert not compatible(evidence, candidate)
+    assert not compatible(
+        evidence.model_copy(update={"authors": ["Other Writer"]}), candidate, identified=True
+    )
+    assert not compatible(
+        evidence.model_copy(
+            update={"title": catalog_title.replace("Mental Illness", "No Mental Illness")}
+        ),
+        candidate,
+        identified=True,
+    )
+
+
 @pytest.mark.parametrize(
     "title,authors,expected",
     [

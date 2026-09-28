@@ -14,6 +14,7 @@ from app.domain.catalog_titles import (
     identity_authors,
     parse_title_labels,
 )
+from app.domain.title_matching import compatible_title
 from app.importing.match_evidence import catalog_identifiers
 
 
@@ -52,14 +53,6 @@ def matching_title(value):
     # A single Goodreads series membership is not part of the book title.
     # Ranges/sets and unnumbered parentheses remain identity-bearing text.
     return SERIES_SUFFIX.sub("", value).strip()
-
-
-def title_parts(value):
-    # Only known edition labels are removed. Volume numbers, adaptations, and
-    # arbitrary subtitles are not silently erased.
-    value = display_title(matching_title(value))
-    parts = re.split(r":\s+", value, maxsplit=1)
-    return words(parts[0]), words(parts[1]) if len(parts) > 1 else ""
 
 
 # Different content: never the book itself, whatever either side's labels say.
@@ -141,13 +134,11 @@ def compatible(evidence, book, *, identified=False, series_title=False):
         title
     ) != display_title(book.title):
         return False
-    left, right = title_parts(title), title_parts(book.title)
-    # A missing subtitle colon is punctuation, not a different title.
-    complete_title_equal = words(display_title(matching_title(title))) == words(
-        display_title(matching_title(book.title))
-    )
-    if not complete_title_equal and (
-        left[0] != right[0] or (left[1] and right[1] and left[1] != right[1])
+    if not compatible_title(
+        matching_title(title),
+        matching_title(book.title),
+        identified=identified,
+        allow_extra_subtitle=True,
     ):
         return False
     if evidence.series and book.series and series_conflict(evidence.series, book.series):
@@ -231,7 +222,8 @@ async def lookup(evidence, call):
                     evidence, candidate, identified=True
                 ):
                     return MatchResult(
-                        reason="Identifiers conflict with the title or author; review the match."
+                        candidates=[candidate],
+                        reason="Identifiers conflict with the title or author; review the match.",
                     )
                 pending.append(candidate)
             for candidate, book in zip(pending, await resolve(pending), strict=True):
@@ -242,7 +234,8 @@ async def lookup(evidence, call):
                     continue
                 if not book or not compatible(evidence, book, identified=True):
                     return MatchResult(
-                        reason="Identifiers conflict with the title or author; review the match."
+                        candidates=[book] if book else [],
+                        reason="Identifiers conflict with the title or author; review the match.",
                     )
                 language = catalog_language(evidence.language)
                 matching_editions = [

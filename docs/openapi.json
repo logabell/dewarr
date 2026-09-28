@@ -23384,6 +23384,18 @@
             ],
             "title": "Destination"
           },
+          "destination_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Id"
+          },
           "mode": {
             "anyOf": [
               {
@@ -23407,6 +23419,13 @@
             "type": "boolean",
             "title": "Can Retry",
             "default": false
+          },
+          "file_conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "File Conflicts"
           }
         },
         "type": "object",
@@ -28941,7 +28960,7 @@
           "matcher_version": {
             "type": "integer",
             "title": "Matcher Version",
-            "default": 3
+            "default": 4
           }
         },
         "additionalProperties": false,

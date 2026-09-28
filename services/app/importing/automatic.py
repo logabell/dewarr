@@ -274,14 +274,27 @@ def content_reason(group, files, release):
         }:
             return "This audio file may be one part of a larger recording"
         return None
+    # A verified complete transfer can establish the track set even if the
+    # uploader omitted ID3 totals. Only one flat, gapless numbered sequence is
+    # accepted; conflicting tags and multi-disc folders still require review.
+    from app.importing.audio_order import numbered_sequence
+
+    numbered = numbered_sequence(file["path"] for file in selected)
     totals, tracks, discs = set(), [], set()
-    for file in selected:
+    for index, file in enumerate(selected):
         tags = (file.get("technical") or {}).get("tags", {})
-        track = re.fullmatch(r"([1-9]\d{0,3})/([1-9]\d{0,3})", str(tags.get("track", "")))
+        value = str(tags.get("track", ""))
+        track = re.fullmatch(r"([1-9]\d{0,3})/([1-9]\d{0,3})", value)
         if not track:
-            return "Multiple audio files need explicit track totals before automatic import"
-        tracks.append(int(track[1]))
-        totals.add(int(track[2]))
+            if not numbered or (value and (not value.isdigit() or int(value) != numbered[index])):
+                return "Audio files need a complete numbered sequence or matching track totals"
+            tracks.append(numbered[index])
+            totals.add(len(selected))
+        else:
+            if numbered and int(track[1]) != numbered[index]:
+                return "Audio track tags disagree with the file sequence"
+            tracks.append(int(track[1]))
+            totals.add(int(track[2]))
         discs.add(str(tags.get("disc", "1")))
     if (
         not discs <= {"1", "1/1"}
@@ -352,15 +365,12 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             and len(members) == 1
             and not continuation
             and not match.truncated
-            # Unknown file identifiers can define a local edition of the saved
-            # book. Existing identifier matches must retain conflict review.
-            and not any(item.identifier_match for item in match.candidates)
         ):
             from app.importing.linked_download import linked_version
             from app.importing.matching import candidate_evidence
 
             linked = await linked_version(
-                db, approver, selection, inspection, group, grouping_revision
+                db, approver, selection, inspection, group, grouping_revision, match=match
             )
             if linked:
                 work = await canonical_work(db, linked.work_id)

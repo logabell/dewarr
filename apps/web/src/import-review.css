@@ -1,5 +1,5 @@
 .import-review-page {
-  max-width: 1100px;
+  max-width: 900px;
   margin-inline: auto;
   padding-bottom: 48px;
 }
@@ -16,52 +16,32 @@
 .import-review-page .page-heading p {
   margin: 0;
 }
-.download-import {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
-  background: var(--surface);
+.import-review-page .editor {
+  padding: 24px;
 }
-.download-import-book {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 28px;
+.import-review-page .inline-form {
+  align-items: end;
+  gap: 12px;
 }
-.download-import-cover {
-  width: 66px;
-  height: 98px;
-  flex: 0 0 66px;
-  border-radius: 5px;
-  overflow: hidden;
-  background: var(--bg);
-  display: grid;
-  place-items: center;
-}
-.download-import-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.download-import-identity {
+.import-review-page .inline-form label {
   flex: 1;
-  min-width: 0;
 }
-.download-import-identity h2 {
-  font-size: 24px;
-  line-height: 1.25;
-  margin: 4px 0 6px;
+.import-review-page .import-path {
+  overflow-wrap: anywhere;
 }
-.download-import-identity p {
-  margin: 0;
+.import-review-advanced {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
 }
-.download-import-association {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  margin-top: 12px;
+.import-review-advanced > summary {
+  cursor: pointer;
   color: var(--muted);
+  font-weight: 500;
+  font-size: 13px;
+}
+.import-review-advanced[open] > summary {
+  margin-bottom: 24px;
 }
 .download-import-state {
   display: inline-flex;
@@ -82,73 +62,6 @@
 .download-import-state.is-complete {
   color: #84c7ac;
   background: #84c7ac12;
-}
-.download-import-steps {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  list-style: none;
-  margin: 0;
-  padding: 20px 28px;
-  border-block: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 50%, transparent);
-  gap: 12px;
-}
-.download-import-steps li {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.download-import-steps li > span:first-child {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.download-import-steps .is-complete {
-  color: #84c7ac;
-}
-.download-import-steps .is-complete > span:first-child {
-  background: #84c7ac12;
-  border-color: #84c7ac40;
-}
-.download-import-route {
-  display: grid;
-  grid-template-columns: 1fr 1.5fr 1fr;
-  gap: 24px;
-  padding: 24px 28px;
-}
-.download-import-route > div {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  font-size: 12px;
-}
-.download-import-route strong {
-  font-weight: 500;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.download-import-next,
-.import-execution-compact {
-  margin: 0 28px 24px;
-}
-.download-import-next h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-}
-.download-import-next p {
-  font-size: 14px;
-  margin: 8px 0 16px;
-}
-.download-import-next.is-held {
-  border-left: 3px solid #e4ba73;
-  padding-left: 18px;
 }
 .import-execution-compact .library-access {
   padding: 0;
@@ -186,90 +99,211 @@
 .import-result-options > button {
   margin-top: 12px;
 }
-.download-import-files {
-  border-top: 1px solid var(--line);
-  padding: 18px 28px;
+/* Linked downloads keep their book identity; only the next action needs review. */
+.download-review {
+  margin-block: 24px 28px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.download-review-book {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 32px;
+}
+.download-review-cover {
+  width: 108px;
+  flex: 0 0 108px;
+}
+.download-review-cover .book-cover {
+  width: 100%;
+}
+.download-review-identity {
+  min-width: 0;
+}
+.download-review-identity h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(25px, 3vw, 34px);
+  line-height: 1.2;
+  margin: 8px 0 12px;
+}
+.download-review-subtitle {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 8px 0;
+}
+.download-review-author {
+  margin: 10px 0;
+  color: var(--muted);
+}
+.download-review-book-link {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--accent);
   font-size: 13px;
 }
-.download-import-files summary,
-.import-review-advanced > summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-weight: 500;
-}
-.download-import-files[open] summary {
-  margin-bottom: 20px;
-}
-.download-import-file {
-  margin: 16px 0;
-  overflow-wrap: anywhere;
-}
-.download-import-file > div {
+.download-review-status {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 16px 32px;
+  border-block: 1px solid var(--line);
+  font-size: 13px;
+}
+.download-view-files {
+  margin-left: auto;
+}
+.download-attention {
+  padding: 28px 32px 32px;
+}
+.download-attention h3 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.download-attention p {
+  max-width: 60ch;
+  margin: 0 0 20px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.download-attention .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  font-size: 14px;
+}
+.download-attention .actions .button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--accent);
+  padding: 8px 16px;
+  border-radius: 24px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.download-complete-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.download-complete-check input {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.download-destination {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+.download-file-list {
+  padding: 0;
+  margin: 24px 0 0;
+  list-style: none;
+}
+.download-file-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.download-file-list span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.download-file-list small {
+  white-space: nowrap;
+  color: var(--muted);
+}
+.download-file-title {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-left: 2px solid var(--accent);
+}
+.download-file-title span {
   font-size: 12px;
 }
-.import-review-advanced {
-  margin-top: 24px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-}
-.import-review-advanced > summary {
-  font-size: 13px;
-}
-.import-review-advanced[open] > summary {
-  margin-bottom: 24px;
-}
-.import-review-page .editor {
-  padding: 24px;
-}
-.import-review-page .inline-form {
-  align-items: end;
-  gap: 12px;
-}
-.import-review-page .inline-form label {
-  flex: 1;
-}
-.import-review-page .import-path {
+.download-file-title strong {
+  color: var(--text);
   overflow-wrap: anywhere;
 }
-@media (max-width: 700px) {
-  .download-import-book {
-    padding: 20px;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-  .download-import-identity h2 {
-    font-size: 20px;
-  }
-  .download-import-state {
-    margin-left: 80px;
-  }
-  .download-import-steps {
-    grid-template-columns: 1fr 1fr;
-    padding: 16px 20px;
-    gap: 16px;
-  }
-  .download-import-route {
-    grid-template-columns: 1fr;
-    padding: 20px;
-    gap: 16px;
-  }
-  .download-import-next,
-  .import-execution-compact {
-    margin: 0 20px 20px;
-  }
-  .download-import-files {
-    padding: 18px 20px;
-  }
+.download-review .import-execution-compact {
+  margin: 0;
+  padding: 28px 32px;
 }
-.download-import .spin {
+.download-review .import-result {
+  padding: 0;
+  border: 0;
+  background: none;
+  margin: 0;
+}
+.download-review .import-result-options {
+  margin-top: 20px;
+}
+.download-review .spin {
   animation: loading-spin 1s linear infinite;
 }
+@media (max-width: 700px) {
+  .download-review-book {
+    align-items: flex-start;
+    padding: 24px 20px;
+    gap: 18px;
+  }
+  .download-review-cover {
+    width: 76px;
+    flex-basis: 76px;
+  }
+  .download-review-identity h2 {
+    font-size: 25px;
+  }
+  .download-review-subtitle {
+    font-size: 12px;
+  }
+  .download-review-status {
+    padding: 16px 20px;
+  }
+  .download-attention,
+  .download-review .import-execution-compact {
+    padding: 24px 20px;
+  }
+  .download-attention .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .download-attention .actions > * {
+    text-align: center;
+    justify-content: center;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .download-import .spin {
+  .download-review .spin {
     animation: none;
   }
+}
+
+.download-review-cover .cover-formats,
+.download-review-cover .type-cover small {
+  display: none;
+}
+.download-review-cover .type-cover {
+  padding: 12px;
+}
+.download-review-cover .type-cover span {
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
