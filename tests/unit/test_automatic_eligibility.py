@@ -124,6 +124,49 @@ def test_indexer_ebook_labels_preserve_complete_author_title_evidence(title, aut
 
 
 @pytest.mark.parametrize(
+    ("title", "allowed"),
+    [
+        (
+            "Robbins, Mel - The Let Them Theory- A Life Changing Tool That Millions "
+            "of People Cant Stop Talking About",
+            True,
+        ),
+        ("Mel Robbins - The Let Them Theory: A Life Changing Tool [EPUB]", True),
+        ("Mel Robbins - The Let Them Theory — A Life Changing Tool", True),
+        ("Other Writer - The Let Them Theory: A Life Changing Tool", False),
+        ("Robbins Mel - The Let Them Theory: A Life Changing Tool", False),
+        ("Mel Robbins - The Let Them Theory Workbook: A Life Changing Tool", False),
+        ("Mel Robbins - The Let Them Theory- A Summary", False),
+        ("Mel Robbins - The Let Them Theory: Workbook", False),
+        ("Mel Robbins - The Let Them Theory: Volume 2", False),
+        ("Mel Robbins - The Let Them Theory and Another Book", False),
+        ("Mel Robbins - The Let Them Theory: A Life Changing Tool.part01.rar", False),
+    ],
+)
+def test_indexer_descriptive_subtitle_with_exact_author(title, allowed):
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    value = ProwlarrRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        medium="ebook",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[7020],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+    reasons = eligibility(
+        value,
+        {"title": "The Let Them Theory", "authors": ["Mel Robbins"]},
+        {**RULE, "medium": "ebook", "language": None},
+        ReleasePreferences(),
+    )
+    assert (not reasons) is allowed, reasons
+
+
+@pytest.mark.parametrize(
     ("paths", "allowed"),
     [
         (["Harbor.m4b"], True),

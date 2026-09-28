@@ -420,7 +420,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await expect(page).toHaveURL(/tab=sources/);
   await expect(
     page.getByText(/Adding qBittorrent does not add torrent sources/),
-  ).toBeVisible();
+  ).toHaveCount(0);
   const table = page.getByRole("table");
   await expect(table.getByRole("row")).toHaveCount(3);
   for (const name of [

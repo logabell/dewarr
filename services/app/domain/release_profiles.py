@@ -382,9 +382,9 @@ def identifier_values(value):
 def indexer_title_authors(release, work):
     """An exact author/title pair can supply the missing structured indexer fields.
 
-    Allow explicit media labels and trailing publication/release labels after
-    the complete pair. Extra titles, archive/repair filenames, partial releases
-    and conflicting structured authors still require review.
+    Allow explicit media labels, descriptive subtitles and trailing publication/
+    release labels. Extra titles, archive/repair filenames, partial releases and
+    conflicting structured authors still require review.
     """
     if release.source not in {"prowlarr", "audiobookbay"}:
         return []
@@ -427,6 +427,15 @@ def indexer_title_authors(release, work):
                 # is never stripped away. Unknown suffixes still need review.
                 if re.fullmatch(rf"{re.escape(pair)}(?: (?:19|20)\d{{2}})?(?: retail)?", actual):
                     matched.add(authors[author])
+    if not matched and not re.search(r"\.(?:rar|zip|7z|par2)$", title, re.I):
+        # Indexers often use "Author - Title- Subtitle" when the catalog has
+        # only the short title. Keep the author exact and use the shared subtitle
+        # rules, which preserve distinct works such as summaries and volumes.
+        parts = re.split(r"\s+[-–—]\s*|[-–—]\s+", title, maxsplit=1)
+        if len(parts) == 2 and (credit := normalized(parts[0])) in authors:
+            source_title = re.sub(r"\s+[-–—]\s*|[-–—]\s+", ": ", parts[1])
+            if compatible_title(source_title, work["title"], allow_extra_subtitle=True):
+                matched.add(authors[credit])
     # AudiobookBay names, including Prowlarr's copy of them, are
     # "Title - Author, Narrator". The catalog author is the first credit.
     if not matched:
