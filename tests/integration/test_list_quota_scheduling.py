@@ -1,11 +1,8 @@
 # ruff: noqa: F401, F811
-"""A real followed-list worker persists and revisits quota holds across windows."""
-
-from datetime import timedelta
-from uuid import UUID
+"""A followed-list worker ignores retired quota policies and keeps requests stable."""
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select
 
 from app.db.models import (
     AcquisitionTarget,
@@ -32,7 +29,7 @@ from tests.integration.test_list_policies import (
 pytestmark = pytest.mark.integration
 
 
-async def test_list_of_twenty_admits_five_then_resumes_remaining_fifteen(
+async def test_list_of_twenty_ignores_saved_quota_and_reuses_existing_requests(
     client, admin, database, catalog, policy_fixture
 ):
     from app.security import hash_password
@@ -72,21 +69,19 @@ async def test_list_of_twenty_admits_five_then_resumes_remaining_fifteen(
     async with database() as db:
         books = list(await db.scalars(select(ListAcquisitionBook)))
         assert len(books) == 20
-        assert sum(book.state == "searching" for book in books) == 5
-        assert sum(book.message.startswith("Waiting for quota") for book in books) == 15
+        assert all(book.state == "searching" for book in books)
         assert all(book.next_check_at is not None for book in books)
-    for waiting in (10, 5, 0):
-        async with database() as db, db.begin():
-            await db.execute(
-                update(RequestQuotaCharge).values(
-                    admitted_at=RequestQuotaCharge.admitted_at - timedelta(days=8)
-                )
+        intents = {book.work_id: book.intent_id for book in books}
+        assert all(intents.values())
+    await tick(database, policy, worker=False, force_books=True)
+    async with database() as db:
+        books = list(await db.scalars(select(ListAcquisitionBook)))
+        assert {book.work_id: book.intent_id for book in books} == intents
+        targets = list(
+            await db.scalars(
+                select(AcquisitionTarget).where(AcquisitionTarget.intent_id.in_(intents.values()))
             )
-        await tick(database, policy, worker=False, force_books=True)
-        async with database() as db:
-            targets = list(
-                await db.scalars(
-                    select(AcquisitionTarget).where(AcquisitionTarget.quota_waiting.is_(True))
-                )
-            )
-            assert len(targets) == waiting
+        )
+        assert len(targets) == 20
+        assert not any(target.quota_waiting for target in targets)
+        assert await db.scalar(select(func.count()).select_from(RequestQuotaCharge)) == 0
