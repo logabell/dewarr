@@ -1,3 +1,4 @@
+import { AuthorFollows } from "../components/FollowCatalog";
 import BookPagination from "../components/BookPagination";
 import { browseCache, refreshPending } from "../queryPolicies";
 import DetailTabs from "../components/DetailTabs";
@@ -215,7 +216,6 @@ function BookPage({
             <p className="notice">{preview.data.warning}</p>
           )}
           <BookHero
-            canFollowAuthors={canEdit}
             providerBook={{ provider, external_id: externalId }}
             title={book.title}
             authors={book.authors || []}
@@ -317,6 +317,9 @@ function BookPage({
                   >
                     Add to list
                   </button>
+                  {!!community.data?.authors?.length && (
+                    <AuthorFollows authors={community.data.authors} />
+                  )}
                   {!unreleased && (
                     <button
                       disabled={save.isPending}

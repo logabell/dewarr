@@ -1,9 +1,8 @@
-import { useState, type ReactNode, type Ref } from "react";
+import type { ReactNode, Ref } from "react";
 import { Link } from "react-router-dom";
 import type { Work } from "../api/client";
 import type { components } from "../api/schema";
 import BookCover from "./BookCover";
-import { AuthorFollows } from "./FollowCatalog";
 import { languageName } from "./LanguageSelect";
 import { HardcoverRating } from "./BookReaderDetails";
 
@@ -45,7 +44,6 @@ export function BookHero({
   editions,
   editionsMore,
   headingRef,
-  canFollowAuthors = false,
   children,
 }: {
   providerBook?: { provider: string; external_id: string };
@@ -62,10 +60,8 @@ export function BookHero({
   editions?: number;
   editionsMore?: boolean;
   headingRef?: Ref<HTMLHeadingElement>;
-  canFollowAuthors?: boolean;
   children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const longTitle = title.length > 90;
   const colon = title.indexOf(": ");
   const splitTitle = longTitle && colon > 5 && colon < 90;
@@ -91,26 +87,13 @@ export function BookHero({
         <h1
           ref={headingRef}
           tabIndex={-1}
-          className={`${longTitle && !splitTitle ? "reader-title-long" : ""} ${expanded ? "is-expanded" : ""}`}
+          className={longTitle && !splitTitle ? "reader-title-long" : undefined}
           title={title}
           aria-label={title}
         >
           {headline}
         </h1>
-        {subtitle && (
-          <p className={`reader-subtitle ${expanded ? "is-expanded" : ""}`}>
-            {subtitle}
-          </p>
-        )}
-        {longTitle && (
-          <button
-            className="reader-title-toggle"
-            aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? "Show less" : "Show full title"}
-          </button>
-        )}
+        {subtitle && <p className="reader-subtitle">{subtitle}</p>}
         <p className="author-line">
           {authors.length
             ? authors.map((name, index) => (
@@ -133,9 +116,6 @@ export function BookHero({
               ))
             : "Author unknown"}
         </p>
-        {canFollowAuthors && !!details?.authors?.length && (
-          <AuthorFollows authors={details.authors} />
-        )}
         {work?.availability.audio && (
           <p className="narrator-line">
             {work.availability.primary_audio_narrators?.length

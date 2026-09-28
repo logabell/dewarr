@@ -1,3 +1,4 @@
+import { AuthorFollows } from "../components/FollowCatalog";
 import BookSourceIcon from "../components/BookSourceIcon";
 import QuickAdd from "../components/QuickAdd";
 import BookGrouping from "../components/BookGrouping";
@@ -214,7 +215,6 @@ function BookDetailContent({
         </Link>
       </div>
       <BookHero
-        canFollowAuthors={canEdit}
         title={work.title}
         authors={work.authors}
         work={work}
@@ -319,6 +319,9 @@ function BookDetailContent({
             >
               Add to reading list
             </button>
+          )}
+          {canEdit && !!community.data?.authors?.length && (
+            <AuthorFollows authors={community.data.authors} />
           )}
           <div className="reader-outbound">
             {hardcover && (

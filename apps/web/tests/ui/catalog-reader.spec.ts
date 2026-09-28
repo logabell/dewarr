@@ -214,13 +214,16 @@ for (const unlinked of [false, true]) {
     );
     await expect(page.locator(".reader-subtitle")).toHaveCSS(
       "-webkit-line-clamp",
-      "2",
+      "none",
     );
-    await page.getByRole("button", { name: "Show full title" }).click();
     await expect(
-      page.getByRole("button", { name: "Show less" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    await page.getByRole("button", { name: "Show less" }).click();
+      page.getByRole("button", { name: "Show full title" }),
+    ).toHaveCount(0);
+    await expect(
+      page
+        .locator(".reader-actions")
+        .getByRole("button", { name: "Follow author", exact: true }),
+    ).toBeVisible();
     await expect(page.locator(".reader-hero")).toContainText("4.35");
     await expect(page.locator(".reader-facts")).toContainText("352");
     await expect(page.locator(".reader-facts")).toContainText("May 21, 2024");

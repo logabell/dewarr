@@ -137,7 +137,7 @@ export function AuthorFollows({
     );
   return (
     <details className="book-author-follows">
-      <summary>Follow authors</summary>
+      <summary className="reader-action-link">Follow authors</summary>
       <ul>
         {authors.map((author) => (
           <li key={author.external_id}>

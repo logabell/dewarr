@@ -3275,21 +3275,7 @@ img.detail-cover {
 .reader-hero h1.reader-title-long {
   font-size: clamp(25px, 2.6vw, 38px);
   line-height: 1.2;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-}
-.reader-hero h1.reader-title-long.is-expanded {
-  display: block;
-}
-.reader-title-toggle {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  margin: -6px 0 12px;
+  overflow-wrap: anywhere;
 }
 .catalog-workspace .reader-hero h1 {
   font-size: clamp(30px, 3.2vw, 44px);
@@ -3588,9 +3574,6 @@ img.detail-cover {
   .catalog-workspace .reader-hero .reader-series {
     grid-row: 4;
   }
-  .catalog-workspace .reader-title-toggle {
-    justify-self: start;
-  }
   .catalog-workspace .reader-hero .reader-actions {
     gap: 8px;
   }
@@ -3600,18 +3583,7 @@ img.detail-cover {
   line-height: 1.5;
   color: var(--muted);
   margin: 0 0 12px;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.reader-subtitle.is-expanded {
-  display: block;
-}
-.catalog-workspace .reader-title-toggle {
-  background: none;
-  font-weight: 400;
-  border-radius: 0;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 720px) {
   .catalog-workspace .reader-subtitle {

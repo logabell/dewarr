@@ -371,6 +371,9 @@ button.follow-count[aria-expanded="true"] {
   max-width: 540px;
   margin: 12px 0;
 }
+.reader-actions > .book-author-follows {
+  margin: 0;
+}
 .book-author-follows summary {
   cursor: pointer;
   color: var(--accent);

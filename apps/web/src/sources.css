@@ -723,7 +723,10 @@
 }
 .reader-page .reader-hero .reader-actions > button,
 .reader-page .reader-hero .reader-actions > .reader-action-link,
-.reader-page .reader-hero .reader-actions > .source-search-action {
+.reader-page .reader-hero .reader-actions > .source-search-action,
+.reader-page .reader-hero .reader-actions > .catalog-follow-control > button,
+.reader-page .reader-hero .reader-actions > .catalog-follow-control > a,
+.reader-page .reader-hero .reader-actions > .book-author-follows > summary {
   flex: 0 0 auto;
   height: 40px;
   min-height: 40px;

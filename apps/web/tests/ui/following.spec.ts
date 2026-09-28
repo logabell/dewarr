@@ -475,7 +475,10 @@ for (const path of ["/books/work-one", "/discover/books/hardcover/42"]) {
     page.on("pageerror", (error) => errors.push(error.message));
     const state = await fixture(page);
     await page.goto(path);
-    await page.getByText("Follow authors", { exact: true }).click();
+    await page
+      .locator(".reader-actions")
+      .getByText("Follow authors", { exact: true })
+      .click();
     const first = page.locator(".book-author-follows li").filter({
       has: page.getByRole("link", { name: "Ursula K. Le Guin", exact: true }),
     });
