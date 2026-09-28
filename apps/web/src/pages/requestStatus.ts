@@ -34,18 +34,16 @@ export function statusLabel(request: StatusRequest, target: StatusTarget) {
     target.message === "Waiting for approval"
   )
     return "Pending";
-  if (
-    target.state !== "satisfied" &&
-    (target.needs_review || target.import_state === "held")
-  )
+  if (target.state === "satisfied") return "In library";
+  if (target.needs_review || target.import_state === "held")
     return "Needs review";
+  if (["uncertain", "held"].includes(target.attempt_state || ""))
+    return "Download needs attention";
   if (target.attempt_state && liveDownloadStates.has(target.attempt_state))
     return "Downloading";
   if (target.state === "awaiting-inventory") return "Check inventory";
   if (target.state === "paused") return "Paused";
-  if (target.attempt_state === "complete" && target.state !== "satisfied")
-    return "Importing";
-  if (target.state === "satisfied") return "In library";
+  if (target.attempt_state === "complete") return "Importing";
   if (
     target.next_action === "downloads" &&
     target.attempt_state !== "cancelled"

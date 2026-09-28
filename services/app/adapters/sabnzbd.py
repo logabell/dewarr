@@ -76,11 +76,10 @@ def nzo_id(value):
 
 
 def associated_name(row):
-    nzb_name = row.get("nzb_name")
-    if isinstance(nzb_name, str) and nzb_name:
-        return nzb_name
-    filename = row.get("filename")
-    return filename if isinstance(filename, str) else ""
+    # Queue uses filename; history uses name for the submitted job name.
+    # History's nzb_name is the original upload filename (e.g. book.nzb).
+    name = row.get("name", row.get("filename"))
+    return name if isinstance(name, str) else ""
 
 
 def job_names(row):
@@ -128,6 +127,8 @@ def parse_job(row, *, completed):
         if not isinstance(status, str) or len(status) > 40:
             raise ValueError("Invalid status")
         failed = status.lower() in {"failed", "aborted"}
+        # History also contains jobs still repairing, extracting or moving.
+        completed = completed and status.lower() == "completed"
         storage = row.get("storage") or ""
         if completed and not failed:
             path = absolute_path(storage)

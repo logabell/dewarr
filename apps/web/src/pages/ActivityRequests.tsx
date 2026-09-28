@@ -60,7 +60,8 @@ function mediumLabel(slot: string) {
 }
 
 function chipState(label: string) {
-  if (label === "Needs review") return "paused";
+  if (label === "Needs review" || label === "Download needs attention")
+    return "paused";
   if (label === "Download not started") return "failed";
   if (label === "Preparing download") return "downloading";
   if (label === "In library") return "satisfied";
@@ -597,6 +598,7 @@ function RequestCard({
                 ) : label === "In library" ? (
                   <CircleCheck size={14} aria-hidden />
                 ) : label === "Needs review" ||
+                  label === "Download needs attention" ||
                   label === "Download not started" ? (
                   <CircleAlert size={14} aria-hidden />
                 ) : null}

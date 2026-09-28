@@ -57,6 +57,7 @@ test("requests show transfer telemetry, review actions and counts in compact row
     ],
   });
   let progress = 0.42;
+  let attemptState = "downloading";
   await page.route("**/api/requests/counts", (route) =>
     route.fulfill({
       json: { pending: 1, downloading: 1, review: 1, active: 3 },
@@ -66,8 +67,10 @@ test("requests show transfer telemetry, review actions and counts in compact row
     const items = [
       request("download", "Project Hail Mary", {
         attempt_id: "transfer",
-        attempt_state: "downloading",
-        progress,
+        attempt_state: attemptState,
+        attempt_message:
+          "Submission is not yet visible; only checking for the existing transfer",
+        progress: attemptState === "uncertain" ? null : progress,
         download_speed: 2516582,
         eta_seconds: 185,
         can_recheck: true,
@@ -177,6 +180,25 @@ test("requests show transfer telemetry, review actions and counts in compact row
   );
   progress = 0.67;
   await expect(downloading).toContainText("67%", { timeout: 10000 });
+  attemptState = "uncertain";
+  await expect(downloading).toContainText("Download needs attention", {
+    timeout: 10000,
+  });
+  await expect(downloading).not.toContainText("Connecting");
+  await expect(downloading).not.toContainText("2.4 MiB/s");
+  await downloading
+    .getByRole("button", {
+      name: "Download needs attention: Project Hail Mary audiobook request details",
+    })
+    .click();
+  await expect(downloading).toContainText("Submission is not yet visible");
+  await downloading
+    .getByRole("button", {
+      name: "Download needs attention: Project Hail Mary audiobook request details",
+    })
+    .click();
+  attemptState = "downloading";
+  await expect(downloading).toContainText("Downloading", { timeout: 10000 });
   await page.screenshot({
     path: testInfo.outputPath("request-ledger-desktop.png"),
     fullPage: true,

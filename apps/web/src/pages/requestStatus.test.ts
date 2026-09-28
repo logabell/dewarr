@@ -29,6 +29,27 @@ test("an active transfer stays Downloading", () => {
   );
 });
 
+test("uncertain and held transfers need attention rather than claiming to download", () => {
+  for (const attempt_state of ["uncertain", "held"]) {
+    assert.equal(
+      statusLabel(active, {
+        state: "wanted",
+        attempt_state,
+        next_action: "downloads",
+      }),
+      "Download needs attention",
+    );
+    assert.equal(
+      statusLabel(active, {
+        state: "satisfied",
+        attempt_state,
+        next_action: "book",
+      }),
+      "In library",
+    );
+  }
+});
+
 test("a committed selection with no transfer yet is Downloading", () => {
   assert.equal(
     statusLabel(active, {

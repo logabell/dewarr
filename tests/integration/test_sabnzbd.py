@@ -7,7 +7,7 @@ import pytest
 
 from app.adapters.contracts import SubmissionReceipt
 from app.adapters.prowlarr import ProwlarrRelease
-from app.adapters.sabnzbd import SabClient, SabState
+from app.adapters.sabnzbd import SabClient
 from app.config import get_settings
 from app.db.models import DownloadAttempt, DownloadInspection, Integration, Operation, SourceResult
 from app.domain import automatic_selection
@@ -122,6 +122,7 @@ class Grab:
         self.tag = None
         self.category = None
         self.complete = False
+        self.visible = True
 
     async def __aenter__(self):
         return self
@@ -134,30 +135,29 @@ class Grab:
 
     async def find(self, **kwargs):
         self.calls.append("find")
-        if not self.tag:
-            return []
-        if self.complete:
-            return [
-                SabState(
-                    external_id="SABnzbd_nzo_test",
-                    state="Completed",
-                    completed=True,
-                    save_path="/downloads/Finished Book",
-                    category=self.category,
-                    names={self.tag},
-                    reported_complete=True,
-                )
-            ]
-        return [
-            SabState(
-                external_id="SABnzbd_nzo_test",
-                state="Downloading",
-                completed=False,
-                save_path="/pending",
-                category=self.category,
-                names={self.tag},
-            )
-        ]
+
+        def handler(request):
+            mode = parse_qs(request.content.decode())["mode"][0]
+            if mode == "version":
+                return httpx.Response(200, json={"version": "5.1.3"})
+            rows = []
+            if self.tag and self.visible and self.complete == (mode == "history"):
+                rows = [
+                    {
+                        "nzo_id": "SABnzbd_nzo_test",
+                        "name" if self.complete else "filename": self.tag.replace(":", "_"),
+                        "nzb_name": "book.nzb",
+                        "category": self.category,
+                        "status": "Completed" if self.complete else "Downloading",
+                        "storage": "/downloads/Finished Book" if self.complete else "",
+                    }
+                ]
+            return httpx.Response(200, json={mode: {"slots": rows}})
+
+        async with SabClient(
+            "http://sab.test", "private-sab-key", transport=httpx.MockTransport(handler)
+        ) as client:
+            return await client.find(**kwargs)
 
     async def submit(self, content, *, attempt_tag, save_path, category):
         self.calls.append("submit")
@@ -246,6 +246,7 @@ async def test_usenet_grab_is_sent_to_sabnzbd_once(
         downloader.encrypted_secrets = encrypt_secrets({"api_key": "private-sab-key"})
     monkeypatch.setattr(get_settings(), "download_dispatch_enabled", True)
     grab = Grab()
+    grab.visible = False
     monkeypatch.setattr(downloads, "SabClient", lambda *args, **kwargs: grab)
     prepared = await prepare(client, selection_route)
     assert prepared.status_code == 201, prepared.text
@@ -254,7 +255,8 @@ async def test_usenet_grab_is_sent_to_sabnzbd_once(
     await downloads.run(UUID(saved["id"]))
     assert grab.calls.count("submit") == 1
     async with database() as db:
-        assert (await db.get(DownloadAttempt, UUID(saved["id"]))).state == "downloading"
+        assert (await db.get(DownloadAttempt, UUID(saved["id"]))).state == "uncertain"
+    grab.visible = True
     grab.complete = True
     await downloads.run(UUID(saved["id"]))
     assert grab.calls.count("submit") == 1

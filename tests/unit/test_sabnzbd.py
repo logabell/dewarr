@@ -24,8 +24,8 @@ def form_value(request, name):
 def completed(name="book-search_attempt"):
     return {
         "nzo_id": "SABnzbd_nzo_finished",
-        "nzb_name": name,
-        "name": "Finished Book",
+        "nzb_name": "book.nzb",
+        "name": name,
         "category": "books",
         "status": "Completed",
         "storage": "/downloads/books/Finished Book",
@@ -78,7 +78,7 @@ def transport(request):
             # SAB's search matches names, not the nzo_id. Status needs nzo_ids.
             search = parse_qs(request.content.decode()).get("search", [""])[0]
             identifier = parse_qs(request.content.decode()).get("nzo_ids", [row["nzo_id"]])[0]
-            matches = search in row["nzb_name"] and identifier == row["nzo_id"]
+            matches = search in row["name"] and identifier == row["nzo_id"]
             return httpx.Response(200, json={"history": {"slots": [row] if matches else []}})
         raise AssertionError(mode)
 
@@ -430,7 +430,27 @@ async def test_find_does_not_associate_a_sanitized_name_prefix_collision():
 def test_name_decoding_does_not_expand_the_attempt_namespace(name):
     from app.adapters.sabnzbd import job_names
 
-    assert job_names({"nzb_name": name}) == {name}
+    assert job_names({"name": name, "nzb_name": "book.nzb"}) == {name}
+
+
+def test_original_upload_name_is_not_job_association():
+    from app.adapters.sabnzbd import job_names
+
+    assert job_names({"name": "Another job", "nzb_name": "book-search_attempt.nzb"}) == {
+        "Another job"
+    }
+
+
+@pytest.mark.parametrize("status", ["Queued", "Repairing", "Extracting", "Moving", "Running"])
+def test_history_postprocessing_is_not_download_completion(status):
+    from app.adapters.sabnzbd import parse_job
+
+    row = {**completed(), "status": status, "storage": ""}
+    state = parse_job(row, completed=True)
+    assert not state.completed
+    assert not state.reported_complete
+    assert not state.failed
+    assert state.save_path == "/pending"
 
 
 def test_verify_requires_one_named_job_inside_the_download_root():
