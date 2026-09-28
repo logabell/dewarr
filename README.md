@@ -188,6 +188,12 @@ docker compose up -d
 
 Back up `config` and PostgreSQL first. Dewarr applies database migrations automatically. [Backup instructions](docs/DOCKER.md#backups).
 
+## Contributors
+
+Thanks to [@Porthorion](https://github.com/Porthorion) for contributing AudiobookBay fixes through [#42](https://github.com/logabell/dewarr/pull/42), [#43](https://github.com/logabell/dewarr/pull/43), and [#44](https://github.com/logabell/dewarr/pull/44): retrying capitalized searches, matching series-numbered releases, and linking completed downloads to their catalog books. Their changes were adapted with additional identity safeguards in [16879ba](https://github.com/logabell/dewarr/commit/16879bac26137d6e9548ecefd0532a0d544c2dc2) and shipped in [v0.3.5](https://github.com/logabell/dewarr/releases/tag/v0.3.5).
+
+See also [all commit contributors](https://github.com/logabell/dewarr/graphs/contributors) and the contributor acknowledgments in our [release notes](https://github.com/logabell/dewarr/releases).
+
 ## License
 
 [MIT](LICENSE). Third-party libraries and assets retain their own licenses; see [notices](docs/notices/).
