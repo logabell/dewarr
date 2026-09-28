@@ -155,7 +155,7 @@ async def test_empty_folder_can_qualify_before_any_plan_or_download(
     checked = await current(client)
     assert checked["publication_available"]
     assert checked["probe"]["hardlink"] is (filesystem != "read-only")
-    assert checked["probe"]["backend"]["root_mapping"]
+    assert checked["probe"]["backend"]["configuration_validated"]
     if filesystem == "read-only":
         assert checked["mode"] == "copy" and checked["probe"]["copy"]
         assert checked["probe"]["source_readable"] and not checked["probe"]["source_writable"]
@@ -216,7 +216,7 @@ async def test_late_settings_change_discards_setup_result(
     if when == "before":
         await change()
     else:
-        empty_route["backend"].before_exists = change
+        empty_route["backend"].before_library = change
     await get_queue().run_worker_async(wait=False, concurrency=1)
     assert not (await current(client))["publication_available"]
     async with database() as db:

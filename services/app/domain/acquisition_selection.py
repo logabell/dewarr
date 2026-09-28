@@ -49,7 +49,7 @@ from app.domain.source_artifacts import artifact_bytes, member
 from app.domain.work_graph import acquisition_lock, canonical_work
 from app.importing.destinations import destination_configuration, setup_route_current
 from app.importing.naming import fingerprint
-from app.importing.route_evidence import receipts
+from app.importing.route_evidence import backend_verified, receipts
 from app.importing.storage import import_sources
 from app.importing.versioning import version_revision
 
@@ -101,7 +101,7 @@ async def verified_probe(db, destination, configuration, mapping):
                 if configuration.get("seeding_rename")
                 else probe.get(destination.mode)
             )
-            and probe.get("backend", {}).get("root_mapping")
+            and backend_verified(probe)
         ):
             return True
     return False

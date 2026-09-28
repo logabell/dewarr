@@ -336,7 +336,7 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
             else "Hardlinks are unavailable for these folders. "
             "Downloads will be copied into the library."
             if uses_copy
-            else "Filesystem and library folder mapping verified; ready for a reviewed import plan"
+            else "Local folder access and library settings verified; ready for import"
             if ok
             else "Could not prepare this folder for a seeding rename. "
             "Check the library path and try again."

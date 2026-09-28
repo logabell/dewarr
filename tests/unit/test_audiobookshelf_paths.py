@@ -1,4 +1,3 @@
-import json
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -125,23 +124,6 @@ async def test_unusable_folder_path_names_the_folder():
     async with Audiobookshelf("http://fixture", transport=httpx.MockTransport(respond)) as adapter:
         with pytest.raises(AdapterError, match="'/audiobooks//nested'"):
             await adapter.import_configuration("synthetic")
-
-
-async def test_path_exists_posts_the_stored_windows_root():
-    seen = []
-
-    def respond(request):
-        seen.append(json.loads(request.content))
-        return httpx.Response(200, json={"exists": False})
-
-    name = "book-search-check-" + "ab" * 16
-    async with Audiobookshelf("http://fixture", transport=httpx.MockTransport(respond)) as adapter:
-        assert await adapter.path_exists("D:\\Books\\Audiobooks", name) is False
-        assert await adapter.path_exists("\\\\media\\share\\Books", name) is False
-    assert [body["folderPath"] for body in seen] == [
-        "D:/Books/Audiobooks",
-        "\\\\media/share/Books",
-    ]
 
 
 def test_folder_choice_keeps_the_windows_root_and_a_posix_mount():

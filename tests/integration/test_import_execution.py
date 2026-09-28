@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db.models import (
+    ImportDestination,
     ImportEntry,
     ImportRun,
     Integration,
@@ -79,10 +80,20 @@ async def start(client, route, key="import-fixture"):
 
 
 @pytest.mark.parametrize("ready_route", ["sibling", "nested", "protected"], indirect=True)
+@pytest.mark.parametrize("receipt_format", ["current", "legacy"])
 async def test_full_publication_preserves_source_and_confirms_exact_version(
-    client, admin, database, ready_route
+    client, admin, database, ready_route, receipt_format
 ):
     route = ready_route
+    if receipt_format == "legacy":
+        async with database() as db, db.begin():
+            destination = await db.get(ImportDestination, UUID(route["destination"]["id"]))
+            checked = dict(destination.probe["backend"])
+            checked.pop("configuration_validated")
+            destination.probe = {
+                **destination.probe,
+                "backend": {**checked, "root_mapping": True},
+            }
     original = (route["source"] / "pack/book.epub").read_bytes()
     responses = await asyncio.gather(*(start(client, route) for _ in range(3)))
     assert all(response.status_code == 202 for response in responses), [r.text for r in responses]
@@ -105,11 +116,17 @@ async def test_full_publication_preserves_source_and_confirms_exact_version(
     assert repeated.json()["entries"][0]["state"] == "skipped"
 
 
+@pytest.mark.parametrize("visibility", ["scan-delayed", "different-mount"])
 async def test_waiting_for_backend_never_claims_ownership_or_republishes(
-    client, admin, database, ready_route
+    client, admin, database, ready_route, tmp_path, visibility
 ):
     route = ready_route
-    route["scan_backend"].detect = False
+    if visibility == "scan-delayed":
+        route["scan_backend"].detect = False
+    else:
+        remote = tmp_path.resolve() / "different-backend-mount"
+        remote.mkdir()
+        route["scan_backend"].root = remote
     result = await start(client, route)
     assert result.status_code == 202, result.text
     await get_queue().run_worker_async(wait=False, concurrency=1)
@@ -120,6 +137,7 @@ async def test_waiting_for_backend_never_claims_ownership_or_republishes(
     original_inode = next(route["target"].rglob("*.epub")).stat().st_ino
     (route["source"] / "pack/book.epub").unlink()
     route["scan_backend"].detect = True
+    route["scan_backend"].root = route["target"]
     route["scan_backend"].scan()
     await execution.execute(UUID(current["operation_id"]))
     updated = (await client.get(f"/api/organization/imports/{result.json()['id']}")).json()[
@@ -149,6 +167,28 @@ async def test_crash_after_filesystem_publication_recovers_one_item(
         assert current.state == "confirmed"
         assert (await db.get(Operation, current.operation_id)).status == "completed"
     assert len(list(ready_route["target"].rglob("*.epub"))) == 1
+
+
+async def test_undetected_library_copy_is_held_with_mapping_guidance(
+    client, admin, database, ready_route
+):
+    route = ready_route
+    route["scan_backend"].detect = False
+    result = await start(client, route)
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    entry_id = UUID(result.json()["entries"][0]["id"])
+    async with database() as db, db.begin():
+        entry = await db.get(ImportEntry, entry_id)
+        assert entry.state == "awaiting-library"
+        entry.published_at = datetime.now(UTC) - timedelta(minutes=31)
+        operation_id = entry.operation_id
+    await execution.execute(operation_id)
+    async with database() as db:
+        entry = await db.get(ImportEntry, entry_id)
+        assert entry.state == "held" and entry.asset_id is None
+        assert "folder mapping" in entry.message and "file access" in entry.message
+    assert len(list(route["target"].rglob("*.epub"))) == 1
+    assert (route["source"] / "pack/book.epub").exists()
 
 
 @pytest.mark.parametrize("change", ["permission", "version"])

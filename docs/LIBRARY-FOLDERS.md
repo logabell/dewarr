@@ -8,7 +8,7 @@ For Grimmory Bookdrop intake, metadata ownership and direct-import compatibility
 
 A direct-import destination is a format-specific route into an existing library. Ebook and audiobook routes may use one root and one staging location, or independent mounts. Their verification, supported formats, import preferences and catalog identities remain separate. No new storage service or database table is needed.
 
-User-chosen directory names have no semantic meaning. `/collection`, `/Reading Room`, and `/shelf-42` are equally valid library mount points. A top-level container mount is not the host filesystem root. Paths reported by another container are a separate namespace: `/remote-collection` in a library server can map to `/shelf-42` in Dewarr. The existing create/observe/remove challenge proves that mapping; matching path strings alone does not.
+User-chosen directory names have no semantic meaning. `/collection`, `/Reading Room`, and `/shelf-42` are equally valid library mount points. A top-level container mount is not the host filesystem root. Paths reported by another container are a separate namespace: `/remote-collection` in a library server can map to `/shelf-42` in Dewarr. The mapping is explicit configuration. Setup verifies local filesystem operations and backend library settings; confirmation after publication verifies that the library server actually detected the imported book. Matching path strings or an API connection alone does not prove shared storage.
 
 An import still follows one pipeline:
 
@@ -73,7 +73,7 @@ Saving a library now reconciles saved source paths that have no remaining connec
 | First save, both destinations unset | API journey removes the initial destination and saves both routes from scratch. |
 | Arbitrary NAS/container library folder name | Validation and staging follow paths and mount boundaries. Tests use unrelated names, including spaces. No `/library` or `/audiobooks` allowlist. |
 | `/downloads` mapped directly to `/downloads`, read-only | Route verification and both-format publication cover a downloader saving directly at its mapped root; copy succeeds and preserves source bytes. |
-| Dewarr and Audiobookshelf use different paths | Existing mapping challenge and scan confirmation validate different local/backend paths. The UI reuses both values together. |
+| Dewarr and Audiobookshelf use different paths | Explicit mapping translates local/backend paths. Local access is checked during setup; the actual book is confirmed after import. The UI reuses both values together. |
 | No user-created staging or incoming directory | Staging is chosen automatically, including the reserved direct child at a mount root. No user-created incoming folder is required. |
 | Could another configured path be compared? No useful log | Rejection identifies both effective paths and keys and logs the reason, including a regression for a hidden configured download root. |
 | One ABS library/root for ebooks and audiobooks | Supported, with shared status, one staging route and separate version folders to preserve atomic publication. Appending into the same existing book folder remains outside this change. |

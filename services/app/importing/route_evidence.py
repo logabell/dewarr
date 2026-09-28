@@ -1,6 +1,12 @@
 """Independent download-path receipts for a shared final library destination."""
 
 
+def backend_verified(probe):
+    """Older successful probes also validated the required backend settings."""
+    backend = (probe or {}).get("backend", {})
+    return backend.get("configuration_validated", backend.get("root_mapping")) is True
+
+
 def receipts(probe):
     if not probe:
         return []

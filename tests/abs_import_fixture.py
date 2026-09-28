@@ -28,12 +28,13 @@ class ImportBackendFixture:
                 "absMetadata",
             ],
         }
-        self.path_checks = []
-        self.before_exists = None
+        self.requests = []
+        self.before_library = None
 
     async def handle(self, request):
         assert request.headers["authorization"] == "Bearer private-import-token"
         path = request.url.path
+        self.requests.append(path)
         if path == "/status":
             return httpx.Response(
                 200, json={"app": "audiobookshelf", "serverVersion": self.version}
@@ -47,6 +48,8 @@ class ImportBackendFixture:
                 },
             )
         if path == f"/api/libraries/{self.library_id}":
+            if self.before_library:
+                await self.before_library()
             return httpx.Response(
                 200,
                 json={
@@ -56,14 +59,6 @@ class ImportBackendFixture:
                     "settings": self.settings,
                 },
             )
-        if path == "/api/filesystem/pathexists":
-            body = json.loads(request.content)
-            assert body["folderPath"] == self.backend_path
-            if self.before_exists:
-                await self.before_exists(body["directory"])
-            exists = (self.root / body["directory"]).exists()
-            self.path_checks.append(exists)
-            return httpx.Response(200, json={"exists": exists})
         raise AssertionError(f"Unexpected ABS fixture request {path}")
 
     def client(self, url="http://fixture", token="private-import-token"):

@@ -163,21 +163,21 @@ async def test_changed_backend_credentials_invalidate_recorded_mapping(
     assert (await start_probe(client, route, key="changed-credentials")).status_code == 409
 
 
-async def test_credential_change_during_remote_challenge_discards_result(
+async def test_credential_change_during_backend_validation_discards_result(
     client, admin, database, route
 ):
     changed = False
 
-    async def rotate(name):
+    async def rotate():
         nonlocal changed
-        if (route["target"] / name).exists() and not changed:
+        if not changed:
             async with database() as db, db.begin():
                 library = await db.get(Library, UUID(route["library_id"]))
                 integration = await db.get(Integration, library.integration_id)
                 integration.credential_generation += 1
             changed = True
 
-    route["backend"].before_exists = rotate
+    route["backend"].before_library = rotate
     response = await start_probe(client, route)
     await get_queue().run_worker_async(wait=False, concurrency=1)
     assert changed and not list(route["target"].iterdir())
@@ -187,14 +187,14 @@ async def test_credential_change_during_remote_challenge_discards_result(
         assert operation.status == "failed" and "discarded" in operation.message
 
 
-async def test_wrong_backend_mount_is_a_durable_actionable_failure(client, admin, route, tmp_path):
-    different = tmp_path.resolve() / "wrong-mount"
-    different.mkdir()
-    route["backend"].root = different
+async def test_invalid_backend_root_is_a_durable_actionable_failure(client, admin, route):
+    route["backend"].backend_path = "/different-library"
     await start_probe(client, route)
     await get_queue().run_worker_async(wait=False, concurrency=1)
-    report = (await client.get("/api/organization/destinations")).json()[0]["probe"]
-    assert report["status"] == "failed" and "same library folder" in report["message"]
+    view = (await client.get("/api/organization/destinations")).json()[0]
+    report = view["probe"]
+    assert report["status"] == "failed" and "exact folder root" in report["message"]
+    assert not view["publication_available"]
     assert not list(route["target"].iterdir()) and not list(route["stage"].iterdir())
 
 
@@ -210,7 +210,7 @@ async def test_unreadable_backend_secret_finishes_with_repair_message(
     async with database() as db:
         operation = await db.get(Operation, UUID(response.json()["id"]))
         assert operation.status == "failed" and "save the connection again" in operation.message
-    assert not route["backend"].path_checks and not list(route["target"].iterdir())
+    assert not route["backend"].requests and not list(route["target"].iterdir())
 
 
 async def test_destination_edit_during_probe_discards_stale_evidence(

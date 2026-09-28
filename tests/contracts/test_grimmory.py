@@ -378,13 +378,16 @@ async def test_catalog_shift_holds_the_page():
     assert error.value.kind == FailureKind.UNCERTAIN
 
 
-async def test_folder_mapping_uses_grimmory_path_listing(tmp_path):
+async def test_library_validation_does_not_require_grimmory_path_listing(tmp_path):
     fixture = GrimmoryFixture(tmp_path.resolve())
+    fixture.admin = False
     async with fixture.client() as adapter:
         result = await verify_backend(adapter, "7", "/books", fixture.root, "ebook")
     assert result["version"] == "3.5.0"
-    assert result["root_mapping"] and result["scan_capable"]
+    assert result["configuration_validated"] and not result["scan_capable"]
+    assert result["watcher_enabled"]
     assert result["audio_extensions"] == ["m4a", "m4b", "mp3", "opus"]
+    assert not any(path == "/api/v1/path" for _, path in fixture.calls)
     assert not list(fixture.root.iterdir())
 
 
@@ -422,7 +425,7 @@ async def test_other_grimmory_releases_still_verify_the_folder(tmp_path, version
     fixture.version = version
     async with fixture.client() as adapter:
         result = await verify_backend(adapter, "7", "/books", fixture.root, "ebook")
-    assert result["version"] == version and result["root_mapping"]
+    assert result["version"] == version and result["configuration_validated"]
     assert not list(fixture.root.iterdir())
 
 
@@ -723,7 +726,7 @@ async def test_grimmory_nested_staging_needs_disabled_watcher_and_scan(tmp_path,
                 "ebook",
                 staging_root=fixture.root / ".book-search-staging",
             )
-            assert result["root_mapping"] and result["scan_capable"]
+            assert result["configuration_validated"] and result["scan_capable"]
             assert not result["watcher_enabled"]
         else:
             with pytest.raises(ValueError, match="scan"):

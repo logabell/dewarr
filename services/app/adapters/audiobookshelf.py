@@ -455,30 +455,6 @@ class Audiobookshelf(JsonEndpoint):
                 "Audiobookshelf library import settings are incomplete or unsupported.",
             ) from error
 
-    async def path_exists(self, root: str, name: str) -> bool:
-        # This read-only upstream POST also requires ABS upload permission.
-        # The lookup is an exact match on the stored folder path.
-        root = backend_path(root)
-        if not re.fullmatch(r"book-search-check-[a-f0-9]{32}", name):
-            raise ValueError("Only generated mapping challenge names are permitted")
-        try:
-            response = await self.request(
-                "POST", "api/filesystem/pathexists", json={"folderPath": root, "directory": name}
-            )
-        except AdapterError as error:
-            if error.kind == FailureKind.PERMISSION:
-                raise AdapterError(
-                    FailureKind.PERMISSION,
-                    "ABS upload permission is required for its folder-mapping check. "
-                    "Inventory-only connections can still sync.",
-                ) from error
-            raise
-        if type(response.get("exists")) is not bool:
-            raise AdapterError(
-                FailureKind.PARSER, "Audiobookshelf did not return a path check result."
-            )
-        return response["exists"]
-
     async def server_version(self) -> str:
         response = await self.request("GET", "status")
         if response.get("app") != "audiobookshelf" or not isinstance(

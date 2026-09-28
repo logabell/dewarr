@@ -616,27 +616,6 @@ class Grimmory(JsonEndpoint):
                 "Grimmory library import settings are incomplete or unsupported.",
             ) from error
 
-    async def path_exists(self, root: str, name: str) -> bool:
-        backend_path(root)
-        if not re.fullmatch(r"book-search-check-[a-f0-9]{32}", name):
-            raise ValueError("Only generated mapping challenge names are permitted")
-        try:
-            values = await self.request(
-                "GET", "api/v1/path", params={"path": root}, allow_list=True
-            )
-        except AdapterError as error:
-            if error.kind == FailureKind.PERMISSION:
-                raise AdapterError(
-                    FailureKind.PERMISSION,
-                    "Grimmory library management permission is required "
-                    "for its folder-mapping check. "
-                    "Inventory-only connections can still sync.",
-                ) from error
-            raise
-        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-            raise AdapterError(FailureKind.PARSER, "Grimmory did not return a path check result.")
-        return any(value == name or value.rstrip("/").endswith("/" + name) for value in values)
-
     async def __aexit__(self, *args):
         try:
             await self._close_catalog()

@@ -1019,7 +1019,8 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                     "held" if overdue else "awaiting-library",
                     (
                         f"{library_name} has not detected the expected item; "
-                        "check the library and retry detection"
+                        "check the saved folder mapping, library-server file access, "
+                        "and scan settings, then retry detection"
                         if overdue
                         else f"Published; waiting for {library_name} to detect the complete item"
                     ),

@@ -31,6 +31,7 @@ from app.importing.naming import StrictModel
 from app.importing.ownership import already_owned
 from app.importing.planning import assert_admin
 from app.importing.publication import PublicationSpec, PublishFile
+from app.importing.route_evidence import backend_verified
 from app.importing.storage import import_sources
 from app.importing.versioning import version_revision
 from app.jobs.queue import enqueue
@@ -106,10 +107,10 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
             current.revision != choice.revision
             or not current.probe
             or current.probe.get("status") != "verified"
-            or not current.probe.get("backend", {}).get("root_mapping")
+            or not backend_verified(current.probe)
         ):
             raise HTTPException(
-                409, "Verify the current destination and ABS mapping before importing"
+                409, "Verify local folder access and library settings before importing"
             )
         destinations[medium] = row
     # Short transaction serializes reservation decisions, not filesystem work.

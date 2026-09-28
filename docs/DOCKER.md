@@ -57,6 +57,14 @@ Choose those folders in Settings and verify your library routes. If Audiobookshe
 
 In **Settings → Libraries**, choose the library folder first. If Dewarr sees that folder at a different path, choose **Other folder** to browse the volumes mounted inside Dewarr. The browser shows directories, not files on your computer. Select the corresponding existing folder; this does not move your library. **Save & verify folder** checks filesystem operations and library access before activating the route.
 
+Setup checks local download/library access and the library server's settings.
+The saved mapping translates between the two services' paths; Dewarr does not
+require the library server to observe temporary test directories. After import,
+Dewarr asks the library server to scan when permitted and waits for the actual
+book to be detected before confirming it. If detection stays pending, check the
+saved mapping, the library server's filesystem access, and its scan settings.
+A successful API connection alone does not establish filesystem access.
+
 Each download client keeps its own download folder. Finished books use the destination configured under **Libraries**, separately for ebooks and audiobooks. Dewarr automatically uses the only configured destination for the selected library and media type, so an additional destination default is unnecessary. If several destinations remain, choose one in **Settings → Download preferences**. Clearing that override returns to automatic folder selection; it does not disable imports. Disabled, deleted, and inaccessible destinations are excluded, and the selected download-to-library connection must still pass verification. Switching download clients does not select a different final library folder.
 
 Being in the same Compose stack does not guarantee matching paths: each service has its own volume configuration. No translation is needed when both containers see the same files at the same path. A path mapping only translates a path; it cannot mount a missing volume or enable hardlinks.

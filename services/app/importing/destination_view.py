@@ -11,6 +11,7 @@ from app.domain.downloaders import TRANSFER_KINDS, mapped_path
 from app.domain.recovery_approvals import denial
 from app.importing.destinations import current_receipts, destination_configuration
 from app.importing.naming import StrictModel, fingerprint
+from app.importing.route_evidence import backend_verified
 from app.importing.storage import import_sources, shared_library_roots
 
 
@@ -99,10 +100,7 @@ async def view(db, row, *, include_routes=False):
         configured=bool(configuration["root_path"] and configuration["staging_path"]),
         probe=probe,
         publication_available=bool(
-            probe
-            and probe.get("status") == "verified"
-            and probe.get("backend", {}).get("root_mapping")
-            and row.enabled
+            probe and probe.get("status") == "verified" and backend_verified(probe) and row.enabled
         ),
         server_kind=(configuration["backend"] or {}).get("kind") or "audiobookshelf",
     )

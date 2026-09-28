@@ -59,6 +59,7 @@ from app.importing.publication import (
     write_all,
     write_receipt,
 )
+from app.importing.route_evidence import backend_verified
 
 TERMINAL = {"completed", "cancelled", "failed"}
 ACTIVE_IMPORTS = ("queued", "publishing", "awaiting-library")
@@ -919,7 +920,7 @@ async def evaluate(db, library_id, version_id, rows):
         if (
             not current.probe
             or current.probe.get("status") != "verified"
-            or not current.probe.get("backend", {}).get("root_mapping")
+            or not backend_verified(current.probe)
             or not configuration["root_path"]
             or not configuration["staging_path"]
         ):

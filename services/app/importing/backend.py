@@ -1,64 +1,12 @@
-"""Read backend import settings and prove the configured shared folder route.
+"""Validate backend access and import settings for an explicitly mapped library.
 
 Server release numbers are recorded on the route receipt. A newer Audiobookshelf
 or Grimmory release stays usable; a route fails only when a required library
 behavior is missing.
 """
 
-import asyncio
-import os
-import re
-from contextlib import contextmanager
-from pathlib import Path
-from uuid import uuid4
-
-from app.importing.filesystem import beneath, directory
 from app.importing.layout import check_staging_backend, overlaps
-from app.importing.publication import PublicationError, object_id, same_object, sync_directory
-
-MAPPING_VISIBILITY_TIMEOUT = 5.0
-MAPPING_POLL_INTERVAL = 0.1
-
-
-async def path_visible(adapter, root, name, *, expected):
-    """Observe a completed local change through bounded remote attribute caching.
-
-    The absent/present/absent challenge is unchanged. Transport/permission errors
-    still propagate; only a stale existence result is polled.
-    """
-    try:
-        async with asyncio.timeout(MAPPING_VISIBILITY_TIMEOUT):
-            # The remote filesystem offers no event/change notification here.
-            while await adapter.path_exists(root, name) is not expected:  # noqa: ASYNC110
-                await asyncio.sleep(MAPPING_POLL_INTERVAL)
-            return True
-    except TimeoutError:
-        return False
-
-
-@contextmanager
-def mapping_marker(root: Path, name: str):
-    if not re.fullmatch(r"book-search-check-[a-f0-9]{32}", name):
-        raise PublicationError("Invalid mapping challenge name")
-    with directory(root) as parent:
-        os.mkdir(name, mode=0o755, dir_fd=parent)
-        with beneath(parent, name, folder=True) as marker:
-            sync_directory(parent)
-            try:
-                yield
-                with directory(root) as current:
-                    if not same_object(current, object_id(parent)):
-                        raise PublicationError("Library root changed during mapping verification")
-            finally:
-                try:
-                    with beneath(parent, name, folder=True) as current:
-                        if not same_object(current, object_id(marker)):
-                            raise PublicationError("Mapping marker changed; replacement preserved")
-                    # Only an empty directory with our held identity can be removed.
-                    os.rmdir(name, dir_fd=parent)
-                    sync_directory(parent)
-                except FileNotFoundError:
-                    pass
+from app.importing.publication import PublicationError
 
 
 async def verify_grimmory(
@@ -102,21 +50,13 @@ async def verify_grimmory(
         )
     persistence = await adapter.metadata_persistence()
     check_grimmory_persistence(persistence, medium, mode)
-    name = "book-search-check-" + uuid4().hex
-    if await adapter.path_exists(backend_root, name):
-        raise PublicationError("Unexpected existing mapping challenge; no directory was changed")
-    with mapping_marker(worker_root, name):
-        if not await path_visible(adapter, backend_root, name, expected=True):
-            raise PublicationError("Worker and Grimmory do not see the same library folder")
-    if not await path_visible(adapter, backend_root, name, expected=False):
-        raise PublicationError("Grimmory still sees the removed challenge; mapping is not reliable")
     if await adapter.import_configuration(library_id) != configuration:
-        raise PublicationError("Grimmory library settings changed during mapping verification")
+        raise PublicationError("Grimmory library settings changed during verification")
     return {
         "version": version,
         "library_id": library_id,
         "configuration": configuration.model_dump(),
-        "root_mapping": True,
+        "configuration_validated": True,
         "scan_capable": "scan" in capabilities.operations,
         "watcher_enabled": configuration.watcher_enabled,
         "layout": "conventional",
@@ -177,21 +117,13 @@ async def verify_backend(
         )
     if "scan" not in capabilities.operations and not configuration.watcher_enabled:
         raise PublicationError("Enable the ABS watcher or provide a scan-capable connection")
-    name = "book-search-check-" + uuid4().hex
-    if await adapter.path_exists(backend_root, name):
-        raise PublicationError("Unexpected existing mapping challenge; no directory was changed")
-    with mapping_marker(worker_root, name):
-        if not await path_visible(adapter, backend_root, name, expected=True):
-            raise PublicationError("Worker and ABS do not see the same library folder")
-    if not await path_visible(adapter, backend_root, name, expected=False):
-        raise PublicationError("ABS still sees the removed challenge; mapping is not reliable")
     if await adapter.import_configuration(library_id) != configuration:
-        raise PublicationError("ABS library settings changed during mapping verification")
+        raise PublicationError("ABS library settings changed during verification")
     return {
         "version": version,
         "library_id": library_id,
         "configuration": configuration.model_dump(),
-        "root_mapping": True,
+        "configuration_validated": True,
         "scan_capable": "scan" in capabilities.operations,
         "watcher_enabled": configuration.watcher_enabled,
         "layout": "conventional",  # Nested watcher/import workflow matrix is not complete.
@@ -226,8 +158,7 @@ async def verify_bookdrop(adapter, backend_root, worker_root, staging_root):
     capabilities, _ = await adapter.authorize()
     if "bookdrop" not in capabilities.operations:
         raise PublicationError("Grant this Grimmory account access to Bookdrop")
-    # Read access is required for tracking handoff; the mapping challenge proves
-    # the shared path, not whether Grimmory's watcher has ingested a particular file.
+    # Read access is required for confirming the actual Bookdrop handoff.
     await adapter.bookdrop_files()
     for library in await adapter.libraries():
         configuration = await adapter.import_configuration(library["id"])
@@ -242,17 +173,9 @@ async def verify_bookdrop(adapter, backend_root, worker_root, staging_root):
             raise PublicationError(
                 "Bookdrop must be separate from every final Grimmory library folder"
             )
-    name = "book-search-check-" + uuid4().hex
-    if await adapter.path_exists(backend_root, name):
-        raise PublicationError("Unexpected existing mapping challenge")
-    with mapping_marker(worker_root, name):
-        if not await path_visible(adapter, backend_root, name, expected=True):
-            raise PublicationError("Dewarr and Grimmory do not see the same Bookdrop folder")
-    if not await path_visible(adapter, backend_root, name, expected=False):
-        raise PublicationError("Grimmory still sees the removed mapping challenge")
     return {
         "version": capabilities.version,
-        "root_mapping": True,
+        "configuration_validated": True,
         "workflow": "bookdrop",
         "scan_capable": False,
         "layout": "conventional",
