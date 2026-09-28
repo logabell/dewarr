@@ -524,7 +524,7 @@ def test_library_only_mount_chooses_child_and_probes_real_files(media, monkeypat
     assert choose_staging(media, None, staging) == staging
 
 
-@pytest.mark.parametrize("obstacle", ["symlink", "file", "public"])
+@pytest.mark.parametrize("obstacle", ["symlink", "file", "public-with-receipt"])
 def test_existing_child_staging_is_never_replaced_or_chmodded(media, obstacle):
     staging = media / STAGING_NAME
     sentinel = media.parent / "keep"
@@ -535,6 +535,9 @@ def test_existing_child_staging_is_never_replaced_or_chmodded(media, obstacle):
         staging.write_text("keep")
     else:
         staging.mkdir(mode=0o755)
+        # Empty, Dewarr-owned managed folders may now be secured automatically.
+        # Existing public receipts must never become trusted through chmod alone.
+        (staging / "receipt.json").write_text("keep")
     before = staging.lstat()
     with pytest.raises(InspectionError):
         check_library_route(media, staging, [])

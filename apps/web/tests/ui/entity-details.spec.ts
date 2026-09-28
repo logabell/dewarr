@@ -112,6 +112,7 @@ async function fixtures(page: Page, role = "viewer") {
       data = { items: [], total: 0, offset: 0, limit: 25 };
     else if (
       url.pathname === "/api/lists" ||
+      url.pathname === "/api/following" ||
       url.pathname === "/api/acquisition/profiles" ||
       url.pathname === "/api/library/libraries"
     )

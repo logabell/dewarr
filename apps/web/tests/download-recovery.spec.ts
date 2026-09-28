@@ -176,8 +176,7 @@ test("recovery settings preserve source overrides and manage the release blockli
   await page.goto("/requests");
   await page
     .getByRole("button", {
-      name: "Details for Recovery activity book",
-      exact: true,
+      name: /Recovery activity book audiobook request details$/,
     })
     .click();
   await page

@@ -128,7 +128,9 @@ test("activity requests preserve independent reasons and route missing media to 
   await expect(card).toContainText("Audiobook");
   await expect(card.getByText("Wanted", { exact: true })).toBeVisible();
   await card
-    .getByRole("button", { name: "Details for Activity Journey Alpha" })
+    .getByRole("button", {
+      name: "Wanted: Activity Journey Alpha audiobook request details",
+    })
     .click();
   await card.getByText("Details", { exact: true }).click();
   await expect(card).toContainText("Effective request scope");
@@ -160,15 +162,12 @@ test("activity requests preserve independent reasons and route missing media to 
   ).toBe(true);
   await card
     .getByRole("button", {
-      name: "Actions for Activity Journey Alpha",
+      name: "Wanted: Activity Journey Alpha audiobook request details",
       exact: true,
     })
     .click();
   await card
-    .getByRole("menuitem", { name: "Withdraw your request", exact: true })
-    .click();
-  await card
-    .getByRole("button", { name: "Details for Activity Journey Alpha" })
+    .getByRole("button", { name: "Withdraw your request", exact: true })
     .click();
   await expect(
     card.getByText("Your request · Withdrawn", { exact: true }),
@@ -178,12 +177,6 @@ test("activity requests preserve independent reasons and route missing media to 
   ).toBeVisible();
   await card
     .getByRole("button", {
-      name: "Actions for Activity Journey Alpha",
-      exact: true,
-    })
-    .click();
-  await card
-    .getByRole("menuitem", {
       name: "Withdraw activity follow list",
       exact: true,
     })

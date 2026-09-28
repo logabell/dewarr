@@ -129,8 +129,7 @@ test("linked downloads resume their saved import instead of asking for catalog m
   await expect(
     page.getByRole("button", { name: "Retry import", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Hardlink · keep seeding")).toBeVisible();
-  await expect(page.getByText("1 book file · 3 extra files")).toBeVisible();
+  await expect(page.getByText("Download complete · 1 file")).toBeVisible();
   await expect(page.getByLabel("Find catalog book")).not.toBeVisible();
   await expect(
     page.getByRole("button", { name: "Inspect files", exact: true }),
@@ -155,12 +154,15 @@ test("linked downloads resume their saved import instead of asking for catalog m
     path: "../../.local/import-review-mobile.png",
     fullPage: true,
   });
-  await page.getByText("Files & naming", { exact: true }).click();
+  await page.getByRole("button", { name: "View files", exact: true }).click();
+  const files = page.getByRole("dialog", { name: "Downloaded files" });
+  await expect(files.getByRole("listitem")).toHaveCount(4);
   await expect(
-    page.getByText(
-      "→ Andy Weir/Project Hail Mary/Project Hail Mary - Ray Porter.m4b",
-    ),
+    files.getByText("Project Hail Mary.m4b", { exact: true }),
   ).toBeVisible();
+  await expect(files.getByText("Ready", { exact: true })).toHaveCount(1);
+  await expect(files.getByText("Extra file", { exact: true })).toHaveCount(3);
+  await files.getByRole("button", { name: "Close downloaded files" }).click();
   await page.getByRole("button", { name: "Retry import", exact: true }).click();
   await expect(
     page.getByRole("link", { name: "View library book" }),
