@@ -235,10 +235,9 @@ export default function DownloadMatchReview({
         ) : download.can_retry && !reviewingFiles ? (
           <>
             <h3>Finish checking the download</h3>
-            <p>
-              The selected book supplies any missing title or author
-              information. Continue to check the files and add them to your
-              library.
+            <p role="status">
+              {download.message ||
+                "Check the completed files again and add them to your library."}
             </p>
             <div className="actions">
               <button className="primary" disabled={retrying} onClick={retry}>

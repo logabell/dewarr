@@ -287,6 +287,9 @@ for (const scenario of [
       return;
     }
     if (scenario === "automatic") {
+      await expect(review.getByRole("status")).toHaveText(
+        "Embedded title is missing or differs",
+      );
       await review
         .getByRole("button", { name: "Continue automatically" })
         .click();

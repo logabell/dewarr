@@ -231,6 +231,12 @@ async def recover(db, identifier):
 
 def manifest_matches(selection, inspection):
     descriptor = selection.frozen["descriptor"]
+    if descriptor.get("protocol") == "nzb":
+        # NZB subjects and encoded segment sizes describe transfer articles,
+        # not the renamed/repaired/extracted media. The associated client's
+        # completed output path scopes this inspection; the shared importer
+        # validates its actual files, identity and completeness below.
+        return
     file_scope = inspection.snapshot.get("source_kind") == "file"
     expected = {}
     for item in descriptor["files"]:
