@@ -127,7 +127,7 @@ def path_bound_directory_handles(monkeypatch):
 @pytest.fixture
 def group_mapped_media(monkeypatch):
     """Model a NAS assigning file ownership to another UID in the shared group."""
-    real_open, real_mkdir = os.open, os.mkdir
+    real_open, real_mkdir, real_unlink = os.open, os.mkdir, os.unlink
     media = set()
 
     def key(info):
@@ -152,6 +152,14 @@ def group_mapped_media(monkeypatch):
         if parent is not None and key(os.fstat(parent)) in media:
             media.add(key(os.stat(path, dir_fd=parent)))
 
+    def unlink(path, *, dir_fd=None):
+        info = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        real_unlink(path, dir_fd=dir_fd)
+        if info.st_nlink == 1:
+            # Linux can immediately reuse a deleted probe's inode for a private
+            # journal file. Ownership belongs to the live file, not its old inode.
+            media.discard(key(info))
+
     def install(*roots):
         for root in roots:
             for path in [root, *root.rglob("*")]:
@@ -159,5 +167,6 @@ def group_mapped_media(monkeypatch):
                 path.chmod(0o770 if path.is_dir() else 0o660)
         monkeypatch.setattr(os, "open", opening)
         monkeypatch.setattr(os, "mkdir", mkdir)
+        monkeypatch.setattr(os, "unlink", unlink)
 
     return install
