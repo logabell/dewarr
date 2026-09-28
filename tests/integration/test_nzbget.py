@@ -1,13 +1,13 @@
 # ruff: noqa: F811
 import base64
+import json
 from uuid import UUID
 
 import httpx
 import pytest
 
-from app.adapters.contracts import SubmissionReceipt
 from app.adapters.nzb_descriptor import inspect_nzb
-from app.adapters.nzbget import NzbClient, NzbState
+from app.adapters.nzbget import NzbClient
 from app.config import get_settings
 from app.db.models import DownloadAttempt, DownloadInspection, Integration, SourceArtifact
 from app.domain import download_attempts as downloads
@@ -105,57 +105,6 @@ async def test_nzbget_connection_keeps_credentials_private(client, admin, databa
     assert open_client.json()["has_credentials"] is False
 
 
-class Grab:
-    def __init__(self):
-        self.calls = []
-        self.tag = None
-        self.category = None
-        self.complete = False
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return None
-
-    async def capabilities(self):
-        return None
-
-    async def find(self, **kwargs):
-        self.calls.append("find")
-        if not self.tag:
-            return []
-        if self.complete:
-            return [
-                NzbState(
-                    external_id="42",
-                    state="SUCCESS/ALL",
-                    completed=True,
-                    save_path="/downloads/Finished Book",
-                    category=self.category,
-                    dupe_key=self.tag,
-                    reported_complete=True,
-                )
-            ]
-        return [
-            NzbState(
-                external_id="42",
-                state="DOWNLOADING",
-                completed=False,
-                save_path="/pending",
-                category=self.category,
-                dupe_key=self.tag,
-            )
-        ]
-
-    async def submit(self, content, *, attempt_tag, save_path, category):
-        self.calls.append("submit")
-        assert b"<nzb" in content
-        assert save_path == "/downloads"
-        self.tag, self.category = attempt_tag, category
-        return SubmissionReceipt(external_ids=["42"])
-
-
 async def test_usenet_grab_is_sent_to_nzbget_once(
     client, admin, database, selection_route, monkeypatch
 ):
@@ -173,19 +122,66 @@ async def test_usenet_grab_is_sent_to_nzbget_once(
             {"username": "private-nzb-user", "password": "private-nzb-password"}
         )
     monkeypatch.setattr(get_settings(), "download_dispatch_enabled", True)
-    grab = Grab()
-    monkeypatch.setattr(downloads, "NzbClient", lambda *args, **kwargs: grab)
+    calls = []
+    job = None
+    phase = "hidden"
+
+    def handler(request):
+        nonlocal job
+        rpc = json.loads(request.content)
+        method = rpc["method"]
+        calls.append(method)
+        if method == "version":
+            result = "26.3"
+        elif method == "append":
+            filename, content, category, _, _, _, tag, _, _ = rpc["params"]
+            assert filename == "book.nzb"
+            assert base64.b64decode(content) == raw
+            job = {
+                "NZBID": 42,
+                "Kind": "NZB",
+                "NZBFilename": filename,
+                "NZBName": "Renamed Book",
+                "Name": "Renamed Book",
+                "Category": category,
+                "DupeKey": tag,
+                "DestDir": "/downloads/intermediate/Book",
+                "FinalDir": "/downloads/Finished Book",
+            }
+            result = 42
+        elif method in {"listgroups", "history"}:
+            result = []
+            if job and phase != "hidden" and (phase == "SUCCESS/ALL") == (method == "history"):
+                result = [{**job, "Status": phase}]
+        else:
+            raise AssertionError(method)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "result": result, "id": 1})
+
+    monkeypatch.setattr(
+        downloads,
+        "NzbClient",
+        lambda *args, **kwargs: NzbClient(*args, transport=httpx.MockTransport(handler), **kwargs),
+    )
     prepared = await prepare(client, selection_route)
     assert prepared.status_code == 201, prepared.text
     assert "private-nzb-password" not in prepared.text
     saved = (await start(client, prepared.json())).json()
     await downloads.run(UUID(saved["id"]))
-    assert grab.calls.count("submit") == 1
+    assert calls.count("append") == 1
     async with database() as db:
-        assert (await db.get(DownloadAttempt, UUID(saved["id"]))).state == "downloading"
-    grab.complete = True
+        attempt = await db.get(DownloadAttempt, UUID(saved["id"]))
+        assert attempt.state == "uncertain"
+        assert attempt.receipt["external_ids"] == ["42"]
+        assert attempt.inspection_id is None
+    phase = "UNPACKING"
     await downloads.run(UUID(saved["id"]))
-    assert grab.calls.count("submit") == 1
+    async with database() as db:
+        attempt = await db.get(DownloadAttempt, UUID(saved["id"]))
+        assert attempt.state == "downloading"
+        assert attempt.inspection_id is None
+    phase = "SUCCESS/ALL"
+    await downloads.run(UUID(saved["id"]))
+    assert calls.count("append") == 1
     async with database() as db:
         attempt = await db.get(DownloadAttempt, UUID(saved["id"]))
         inspection = await db.get(DownloadInspection, attempt.inspection_id)

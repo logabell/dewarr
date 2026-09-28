@@ -237,7 +237,10 @@ async def test_oversized_history_stays_retryable():
     assert caught.value.kind is FailureKind.UNAVAILABLE
 
 
-async def test_queue_duplicate_key_matches_before_history_completion():
+@pytest.mark.parametrize(
+    "status", ["DOWNLOADING", "PP_QUEUED", "REPAIRING", "UNPACKING", "MOVING", "PP_FINISHED"]
+)
+async def test_queue_duplicate_key_matches_before_history_completion(status):
     calls = []
 
     def handler(request):
@@ -246,15 +249,33 @@ async def test_queue_duplicate_key_matches_before_history_completion():
         if method == "version":
             return httpx.Response(200, json={"jsonrpc": "2.0", "result": "21.2", "id": 1})
         if method == "listgroups":
-            return httpx.Response(200, json={"jsonrpc": "2.0", "result": [group()], "id": 1})
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "result": [group(Status=status)], "id": 1}
+            )
         raise AssertionError(method)
 
     async with open_client(handler) as client:
         found = await client.find(attempt_tag=TAG, torrent_hash=None)
     assert found[0].completed is False
+    assert found[0].reported_complete is False
+    assert found[0].failed is False
     assert found[0].external_id == "42"
     assert found[0].dupe_key == TAG
     assert "history" not in calls
+
+
+async def test_matching_job_name_without_duplicate_key_is_not_adopted():
+    def handler(request):
+        method = json.loads(request.content)["method"]
+        result = (
+            "26.3"
+            if method == "version"
+            else [group(NZBName=TAG, Name=TAG, DupeKey="another-attempt")]
+        )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "result": result, "id": 1})
+
+    async with open_client(handler) as client:
+        assert await client.find(attempt_tag=TAG, torrent_hash=None) == []
 
 
 def test_failed_and_script_warning_history():
