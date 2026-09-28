@@ -16,7 +16,7 @@ Select **Bookdrop review** for the Grimmory connection and enter the Bookdrop fo
 
 Activating Bookdrop changes the administrator's personal ebook destination. It preserves the installation's shared library default so member downloads can continue using their accessible libraries. Settings displays the signed-in administrator's effective destination.
 
-The connection needs access to Bookdrop and the path-listing API used by folder verification. Verification proves shared path access and queue readability. Grimmory does not expose its configured Bookdrop root through this API, so Dewarr cannot prove that the chosen path is watched until a delivered EPUB appears in the queue. **Refresh review status** checks for that exact intake path and size.
+The connection needs access to Bookdrop and its queue. Folder verification checks local publication access, the selected backend configuration, and queue readability; it does not prove that the two services share a filesystem. Grimmory does not expose its configured Bookdrop root through this API, so Dewarr cannot prove that the chosen path is watched until a delivered EPUB appears in the queue. **Refresh review status** checks for that exact intake path and size.
 
 Review metadata and approve the import in Grimmory. Sync the resulting library in Dewarr, then use **Link reviewed copy** in the download's import review. Candidates must be complete, matched copies of the selected edition on the original Grimmory server. Resolve an edition mismatch in library review before linking. Queue disappearance alone does not establish whether a file was imported, discarded or moved.
 
