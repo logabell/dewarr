@@ -13,6 +13,7 @@ const Preferences = lazy(() => import("./DownloadPreferences"));
 const Naming = lazy(() => import("./Organization"));
 const Recovery = lazy(() => import("./DownloadRecoverySettings"));
 const Quotas = lazy(() => import("./RequestQuotas"));
+const AccountSignIn = lazy(() => import("./AccountSignIn"));
 const Accounts = lazy(() => import("./Accounts"));
 
 export function settingsSections(role: string, permissions: string[] = []) {
@@ -20,6 +21,7 @@ export function settingsSections(role: string, permissions: string[] = []) {
   const manageUsers = admin || permissions.includes("manage_users");
   return [
     { id: "display", title: "General", content: <Display /> },
+    { id: "sign-in", title: "Sign-in", content: <AccountSignIn /> },
     {
       id: "catalog",
       title: "Metadata",

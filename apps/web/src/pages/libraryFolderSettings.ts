@@ -27,7 +27,7 @@ export function useLibraryFolderSettings() {
         api.GET("/api/library/libraries").then(result),
         api
           .GET("/api/acquisition/preferences/{scope}", {
-            params: { path: { scope: "installation" } },
+            params: { path: { scope: "personal" } },
           })
           .then(result),
       ]);

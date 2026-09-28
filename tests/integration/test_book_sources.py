@@ -26,7 +26,7 @@ from tests.integration.test_mam_sources import source_http  # noqa: F401
 from tests.integration.test_prowlarr_sources import configure as configure_prowlarr  # noqa: F401
 from tests.integration.test_prowlarr_sources import prowlarr_http  # noqa: F401
 from tests.mam_fixture import release_row, search_response
-from tests.prowlarr_fixture import release
+from tests.prowlarr_fixture import indexer, release
 
 pytestmark = pytest.mark.integration
 
@@ -103,6 +103,48 @@ async def begin(client, catalog, key="book-search-fixture", **body):
 
 async def read(client, identifier):
     return await client.get(f"/api/source-searches/{identifier}")
+
+
+@pytest.mark.parametrize("torrent_state", ["enabled", "disabled", "excluded", "no_books"])
+async def test_prowlarr_discovery_explains_missing_torrent_sources(
+    client, admin, catalog, selection_route, prowlarr_http, torrent_state
+):
+    # A ready qBittorrent route must not turn Usenet sources into torrent sources.
+    await configure_prowlarr(client, excluded_indexers=[8] if torrent_state == "excluded" else [])
+    prowlarr_http["indexers"] = [
+        indexer(protocol="usenet"),
+        indexer(
+            id=8,
+            enable=torrent_state != "disabled",
+            capabilities={"categories": [{"id": 2000}]}
+            if torrent_state == "no_books"
+            else {"categories": [{"id": 7020}]},
+        ),
+    ]
+    prowlarr_http["releases"] = []
+    saved = await begin(client, catalog)
+    await book_sources.run(UUID(saved["id"]), "prowlarr")
+    observed = (await read(client, saved["id"])).json()
+    assert all(
+        s["state"] == "completed"
+        for s in observed["sources"]
+        if s["key"] == "prowlarr" or s["key"].startswith("prowlarr:")
+    )
+    discovery = next(s for s in observed["sources"] if s["key"] == "prowlarr")
+    searched = {
+        req.url.params["indexerIds"]
+        for req in prowlarr_http["calls"]
+        if req.url.path.endswith("/search")
+    }
+    if torrent_state == "enabled":
+        assert searched == {"7", "8"}
+        assert discovery["message"] == "Indexers selected for search: 1 torrent, 1 Usenet."
+    else:
+        assert searched == {"7"}
+        assert "0 torrent, 1 Usenet" in discovery["message"]
+        assert "No torrent indexers are eligible" in discovery["message"]
+        assert "Adding qBittorrent does not add torrent sources" in discovery["message"]
+    assert observed["items"] == []
 
 
 async def test_incremental_ranked_private_results_preserve_mam_fields_and_ownership(

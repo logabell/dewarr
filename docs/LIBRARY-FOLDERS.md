@@ -2,9 +2,11 @@
 
 Architecture review for NOR-66, 2026-09-25.
 
+For Grimmory Bookdrop intake, metadata ownership and direct-import compatibility checks, see [Native library import workflows](NATIVE-LIBRARY-IMPORTS.md). Bookdrop is a separate review destination and does not choose a final library in advance.
+
 ## Decision
 
-A destination is a format-specific route into an existing library. Ebook and audiobook routes may use one root and one staging location, or independent mounts. Their verification, supported formats, import preferences and catalog identities remain separate. No new storage service or database table is needed.
+A direct-import destination is a format-specific route into an existing library. Ebook and audiobook routes may use one root and one staging location, or independent mounts. Their verification, supported formats, import preferences and catalog identities remain separate. No new storage service or database table is needed.
 
 User-chosen directory names have no semantic meaning. `/collection`, `/Reading Room`, and `/shelf-42` are equally valid library mount points. A top-level container mount is not the host filesystem root. Paths reported by another container are a separate namespace: `/remote-collection` in a library server can map to `/shelf-42` in Dewarr. The existing create/observe/remove challenge proves that mapping; matching path strings alone does not.
 
@@ -50,15 +52,19 @@ Two routes using the same local root reuse the same valid staging route. A saved
 
 Re-saving an existing route preserves its journal location, including legacy journals kept in staging. Another route using the same staging folder must not silently switch that recovery protocol.
 
+During setup, Dewarr repairs overly broad permissions on its empty, owned legacy `.book-search-staging` folder using descriptor-based `fchmod(0700)` and verifies the result. Newly created protected journal folders receive the same treatment. Already-private folders retain their permissions, including setgid. Shared media-only staging retains the share's permissions. Arbitrary staging paths and nonempty permissive recovery folders require operator review; their contents cannot be made trustworthy merely by changing the parent mode. NAS permission errors remain explicit if the mount rejects or ignores the change.
+
 Dewarr must not publish into downloads or let downloads contain staging. Checks report both paths and configuration keys, with the relevant setting to inspect. Mount boundaries and permissions are verified by actual operations. A sibling library folder with a similar name is not an overlap. Linux bind mounts can share a device number and still disallow rename/hardlink operations, so device identity alone is insufficient.
 
 For internal staging, Audiobookshelf's hidden-folder exclusion is the supported route. Grimmory's existing integration guard still requires its watcher to be disabled and scan access enabled, or staging outside the watched root. This change does not relax that guard.
 
 ## NOR-66 evidence and diagnostic limit
 
-The latest comment reports first-save rejection with `/library` and `/downloads`, both destinations unset, and no explicitly described staging override. In the current code, `/library`, `/downloads`, and `/library/.book-search-staging` pass the overlap predicate. The comment alone therefore does not establish which additional effective path caused the reported 422. Do not claim the reporter's exact installation is repaired without that evidence.
+The earlier post-v0.3.3 comment reports first-save rejection with `/library` and `/downloads`, both destinations unset, and no explicitly described staging override. Those paths with `/library/.book-search-staging` pass the overlap predicate. The [post-v0.3.4 confirmation](https://github.com/logabell/dewarr/issues/29#issuecomment-5842143417) identifies the additional path: an obsolete persisted `incoming` source pointing to `/library/_incoming`. The reporter also had to repair staging permissions before both formats saved successfully.
 
 The old error collapsed every configured download-root and staging conflict into one sentence and did not log the compared paths. The new error and warning log identify the actual conflicting locations, including persisted/environment roots not visible as a selected destination. This is preferable to guessing that a NAS folder name needs special treatment or silently deleting saved configuration.
+
+Saving a library now reconciles saved source paths that have no remaining connection or historical reference, recording removed configuration in the audit log without touching files. Environment roots, disabled connections, inspections, frozen download choices and import entries retain their sources. Downloader endpoint changes also retire their abandoned mapping keys; deleted connection records no longer pin those keys. A retained source still participates in overlap validation.
 
 ### Latest-comment checklist
 

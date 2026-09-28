@@ -128,7 +128,7 @@ async def test_preexisting_transfer_is_never_adopted(database, client, torrent_c
 
 
 @pytest.mark.parametrize("kind", ["transmission", "deluge"])
-async def test_connect_test_and_choose_route(client, admin, monkeypatch, tmp_path, kind):
+async def test_connect_test_and_choose_route(client, admin, database, monkeypatch, tmp_path, kind):
     import json
 
     import httpx
@@ -153,11 +153,19 @@ async def test_connect_test_and_choose_route(client, admin, monkeypatch, tmp_pat
         values = {
             "auth.login": True,
             "web.connected": True,
-            "daemon.info": "2.2",
+            # Deluge 2.x exports get_version; unknown RPCs fail at the Web UI.
+            "daemon.get_version": "2.1.1",
             "core.get_enabled_plugins": ["Label"],
         }
         return httpx.Response(
-            200, json={"id": payload["id"], "result": values[payload["method"]], "error": None}
+            200,
+            json={
+                "id": payload["id"],
+                "result": values.get(payload["method"]),
+                "error": None
+                if payload["method"] in values
+                else {"message": "Unknown method", "code": 2},
+            },
         )
 
     cls = TransmissionClient if kind == "transmission" else DelugeClient
@@ -182,6 +190,10 @@ async def test_connect_test_and_choose_route(client, admin, monkeypatch, tmp_pat
     tested = await client.post(f"/api/downloaders/{identifier}/test")
     assert tested.status_code == 200, tested.text
     assert tested.json()["status"] == "connected"
+    if kind == "deluge":
+        async with database() as db:
+            connection = await db.get(Integration, UUID(identifier))
+            assert connection.capabilities["version"] == "2.1.1"
     assert tested.json()["capabilities"]["in_client_rename"] is False
     assert tested.json()["capabilities"]["attempt_tagging"] == (kind == "transmission")
     assert "private-secret" not in tested.text

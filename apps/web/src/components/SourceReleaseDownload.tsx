@@ -135,7 +135,31 @@ export default function SourceReleaseDownload({
     : error || (failed && reasons.length ? reasons.join(". ") : rawMessage);
   const requestLink = saved?.request_id
     ? `/requests#request-${saved.request_id}`
-    : "/requests";
+    : null;
+  const statusContent = state ? (
+    <>
+      {failed ? (
+        <CircleAlert size={16} aria-hidden />
+      ) : busy || ["downloading", "queued"].includes(state) ? (
+        <LoaderCircle
+          size={16}
+          className="source-download-spinner"
+          aria-hidden
+        />
+      ) : (
+        <CircleCheck size={16} aria-hidden />
+      )}
+      <span
+        className={
+          !showLabel && (busy || ["downloading", "queued"].includes(state))
+            ? "sr-only"
+            : undefined
+        }
+      >
+        {labels[state]}
+      </span>
+    </>
+  ) : null;
   return (
     <>
       {(showLabel ||
@@ -191,35 +215,31 @@ export default function SourceReleaseDownload({
           Use a Freeleech wedge
         </label>
       )}
-      {state && (
-        <Link
-          to={requestLink}
-          className="source-download-status"
-          data-tone={tone}
-          title={message || labels[state]}
-          aria-label={`${labels[state]}: ${title}. View request`}
-        >
-          {failed ? (
-            <CircleAlert size={16} aria-hidden />
-          ) : busy || ["downloading", "queued"].includes(state) ? (
-            <LoaderCircle
-              size={16}
-              className="source-download-spinner"
-              aria-hidden
-            />
-          ) : (
-            <CircleCheck size={16} aria-hidden />
-          )}
-          <span
-            className={
-              !showLabel && (busy || ["downloading", "queued"].includes(state))
-                ? "sr-only"
-                : undefined
-            }
+      {state &&
+        (requestLink ? (
+          <Link
+            to={requestLink}
+            className="source-download-status"
+            data-tone={tone}
+            title={message || labels[state]}
+            aria-label={`${labels[state]}: ${title}. View request`}
           >
-            {labels[state]}
+            {statusContent}
+          </Link>
+        ) : (
+          <span
+            className="source-download-status"
+            data-tone={tone}
+            title={message || labels[state]}
+            role="status"
+          >
+            {statusContent}
           </span>
-        </Link>
+        ))}
+      {showLabel && failed && message && (
+        <p className="error" role="status">
+          {message}
+        </p>
       )}
     </>
   );

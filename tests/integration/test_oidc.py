@@ -605,3 +605,121 @@ async def test_viewer_cannot_change_the_provider(client, admin):
                 },
             )
         ).status_code == 403
+
+
+async def begin_account_link(client, idp, password="a long test password"):
+    response = await client.post("/api/auth/oidc/link", json={"password": password})
+    assert response.status_code == 200, response.text
+    query = parse_qs(urlsplit(response.json()["authorization_url"]).query)
+    assert query["prompt"] == ["login"]
+    assert query["code_challenge_method"] == ["S256"]
+    idp.expected_challenge = query["code_challenge"][0]
+    idp.expected_nonce = query["nonce"][0]
+    return query["state"][0]
+
+
+async def test_admin_explicit_link_preserves_account_and_password(client, admin, database, idp):
+    from uuid import UUID
+
+    from app.db.models import AuditEvent
+
+    await save_provider(client, idp, match_existing="username", auto_register=False)
+    idp.preferred_username = "admin"
+    assert (
+        "oidc_error=rejected"
+        in (await callback(client, await start(client, idp))).headers["location"]
+    )
+    wrong = await client.post("/api/auth/oidc/link", json={"password": "incorrect"})
+    assert wrong.status_code == 403
+    state = await begin_account_link(client, idp)
+    transaction_cookie = client.cookies.get("book_oidc")
+    # Browsers omit the Strict session cookie on a cross-site OIDC callback.
+    client.cookies.delete("book_session")
+    linked = await callback(client, state, origin=idp.issuer)
+    assert linked.headers["location"] == "/settings?oidc_linked=1#sign-in"
+    assert await user_count(database) == 1
+    async with database() as db:
+        identity = await db.get(OidcIdentity, UUID(admin["id"]))
+        assert identity.subject == idp.sub
+        event = await db.scalar(select(AuditEvent).where(AuditEvent.action == "oidc.linked"))
+        assert event.detail["method"] == "password-confirmed"
+    # A copied transaction cannot be replayed, even with the same valid response.
+    client.cookies.set(
+        "book_oidc", transaction_cookie, domain="testserver.local", path="/api/auth/oidc"
+    )
+    assert "oidc_link_error=mismatch" in (await callback(client, state)).headers["location"]
+    signed_in = await callback(client, await start(client, idp))
+    assert signed_in.headers["location"] == "/"
+    me = (await client.get("/api/auth/me")).json()
+    assert me["user"]["id"] == admin["id"]
+    assert me["user"]["role"] == "admin"
+    login = await client.post(
+        "/api/auth/login", json={"username": "admin", "password": "a long test password"}
+    )
+    assert login.status_code == 200
+    client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
+    assert (await client.get("/api/auth/oidc/link")).json()["linked"] is True
+    previous_session = client.cookies.get("book_session")
+    unlinked = await client.request(
+        "DELETE", "/api/auth/oidc/link", json={"password": "a long test password"}
+    )
+    assert unlinked.status_code == 200
+    client.headers["X-CSRF-Token"] = unlinked.json()["csrf_token"]
+    assert (await client.get("/api/auth/oidc/link")).json()["linked"] is False
+    from app.db.models import LoginSession
+    from app.security import token_hash
+
+    async with database() as db:
+        assert await db.get(LoginSession, token_hash(previous_session)) is None
+
+
+@pytest.mark.parametrize("invalidated", ["logout", "expired", "provider", "taken", "disabled"])
+async def test_explicit_link_rejects_invalidated_attempts(
+    client, admin, database, idp, invalidated
+):
+    from datetime import UTC, datetime, timedelta
+    from uuid import UUID
+
+    from sqlalchemy import update
+
+    from app.db.models import OidcLinkAttempt, OidcProvider
+
+    await save_provider(client, idp)
+    state = await begin_account_link(client, idp)
+    if invalidated == "logout":
+        assert (await client.post("/api/auth/logout")).status_code == 204
+    else:
+        async with database() as db, db.begin():
+            if invalidated == "expired":
+                await db.execute(
+                    update(OidcLinkAttempt).values(
+                        expires_at=datetime.now(UTC) - timedelta(seconds=1)
+                    )
+                )
+            elif invalidated == "provider":
+                await db.execute(update(OidcProvider).values(client_id="different"))
+            elif invalidated == "disabled":
+                await db.execute(
+                    update(User).where(User.id == UUID(admin["id"])).values(active=False)
+                )
+            else:
+                other = User(username="other", display_name="Other", role="member")
+                db.add(other)
+                await db.flush()
+                db.add(OidcIdentity(user_id=other.id, issuer=idp.issuer, subject=idp.sub))
+    response = await callback(client, state)
+    assert "oidc_link_error=" in response.headers["location"]
+    async with database() as db:
+        assert await db.get(OidcIdentity, UUID(admin["id"])) is None
+
+
+async def test_explicit_link_requires_session_and_csrf(client, admin, idp):
+    await save_provider(client, idp)
+    client.headers.pop("X-CSRF-Token")
+    assert (
+        await client.post("/api/auth/oidc/link", json={"password": "a long test password"})
+    ).status_code == 403
+    client.cookies.clear()
+    assert (
+        await client.post("/api/auth/oidc/link", json={"password": "a long test password"})
+    ).status_code == 401

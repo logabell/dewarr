@@ -42,6 +42,26 @@ from app.security import encrypt_secrets
 MAX_INDEXERS = 20
 
 
+def indexer_discovery_message(eligible):
+    selected = eligible[:MAX_INDEXERS]
+    torrents = sum(i.protocol == "torrent" for i in selected)
+    usenet = sum(i.protocol == "nzb" for i in selected)
+    message = f"Indexers selected for search: {torrents} torrent, {usenet} Usenet."
+    if len(eligible) > MAX_INDEXERS:
+        message += (
+            f" Search limited to {MAX_INDEXERS} indexers; use direct source search for others."
+        )
+    elif not torrents:
+        message += (
+            " No torrent indexers are eligible. Enable a searchable torrent indexer "
+            "with book or audiobook categories in Prowlarr and check Dewarr's source exclusions. "
+            "Adding qBittorrent does not add torrent sources."
+        )
+    if not selected:
+        message += " No eligible book or audiobook indexers were found."
+    return message
+
+
 class SearchInput(BaseModel):
     q: str | None = Field(default=None, min_length=1, max_length=300)
     medium: str = Field(default="all", pattern="^(all|ebook|audio)$")
@@ -716,12 +736,7 @@ async def run(identifier, source):
                             }
                     current["sources"][source].update(
                         state="completed",
-                        message="Indexer discovery complete"
-                        if len(eligible) <= MAX_INDEXERS
-                        else (
-                            f"Search limited to {MAX_INDEXERS} indexers; "
-                            "use direct source search for others"
-                        ),
+                        message=indexer_discovery_message(eligible),
                     )
                     refresh_status(operation, current)
                     payload = current

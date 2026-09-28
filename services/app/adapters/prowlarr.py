@@ -1,14 +1,17 @@
 """Prowlarr v1 read/search and binary resolution; never use its grab endpoint."""
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
 import re
+import socket
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -16,17 +19,62 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.adapters.contracts import AdapterError, FailureKind, Release
 from app.adapters.http import configured_url
 from app.domain.catalog_network import retry_delay
+from app.network_addresses import public_address
+
+_private_download = contextvars.ContextVar("prowlarr_download", default=False)
+MAX_BYTES = 8 * 1024 * 1024
+REDIRECTS = {301, 302, 303, 307, 308}
 
 
 class PrivateProxyLogFilter(logging.Filter):
     def filter(self, record):
-        return not any(
+        return not _private_download.get() and not any(
             isinstance(arg, httpx.URL) and arg.path.endswith("/download")
             for arg in (record.args if isinstance(record.args, tuple) else ())
         )
 
 
 logging.getLogger("httpx").addFilter(PrivateProxyLogFilter())
+for name in ("httpcore.connection", "httpcore.http11", "httpcore.http2"):
+    logging.getLogger(name).addFilter(PrivateProxyLogFilter())
+
+
+@dataclass(frozen=True, repr=False)
+class DownloadRedirect:
+    url: str
+
+
+def redirect_url(base, location):
+    try:
+        if not location or len(location) > 16000 or "\\" in location:
+            raise ValueError
+        if any(ord(char) < 33 or ord(char) == 127 for char in location):
+            raise ValueError
+        url = urljoin(base, location)
+        parts = urlsplit(url)
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.fragment
+            or (urlsplit(base).scheme == "https" and parts.scheme != "https")
+        ):
+            raise ValueError
+        _ = parts.port
+        return httpx.URL(url)
+    except (ValueError, httpx.InvalidURL):
+        raise AdapterError(
+            FailureKind.UNSUPPORTED,
+            "Prowlarr returned an unsupported download redirect. "
+            "Use an HTTP(S) file link without credentials or an HTTPS downgrade; "
+            "magnet redirects are not supported.",
+        ) from None
+
+
+async def download_addresses(host, port):
+    records = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return list(dict.fromkeys(record[4][0] for record in records))
 
 
 class ProwlarrSearch(BaseModel):
@@ -131,9 +179,13 @@ def safe_text(value, fallback="", limit=600):
 
 
 class ProwlarrClient:
-    def __init__(self, base_url, api_key, *, transport=None):
+    def __init__(
+        self, base_url, api_key, *, transport=None, redirect_transport=None, resolver=None
+    ):
         self.base_url = configured_url(base_url)
         self.cooldown = 0
+        self.redirect_transport = redirect_transport
+        self.resolver = resolver or download_addresses
         self.client = httpx.AsyncClient(
             base_url=self.base_url + "/",
             headers={"X-Api-Key": api_key, "Accept": "application/json"},
@@ -177,6 +229,10 @@ class ProwlarrClient:
                         else None,
                     )
                 if 300 <= response.status_code < 400:
+                    if binary and response.status_code in REDIRECTS:
+                        return DownloadRedirect(
+                            str(redirect_url(str(response.url), response.headers.get("location")))
+                        )
                     raise AdapterError(
                         FailureKind.UNSUPPORTED if binary else FailureKind.ROUTE,
                         "Prowlarr redirected the request. "
@@ -189,7 +245,7 @@ class ProwlarrClient:
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
-                    if len(content) > 8 * 1024 * 1024:
+                    if len(content) > MAX_BYTES:
                         raise AdapterError(
                             FailureKind.PARSER, "Prowlarr response exceeded the size limit."
                         )
@@ -201,10 +257,10 @@ class ProwlarrClient:
                     raise AdapterError(
                         FailureKind.PARSER, "Prowlarr returned an unreadable response."
                     ) from error
-        except (httpx.TimeoutException, TimeoutError) as error:
-            raise AdapterError(FailureKind.TIMEOUT, "Prowlarr did not respond in time.") from error
-        except httpx.HTTPError as error:
-            raise AdapterError(FailureKind.ROUTE, "Prowlarr could not be reached.") from error
+        except (httpx.TimeoutException, TimeoutError):
+            raise AdapterError(FailureKind.TIMEOUT, "Prowlarr did not respond in time.") from None
+        except httpx.HTTPError:
+            raise AdapterError(FailureKind.ROUTE, "Prowlarr could not be reached.") from None
 
     async def test(self):
         result = await self.request("api/v1/system/status")
@@ -241,7 +297,8 @@ class ProwlarrClient:
 
     def reference(self, value, indexer_id):
         # Accept only the exact configured Prowlarr proxy, not tracker URLs, API
-        # mutations, redirects or a provider-selected local-network destination.
+        # mutations or a provider-selected local-network destination. Redirects
+        # from this endpoint are fetched separately without Prowlarr credentials.
         if not isinstance(value, str) or len(value) > 16000:
             return None
         try:
@@ -336,12 +393,111 @@ class ProwlarrClient:
             raise AdapterError(
                 FailureKind.UNSUPPORTED, f"This result has no supported {kind} file."
             )
-        content = await self.request(
-            f"{int(release.indexer_id)}/download",
-            params={
-                "link": link,
-                "file": "book.nzb" if release.protocol == "nzb" else "book.torrent",
-            },
-            binary=True,
-        )
+        marker = _private_download.set(True)
+        try:
+            async with asyncio.timeout(50):
+                content = await self.request(
+                    f"{int(release.indexer_id)}/download",
+                    params={
+                        "link": link,
+                        "file": "book.nzb" if release.protocol == "nzb" else "book.torrent",
+                    },
+                    binary=True,
+                )
+                if isinstance(content, DownloadRedirect):
+                    content = await self.download_redirect(content.url)
+        except (httpx.TimeoutException, TimeoutError):
+            raise AdapterError(FailureKind.TIMEOUT, "Release download timed out.") from None
+        except (httpx.HTTPError, OSError):
+            raise AdapterError(
+                FailureKind.ROUTE, "The release download host could not be reached."
+            ) from None
+        finally:
+            _private_download.reset(marker)
         return ProwlarrArtifact(release, content)
+
+    async def download_redirect(self, url):
+        # A fresh client prevents API keys, cookies, or proxy credentials from
+        # reaching the indexer. Never hand an unchecked URL to the downloader.
+        async with httpx.AsyncClient(
+            transport=self.redirect_transport,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=httpx.Timeout(15, connect=5),
+            # Different indexer/CDN hosts can share a pinned IP. Do not reuse a
+            # TLS connection authenticated for a previous hop's hostname.
+            limits=httpx.Limits(max_keepalive_connections=0),
+            headers={"Accept": "application/octet-stream", "Accept-Encoding": "identity"},
+        ) as client:
+            for hop in range(3):
+                target = redirect_url(url, url)
+                addresses = await self.resolver(target.host, target.port)
+                if not addresses or any(not public_address(address) for address in addresses):
+                    raise AdapterError(
+                        FailureKind.UNSUPPORTED,
+                        "The release download host must resolve exclusively to public addresses.",
+                    )
+                # Pin the connection to the checked IP, preserving Host and TLS
+                # verification. A second DNS lookup must not permit rebinding.
+                client.cookies.clear()
+                async with AsyncExitStack() as streams:
+                    response = None
+                    for address in addresses[:4]:
+                        try:
+                            response = await streams.enter_async_context(
+                                client.stream(
+                                    "GET",
+                                    target.copy_with(host=address),
+                                    headers={"Host": target.netloc.decode("ascii")},
+                                    extensions={"sni_hostname": target.host},
+                                )
+                            )
+                            break
+                        except (httpx.ConnectError, httpx.ConnectTimeout):
+                            continue
+                    if response is None:
+                        raise AdapterError(
+                            FailureKind.ROUTE, "The release download host could not be reached."
+                        )
+                    self.cooldown = max(
+                        self.cooldown, retry_delay(response.headers, datetime.now(UTC))
+                    )
+                    if response.status_code in REDIRECTS:
+                        if hop == 2:
+                            raise AdapterError(
+                                FailureKind.UNSUPPORTED,
+                                "Release download redirected too many times.",
+                            )
+                        url = str(redirect_url(url, response.headers.get("location")))
+                        continue
+                    kind = {
+                        401: FailureKind.AUTHENTICATION,
+                        403: FailureKind.PERMISSION,
+                        404: FailureKind.NOT_FOUND,
+                        429: FailureKind.RATE_LIMIT,
+                    }.get(response.status_code)
+                    if kind or response.status_code != 200:
+                        raise AdapterError(
+                            kind or FailureKind.UNAVAILABLE,
+                            "The indexer rejected the release download. "
+                            "Check its access and limits.",
+                            retry_after=max(1, self.cooldown)
+                            if kind == FailureKind.RATE_LIMIT
+                            else None,
+                        )
+                    if response.headers.get("content-encoding", "identity").lower() not in {
+                        "",
+                        "identity",
+                    }:
+                        raise AdapterError(
+                            FailureKind.PARSER,
+                            "Compressed release download responses are unsupported.",
+                        )
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                        if len(content) + len(chunk) > MAX_BYTES:
+                            raise AdapterError(
+                                FailureKind.PARSER, "Release download exceeded the size limit."
+                            )
+                        content.extend(chunk)
+                    return bytes(content)

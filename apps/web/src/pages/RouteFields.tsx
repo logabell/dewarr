@@ -18,7 +18,11 @@ const downloaderFields = [
   { field: "torrent_downloader_id", protocol: "torrent" },
   { field: "usenet_downloader_id", protocol: "nzb" },
 ] as const;
-type DestinationChoice = { id: string; library_id: string; medium: string };
+type DestinationChoice = {
+  id: string;
+  library_id: string | null;
+  medium: string;
+};
 
 type DownloaderChoice = { id: string; name: string; protocol?: string };
 

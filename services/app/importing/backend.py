@@ -62,7 +62,7 @@ def mapping_marker(root: Path, name: str):
 
 
 async def verify_grimmory(
-    adapter, library_id, backend_root, worker_root, medium, staging_root=None
+    adapter, library_id, backend_root, worker_root, medium, staging_root=None, mode="hardlink"
 ):
     from app.adapters.grimmory import AUDIO_EXTENSIONS
 
@@ -79,7 +79,9 @@ async def verify_grimmory(
     if backend_root not in configuration.folders:
         raise PublicationError("Selected path is not an exact folder root of this Grimmory library")
     if configuration.organization_mode != "BOOK_PER_FOLDER":
-        raise PublicationError("Set this Grimmory library to Book per folder before importing")
+        raise PublicationError(
+            "Choose a Grimmory library created with Book per folder organization, or use Bookdrop"
+        )
     if medium == "ebook" and configuration.audiobooks_only:
         raise PublicationError("Choose a Grimmory library that accepts ebooks")
     if medium == "audio" and not configuration.audio_allowed:
@@ -98,6 +100,8 @@ async def verify_grimmory(
             "Grimmory needs permission to edit metadata "
             "so imported books keep their catalog details"
         )
+    persistence = await adapter.metadata_persistence()
+    check_grimmory_persistence(persistence, medium, mode)
     name = "book-search-check-" + uuid4().hex
     if await adapter.path_exists(backend_root, name):
         raise PublicationError("Unexpected existing mapping challenge; no directory was changed")
@@ -117,15 +121,26 @@ async def verify_grimmory(
         "watcher_enabled": configuration.watcher_enabled,
         "layout": "conventional",
         "audio_extensions": sorted(AUDIO_EXTENSIONS),
+        "metadata_persistence": persistence,
     }
 
 
 async def verify_backend(
-    adapter, library_id, backend_root, worker_root, medium, *, staging_root=None
+    adapter,
+    library_id,
+    backend_root,
+    worker_root,
+    medium,
+    *,
+    staging_root=None,
+    mode="hardlink",
+    workflow="library",
 ):
+    if workflow == "bookdrop":
+        return await verify_bookdrop(adapter, backend_root, worker_root, staging_root)
     if getattr(adapter, "kind", "audiobookshelf") == "grimmory":
         return await verify_grimmory(
-            adapter, library_id, backend_root, worker_root, medium, staging_root
+            adapter, library_id, backend_root, worker_root, medium, staging_root, mode
         )
     version = await adapter.server_version()
     configuration = await adapter.import_configuration(library_id)
@@ -155,6 +170,11 @@ async def verify_backend(
         raise PublicationError(
             "ABS must apply OPF metadata after folder and embedded audio metadata"
         )
+    if not precedence or precedence[-1] != "absMetadata":
+        raise PublicationError(
+            "Keep Audiobookshelf metadata (absMetadata) last in metadata "
+            "precedence so edits made in ABS survive scans."
+        )
     if "scan" not in capabilities.operations and not configuration.watcher_enabled:
         raise PublicationError("Enable the ABS watcher or provide a scan-capable connection")
     name = "book-search-check-" + uuid4().hex
@@ -175,4 +195,65 @@ async def verify_backend(
         "scan_capable": "scan" in capabilities.operations,
         "watcher_enabled": configuration.watcher_enabled,
         "layout": "conventional",  # Nested watcher/import workflow matrix is not complete.
+    }
+
+
+def check_grimmory_persistence(persistence, medium, mode):
+    if persistence["move_files"]:
+        raise PublicationError(
+            "Grimmory's Move files to library pattern is enabled globally. Use "
+            "Bookdrop for Grimmory-managed naming, or disable that setting in "
+            "Grimmory before using Dewarr's direct library import."
+        )
+    relevant = {"audiobook"} if medium == "audio" else {"epub", "pdf", "cbx"}
+    if relevant.intersection(persistence["write_formats"]) and mode != "copy":
+        raise PublicationError(
+            "Grimmory writes embedded metadata for this format. Choose "
+            "independent copies, or disable those writes in Grimmory, to "
+            "protect downloaded and seeding files."
+        )
+
+
+async def verify_bookdrop(adapter, backend_root, worker_root, staging_root):
+    if getattr(adapter, "kind", None) != "grimmory":
+        raise PublicationError("Bookdrop requires Grimmory")
+    if staging_root is None or overlaps(worker_root, staging_root):
+        raise PublicationError(
+            "Bookdrop staging must be outside its watched folder. Mount their "
+            "common parent or configure external staging on the same "
+            "filesystem."
+        )
+    capabilities, _ = await adapter.authorize()
+    if "bookdrop" not in capabilities.operations:
+        raise PublicationError("Grant this Grimmory account access to Bookdrop")
+    # Read access is required for tracking handoff; the mapping challenge proves
+    # the shared path, not whether Grimmory's watcher has ingested a particular file.
+    await adapter.bookdrop_files()
+    for library in await adapter.libraries():
+        configuration = await adapter.import_configuration(library["id"])
+        from pathlib import PurePosixPath
+
+        candidate = PurePosixPath(backend_root)
+        if any(
+            candidate.is_relative_to(PurePosixPath(root))
+            or PurePosixPath(root).is_relative_to(candidate)
+            for root in configuration.folders
+        ):
+            raise PublicationError(
+                "Bookdrop must be separate from every final Grimmory library folder"
+            )
+    name = "book-search-check-" + uuid4().hex
+    if await adapter.path_exists(backend_root, name):
+        raise PublicationError("Unexpected existing mapping challenge")
+    with mapping_marker(worker_root, name):
+        if not await path_visible(adapter, backend_root, name, expected=True):
+            raise PublicationError("Dewarr and Grimmory do not see the same Bookdrop folder")
+    if not await path_visible(adapter, backend_root, name, expected=False):
+        raise PublicationError("Grimmory still sees the removed mapping challenge")
+    return {
+        "version": capabilities.version,
+        "root_mapping": True,
+        "workflow": "bookdrop",
+        "scan_capable": False,
+        "layout": "conventional",
     }

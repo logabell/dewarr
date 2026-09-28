@@ -26,7 +26,10 @@ async def enable_verified_imports(db, destination, actor_id):
         or not actor.active
         or actor.role != "admin"
         or not current.publication_available
-        or (await current_profile(db)).layout != "conventional"
+        or (
+            destination.workflow != "bookdrop"
+            and (await current_profile(db)).layout != "conventional"
+        )
     ):
         return
     approver = await db.get(User, policy.approved_by) if policy else None

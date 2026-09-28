@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 
-from app.api.dependencies import COOKIE, CurrentUser, Database, client_host, require_origin
+from app.api.dependencies import COOKIE, Admin, CurrentUser, Database, client_host, require_origin
 from app.config import get_settings
 from app.db.models import AuditEvent, LibraryGrant, LoginSession, PermissionRole, RateLimit, User
 from app.domain import library_access
@@ -389,6 +389,85 @@ async def create_user(body: UserInput, actor: CurrentUser, db: Database):
 class AutomationPermissionInput(BaseModel):
     allowed: bool
     expected_allowed: bool
+
+
+class AccountProfileInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=100, pattern=r"^[A-Za-z0-9_.@-]+$")
+    display_name: str = Field(min_length=1, max_length=120)
+    active: bool
+    expected_username: str
+    expected_display_name: str
+    expected_active: bool
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        return value.lower()
+
+    @field_validator("display_name")
+    @classmethod
+    def trim_display_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Enter a display name")
+        return value.strip()
+
+
+@router.put("/users/{user_id}/profile", response_model=UserView)
+async def update_account_profile(
+    user_id: UUID, body: AccountProfileInput, actor: Admin, db: Database
+):
+    # Share the username lock with creation and OIDC registration.
+    await db.execute(text("SELECT pg_advisory_xact_lock(720002)"))
+    rows = {
+        user.id: user
+        for user in await db.scalars(
+            select(User)
+            .where(User.id.in_([actor.id, user_id]))
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    }
+    actor = rows.get(actor.id)
+    if not actor or not actor.active or actor.role != "admin":
+        raise HTTPException(403, "Administrator access changed")
+    user = rows.get(user_id)
+    if not user:
+        raise HTTPException(404, "Account not found")
+    if (user.username, user.display_name, user.active) != (
+        body.expected_username,
+        body.expected_display_name,
+        body.expected_active,
+    ):
+        raise HTTPException(409, "This account changed; reload the account")
+    if not body.active:
+        await guard_admin_loss(db, [(user, 0)])
+        if user.id == actor.id:
+            raise HTTPException(409, "Use another administrator account to disable this account")
+    if await db.scalar(select(User.id).where(User.username == body.username, User.id != user.id)):
+        raise HTTPException(409, "That username is already in use")
+    previous = {"username": user.username, "display_name": user.display_name, "active": user.active}
+    user.username, user.display_name, user.active = body.username, body.display_name, body.active
+    if not user.active:
+        await db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+    db.add(
+        AuditEvent(
+            actor_id=actor.id,
+            action="user.profile.changed",
+            entity_id=user.id,
+            detail={
+                "before": previous,
+                "after": {
+                    "username": user.username,
+                    "display_name": user.display_name,
+                    "active": user.active,
+                },
+            },
+        )
+    )
+    await db.commit()
+    return await named_user_view(db, user)
 
 
 @router.put("/users/{user_id}/automation", response_model=UserView)

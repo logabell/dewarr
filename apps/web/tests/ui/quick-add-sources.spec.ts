@@ -87,6 +87,14 @@ test("Quick add follows defaults and format overrides; sources provide compact r
         count: 2,
         message: "2 results",
       },
+      {
+        key: "prowlarr",
+        name: "Prowlarr",
+        state: "completed",
+        count: 0,
+        message:
+          "Indexers selected for search: 0 torrent, 1 Usenet. No torrent indexers are eligible. Enable a searchable torrent indexer with book or audiobook categories in Prowlarr and check Dewarr's source exclusions. Adding qBittorrent does not add torrent sources.",
+      },
     ],
     items: [
       {
@@ -212,7 +220,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
         message: held
           ? "The release language does not match this request"
           : "Selected release download started",
-        request_id: "request-1",
+        request_id: held ? null : "request-1",
         operation_id: "selected-1",
         reasons: held
           ? ["The release language does not match this request"]
@@ -410,6 +418,9 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     page.getByText("Choose a verified torrent downloader", { exact: false }),
   ).toHaveCount(0);
   await expect(page).toHaveURL(/tab=sources/);
+  await expect(
+    page.getByText(/Adding qBittorrent does not add torrent sources/),
+  ).toBeVisible();
   const table = page.getByRole("table");
   await expect(table.getByRole("row")).toHaveCount(3);
   for (const name of [
@@ -535,6 +546,14 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     .getByRole("button", { name: "Download Project Hail Mary" })
     .click();
   await expect(dialog).toContainText("Download not started");
+  await expect(
+    dialog.getByRole("status").filter({
+      hasText: "The release language does not match this request",
+    }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("link", { name: /Download not started/ }),
+  ).toHaveCount(0);
   expect(releaseDownloads).toEqual([
     "/api/source-searches/search-1/results/result-1/download",
     "/api/source-searches/search-1/results/result-1/download",
@@ -544,6 +563,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   const feedback = table.locator(".source-download-status").first();
   await expect(feedback).toContainText("Download not started");
   await expect(feedback).toHaveAttribute("data-tone", "error");
+  await expect(feedback).toHaveAttribute("role", "status");
   for (const width of [1236, 390]) {
     await page.setViewportSize({ width, height: 930 });
     expect((await feedback.boundingBox())!.height).toBeLessThanOrEqual(32);

@@ -321,7 +321,11 @@ async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_sele
         )
         .with_for_update()
     )
-    if not destination:
+    from app.domain.destination_defaults import configured_destinations
+
+    if not destination or not await db.scalar(
+        configured_destinations(user).where(ImportDestination.id == destination.id)
+    ):
         raise HTTPException(404, "Import destination not found")
     configured_library = getattr(spec, rule["medium"] + "_library_id")
     if configured_library and destination.library_id != configured_library:

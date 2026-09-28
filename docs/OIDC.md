@@ -10,6 +10,21 @@ Create that first account in the browser before enabling the provider. Then open
 
 Copy it into the provider. Dewarr uses authorization code with PKCE (`S256`) and `client_secret_basic`. Correcting the issuer path keeps existing links when the scheme, host, and port stay the same. A different scheme, host, or port removes those links, so a reused subject cannot sign in as the old account.
 
+## Link an existing account (including the first administrator)
+
+Username matching deliberately does not attach an identity to an administrator. A matching username alone does not prove ownership of that account. This follows [OpenID Connect’s stable identifier rules](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability); explicit linking requires authentication of both accounts, consistent with [account-linking guidance](https://auth0.com/docs/manage-users/user-accounts/user-account-linking/link-user-accounts).
+
+1. Sign in to Dewarr using your existing local username and password.
+2. Enable and configure the provider in **Settings → Users & access** if needed.
+3. Open **Settings → Sign-in**, enter your current local password, and choose **Link identity provider**.
+4. Authenticate with the provider using the identity you want to attach.
+
+The verified issuer and subject are linked to the same Dewarr account. Your account ID, books, library access, permissions, and local password are retained. This also works when automatic account matching and registration are off. An identity already linked to another account cannot be reassigned here.
+
+You can unlink from **Settings → Sign-in** after confirming your local password. Unlinking ends the account's other sessions and pending linking attempts; your browser receives a new session. If automatic matching is enabled, a later provider sign-in may link the identity again. Accounts without a local password cannot unlink their only sign-in method.
+
+Administrators can open **Settings → Users & access → Account details** to change a username or display name, or disable an account. Disabling ends its sessions and blocks sign-in while retaining owned data and audit history. Rename the account to free its old username. You cannot disable your own account or the last active administrator. Account deletion is not required to resolve a username collision or to link an existing administrator.
+
 ## Authentik
 
 1. Create an application and choose the **OAuth2/OpenID Connect** provider. This is not the proxy provider.

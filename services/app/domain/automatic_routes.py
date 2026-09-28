@@ -285,6 +285,8 @@ async def resolve(db, user, spec, downloader_id, generation, routes):
         expected = getattr(spec, medium + "_library_id")
         if expected and expected != destination.library_id:
             raise HTTPException(422, "Destination conflicts with the requested library")
-        libraries[medium + "_library_id"] = str(destination.library_id)
+        libraries[medium + "_library_id"] = (
+            str(destination.library_id) if destination.library_id else None
+        )
         approvals[medium] = approval
     return libraries, approvals

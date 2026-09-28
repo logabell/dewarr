@@ -1,5 +1,4 @@
 # ruff: noqa: F811
-import base64
 from urllib.parse import parse_qs
 from uuid import UUID
 
@@ -7,10 +6,9 @@ import httpx
 import pytest
 
 from app.adapters.contracts import SubmissionReceipt
-from app.adapters.nzb_descriptor import inspect_nzb
 from app.adapters.sabnzbd import SabClient, SabState
 from app.config import get_settings
-from app.db.models import DownloadAttempt, DownloadInspection, Integration, SourceArtifact
+from app.db.models import DownloadAttempt, DownloadInspection, Integration
 from app.domain import download_attempts as downloads
 from app.domain import downloaders as downloader_settings
 from app.security import decrypt_secrets, encrypt_secrets
@@ -164,17 +162,21 @@ class Grab:
         return SubmissionReceipt(external_ids=["SABnzbd_nzo_test"])
 
 
+@pytest.mark.parametrize("redirect", [None, "https://indexer.test/file?apikey=secret-indexer"])
 async def test_usenet_grab_is_sent_to_sabnzbd_once(
-    client, admin, database, selection_route, monkeypatch
+    client, admin, database, selection_route, monkeypatch, prowlarr_http, redirect
 ):
-    raw = nzb_bytes()
-    descriptor = inspect_nzb(raw)
+    await configure(client)
+    prowlarr_http.update(
+        releases=[release(protocol="usenet", categories=[{"id": 3030}])],
+        bytes=nzb_bytes(),
+        redirect=redirect,
+    )
+    item = (await search(client)).json()["items"][0]
+    inspected = await resolve(client, item["id"])
+    assert inspected.status_code == 200, inspected.text
+    selection_route["artifact_id"] = inspected.json()["id"]
     async with database() as db, db.begin():
-        artifact = await db.get(SourceArtifact, UUID(selection_route["artifact_id"]))
-        artifact.sha256 = descriptor.artifact_sha256
-        artifact.descriptor = descriptor.model_dump(mode="json")
-        artifact.encrypted_content = encrypt_secrets({"nzb": base64.b64encode(raw).decode()})
-        artifact.release_snapshot = {**artifact.release_snapshot, "protocol": "nzb"}
         downloader = await db.get(Integration, UUID(selection_route["downloader_id"]))
         downloader.kind = "sabnzbd"
         downloader.encrypted_secrets = encrypt_secrets({"api_key": "private-sab-key"})

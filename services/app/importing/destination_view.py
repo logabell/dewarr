@@ -26,7 +26,9 @@ class ClientRouteView(StrictModel):
 class DestinationView(StrictModel):
     id: UUID
     root_key: str
-    library_id: UUID
+    library_id: UUID | None
+    integration_id: UUID | None = None
+    workflow: Literal["library", "bookdrop"] = "library"
     medium: str
     backend_path: str
     local_path: str | None = None
@@ -79,6 +81,8 @@ async def view(db, row, *, include_routes=False):
         id=row.id,
         root_key=row.root_key,
         library_id=row.library_id,
+        integration_id=row.integration_id,
+        workflow=row.workflow or "library",
         medium=row.medium,
         backend_path=row.backend_path,
         local_path=configuration["root_path"],

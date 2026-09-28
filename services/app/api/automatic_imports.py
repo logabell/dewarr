@@ -38,7 +38,9 @@ async def view(db, destination):
         select(AutomaticImportPolicy).where(AutomaticImportPolicy.destination_id == destination.id)
     )
     current = await destination_view(db, destination)
-    conventional = (await current_profile(db)).layout == "conventional"
+    conventional = (
+        destination.workflow == "bookdrop" or (await current_profile(db)).layout == "conventional"
+    )
     can_enable = bool(
         current.publication_available and conventional and not get_settings().recovery_mode
     )

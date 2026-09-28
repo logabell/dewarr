@@ -221,7 +221,11 @@ async def delete_integration(integration_id: UUID, admin: Admin, db: Database):
     library_ids = list(await db.scalars(select(Library.id).where(Library.integration_id == row.id)))
     for destination in await db.scalars(
         select(ImportDestination).where(
-            ImportDestination.library_id.in_(library_ids), ImportDestination.deleted_at.is_(None)
+            (
+                ImportDestination.library_id.in_(library_ids)
+                | (ImportDestination.integration_id == row.id)
+            ),
+            ImportDestination.deleted_at.is_(None),
         )
     ):
         await retire_destination(db, destination)

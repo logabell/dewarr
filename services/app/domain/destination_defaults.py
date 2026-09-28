@@ -1,7 +1,7 @@
 """Use the configured library folder when no destination override is needed."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.db.models import ImportDestination, Integration, Library
 from app.domain.visibility import visible_library
@@ -11,16 +11,24 @@ def configured_destinations(user):
     # Count unverified folders too: a failed probe must not select another library.
     return (
         select(ImportDestination)
-        .join(Library)
-        .join(Integration)
+        .outerjoin(Library, Library.id == ImportDestination.library_id)
+        .join(
+            Integration,
+            or_(
+                Integration.id == Library.integration_id,
+                Integration.id == ImportDestination.integration_id,
+            ),
+        )
         .where(
             ImportDestination.enabled.is_(True),
             ImportDestination.deleted_at.is_(None),
-            Library.accessible.is_(True),
+            or_(
+                and_(Library.accessible.is_(True), visible_library(user)),
+                and_(ImportDestination.workflow == "bookdrop", user.role == "admin"),
+            ),
             Integration.enabled.is_(True),
             Integration.deleted_at.is_(None),
             Integration.kind.in_(["audiobookshelf", "grimmory"]),
-            visible_library(user),
         )
     )
 

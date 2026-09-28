@@ -19,6 +19,7 @@ type PresetRole = "admin" | "member" | "viewer" | "requester" | "approver";
 type Editor =
   | { kind: "add" }
   | { kind: "user"; id: string }
+  | { kind: "profile"; id: string }
   | { kind: "role"; id: string | null };
 
 const presetRoles = new Set<PresetRole>([
@@ -136,7 +137,9 @@ function OidcSettingsPanel() {
       >
         <p className="muted">
           Sign in with Authentik, Pocket ID, Authelia, or another OpenID Connect
-          provider. Local passwords stay available.
+          provider. Local passwords stay available. To link your existing
+          account, including an administrator, open{" "}
+          <Link to="/settings#sign-in">Sign-in</Link>.
         </p>
         {settings.isPending ? (
           <Loading />
@@ -593,7 +596,9 @@ export default function Accounts({ embedded = false }: { embedded?: boolean }) {
     return a.display_name.localeCompare(b.display_name);
   });
   const editing = people.find(
-    (user) => user.id === (editor?.kind === "user" ? editor.id : ""),
+    (user) =>
+      user.id ===
+      (editor?.kind === "user" || editor?.kind === "profile" ? editor.id : ""),
   );
   const editingRole =
     editor?.kind === "role" && editor.id
@@ -709,6 +714,7 @@ export default function Accounts({ embedded = false }: { embedded?: boolean }) {
               setBanner(null);
               setEditor({ kind: "user", id });
             }}
+            onProfile={(id) => setEditor({ kind: "profile", id })}
           />
         </div>
       ) : catalog.isPending ? (
@@ -737,6 +743,14 @@ export default function Accounts({ embedded = false }: { embedded?: boolean }) {
           held={held}
           close={() => setEditor(null)}
           onLinked={(message) => setBanner(message)}
+        />
+      )}
+      {editor?.kind === "profile" && editing && (
+        <AccountProfileDialog
+          key={editing.id}
+          user={editing}
+          selfId={selfId}
+          close={() => setEditor(null)}
         />
       )}
       {editor?.kind === "user" && catalog.data && editing && (
@@ -776,11 +790,13 @@ function UsersTable({
   selfId,
   canManageAdmins,
   onEdit,
+  onProfile,
 }: {
   people: User[];
   selfId?: string;
   canManageAdmins: boolean;
   onEdit: (id: string) => void;
+  onProfile: (id: string) => void;
 }) {
   return (
     <div className="access-table-scroll">
@@ -827,6 +843,15 @@ function UsersTable({
                 )}
               </td>
               <td>
+                {canManageAdmins && (
+                  <button
+                    type="button"
+                    aria-label={`Account details for ${user.display_name}`}
+                    onClick={() => onProfile(user.id)}
+                  >
+                    Account details
+                  </button>
+                )}
                 {(canManageAdmins || user.role !== "admin") && (
                   <button
                     type="button"
@@ -1662,4 +1687,150 @@ function rolePeople(people: User[], id: string) {
 
 function countLabel(count: number) {
   return count === 1 ? "1 person" : `${count} people`;
+}
+
+function AccountProfileDialog({
+  user: initialUser,
+  selfId,
+  close,
+}: {
+  user: User;
+  selfId?: string;
+  close: () => void;
+}) {
+  const client = useQueryClient();
+  const [user, setUser] = useState(initialUser);
+  const [username, setUsername] = useState(user.username);
+  const [displayName, setDisplayName] = useState(user.display_name);
+  const [active, setActive] = useState(user.active !== false);
+  const dirty =
+    username !== user.username ||
+    displayName !== user.display_name ||
+    active !== (user.active !== false);
+  const save = useMutation({
+    mutationFn: async () =>
+      result(
+        await api.PUT("/api/auth/users/{user_id}/profile", {
+          params: { path: { user_id: user.id } },
+          body: {
+            username,
+            display_name: displayName,
+            active,
+            expected_username: user.username,
+            expected_display_name: user.display_name,
+            expected_active: user.active !== false,
+          },
+        }),
+      ),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ["accounts"] });
+      client.invalidateQueries({ queryKey: ["session"] });
+      close();
+    },
+  });
+  const reload = useMutation({
+    mutationFn: async () => {
+      const people = result(await api.GET("/api/auth/users"));
+      const current = people.find((person) => person.id === user.id);
+      if (!current) throw new Error("Account not found");
+      client.setQueryData(["accounts"], people);
+      return current;
+    },
+    onSuccess: (current) => {
+      setUser(current);
+      setUsername(current.username);
+      setDisplayName(current.display_name);
+      setActive(current.active !== false);
+      save.reset();
+    },
+  });
+  const busy = save.isPending || reload.isPending;
+  return (
+    <AccessDialog
+      title={`Account details for ${user.display_name}`}
+      dirty={dirty}
+      busy={busy}
+      close={close}
+    >
+      {(requestClose) => (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            save.mutate();
+          }}
+        >
+          <label>
+            Username
+            <input
+              autoFocus
+              required
+              minLength={3}
+              maxLength={100}
+              pattern={"[A-Za-z0-9_.@\\-]+"}
+              autoComplete="off"
+              value={username}
+              disabled={busy}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </label>
+          <label>
+            Display name
+            <input
+              required
+              maxLength={120}
+              value={displayName}
+              disabled={busy}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </label>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={active}
+              disabled={busy || user.id === selfId}
+              onChange={(event) => setActive(event.target.checked)}
+            />
+            Account enabled
+          </label>
+          <p className="access-hint">
+            Disabling an account ends its sessions and blocks sign-in. Its books
+            and history are retained. Rename it to release its old username.
+          </p>
+          {user.id === selfId && (
+            <p className="access-hint">
+              Use another administrator account to disable your own account.
+            </p>
+          )}
+          <p className="access-hint">
+            Each person can link their own identity provider in Settings →
+            Sign-in.
+          </p>
+          <Notice error={save.error || reload.error} />
+          {save.error instanceof ApiError && save.error.status === 409 && (
+            <div className="access-conflict">
+              <p>
+                Reloading replaces your draft with the latest saved account
+                details.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => reload.mutate()}
+              >
+                Reload saved account
+              </button>
+            </div>
+          )}
+          <div className="access-form-actions">
+            <button type="button" disabled={busy} onClick={requestClose}>
+              Cancel
+            </button>
+            <button className="primary" disabled={busy || !dirty}>
+              {save.isPending ? "Saving…" : "Save account"}
+            </button>
+          </div>
+        </form>
+      )}
+    </AccessDialog>
+  );
 }

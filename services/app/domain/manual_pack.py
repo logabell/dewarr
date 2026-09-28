@@ -38,7 +38,7 @@ def child_specification(intent, selection, destination):
     values = RequestSpec.model_validate(intent.specification).model_dump(mode="json")
     medium = selection.frozen["requirements"]["medium"]
     values.update(mode=medium, preferred_medium=None, ebook_version_id=None, audio_version_id=None)
-    values[medium + "_library_id"] = str(destination.library_id)
+    values[medium + "_library_id"] = str(destination.library_id) if destination.library_id else None
     values[("audio" if medium == "ebook" else "ebook") + "_library_id"] = None
     if medium == "ebook":
         values.update(abridged=None, required_narrators=[])

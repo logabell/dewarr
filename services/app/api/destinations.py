@@ -88,6 +88,8 @@ async def save_destination(root_key: str, body: DestinationInput, admin: Admin, 
             raise HTTPException(409, "Destination no longer matches the edited settings")
         row = ImportDestination(root_key=root_key)
         db.add(row)
+    if row.workflow == "bookdrop":
+        raise HTTPException(422, "Edit Bookdrop through Library folders")
     for key, value in body.model_dump(exclude={"expected_revision"}).items():
         setattr(row, key, value)
     row.probe, row.probe_token, row.probe_operation_id = None, None, None

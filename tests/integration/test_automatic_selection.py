@@ -393,6 +393,8 @@ async def test_rejected_first_candidate_falls_back_to_next_and_retains_decisions
     assert result["status"] == "completed" and result["artifact_id"] == str(artifact_id)
     assert result["inspections"] == 2
     assert result["decisions"][0]["reasons"]
+    if failure != "collection":
+        assert "Fixture artifact unavailable" in result["decisions"][0]["reasons"]
     assert calls == [source["result"], second]
 
 

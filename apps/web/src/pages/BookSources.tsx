@@ -343,9 +343,16 @@ function Results({
         </p>
       )}
       {data.sources
-        .filter((source) => source.state === "failed")
+        .filter(
+          (source) =>
+            source.state === "failed" ||
+            (source.key === "prowlarr" && source.state === "completed"),
+        )
         .map((source) => (
-          <p className="notice error" key={source.key}>
+          <p
+            className={source.state === "failed" ? "notice error" : "notice"}
+            key={source.key}
+          >
             {source.name}: {source.message}
           </p>
         ))}

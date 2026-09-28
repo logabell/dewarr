@@ -4,12 +4,69 @@ import re
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, union
 
 from app.config import ImportStorageRoute, get_settings
-from app.db.models import ImportDestination, ImportStorageSettings
+from app.db.models import (
+    AcquisitionSelection,
+    AuditEvent,
+    DownloadInspection,
+    ImportDestination,
+    ImportEntry,
+    ImportStorageSettings,
+    Integration,
+)
 
 _KEY = re.compile(r"^[a-z0-9_-]{1,60}$")
+
+
+async def historical_source_keys(db):
+    """Keep roots needed by inspections, frozen choices and recovery, even after completion."""
+    return set(
+        await db.scalars(
+            union(
+                select(DownloadInspection.source_key),
+                select(ImportEntry.configuration["source_key"].astext),
+                select(AcquisitionSelection.frozen["mapping"]["source_key"].astext),
+                select(AcquisitionSelection.frozen["route_mapping"]["source_key"].astext),
+            )
+        )
+    )
+
+
+async def prune_unused_sources(db, actor_id, *, candidates=None):
+    """Reconcile legacy UI roots under the downloader settings lock; never touch files."""
+    from app.domain.downloaders import TRANSFER_KINDS
+
+    await db.flush()
+    storage = await db.get(ImportStorageSettings, 1, with_for_update=True)
+    if not storage or not storage.sources:
+        return
+    retained = set(get_settings().import_sources)
+    for config in await db.scalars(
+        select(Integration.config).where(
+            Integration.kind.in_(TRANSFER_KINDS),
+            Integration.owner_id.is_(None),
+            Integration.deleted_at.is_(None),
+        )
+    ):
+        retained.update(item["source_key"] for item in (config or {}).get("mappings", []))
+    candidates = (set(storage.sources) if candidates is None else set(candidates)) - retained
+    candidates &= set(storage.sources)
+    if not candidates:
+        return
+    unused = candidates - await historical_source_keys(db)
+    if unused:
+        removed = {key: storage.sources[key] for key in sorted(unused)}
+        storage.sources = {key: path for key, path in storage.sources.items() if key not in unused}
+        db.add(
+            AuditEvent(
+                actor_id=actor_id,
+                action="organization.download-sources.pruned",
+                detail={"sources": removed},
+            )
+        )
+        await db.flush()
 
 
 def apply_storage(settings, destinations, staging_root, sources=None, routes=None):

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.config import get_settings
 from app.db.models import (
@@ -82,8 +82,6 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
         raise HTTPException(409, "File groups changed after this plan; save a new reviewed plan")
     if plan.revision != body.plan_revision:
         raise HTTPException(409, "Review the current frozen import plan")
-    if document["profile"]["layout"] != "conventional":
-        raise HTTPException(409, "Nested publication awaits the complete compatibility gate")
     if not document.get("initial_sidecars") or not document.get("version_revisions"):
         raise HTTPException(409, "Create a fresh plan with frozen metadata and version evidence")
     source = document["source"]
@@ -94,6 +92,11 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
         row = await db.get(ImportDestination, choice.id)
         if not row or row.medium != medium or not row.enabled:
             raise HTTPException(422, "Choose an enabled destination for each medium")
+        if row.workflow != "bookdrop" and (
+            document["profile"]["layout"] != "conventional"
+            or medium in document.get("bookdrop_media", [])
+        ):
+            raise HTTPException(409, "Save a conventional library plan for direct import")
         current = await destination_view(db, row)
         if current.shared_root != (medium in document.get("shared_media", [])):
             raise HTTPException(
@@ -144,7 +147,11 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
         contents = document.get("collection_contents", {}).get(item["group_id"], [])
         await verify_contents(db, contents)
         if await already_owned(
-            db, version.id, destination.library_id, inspection_id=plan.inspection_id
+            db,
+            version.id,
+            destination.library_id,
+            inspection_id=plan.inspection_id,
+            integration_id=destination.integration_id,
         ):
             entry.state, entry.message = (
                 "skipped",
@@ -170,11 +177,26 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
             ):
                 previous.reserved = False
             await db.flush()
+        configuration = await destination_configuration(db, destination)
         reserved = await db.scalar(
             select(ImportEntry.id)
             .where(
-                ImportEntry.configuration["destination"]["library_id"].astext
-                == str(destination.library_id),
+                or_(
+                    (
+                        ImportEntry.configuration["destination"]["backend"]["integration_id"].astext
+                        == str(destination.integration_id)
+                    )
+                    if destination.workflow == "bookdrop"
+                    else (
+                        ImportEntry.configuration["destination"]["library_id"].astext
+                        == str(destination.library_id)
+                    ),
+                    (ImportEntry.configuration["destination"]["workflow"].astext == "bookdrop")
+                    & (
+                        ImportEntry.configuration["destination"]["backend"]["integration_id"].astext
+                        == configuration["backend"]["integration_id"]
+                    ),
+                ),
                 ImportEntry.version_id == version.id,
                 ImportEntry.reserved.is_(True),
             )
@@ -199,7 +221,6 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
                 "These files already belong to a reserved import; review that import first"
             )
             continue
-        configuration = await destination_configuration(db, destination)
         try:
             conversion = audio_conversion(item, files, group["metadata"])
         except ValueError as error:
@@ -223,6 +244,18 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
                 "Enter the library folder qBittorrent uses before renaming the seeding copy"
             )
             continue
+        bookdrop = destination.workflow == "bookdrop"
+        media_files = [file for file in group["files"] if file.get("role", "media") == "media"]
+        if bookdrop and (
+            contents
+            or len(media_files) != 1
+            or PurePosixPath(media_files[0]["path"]).suffix.lower() != ".epub"
+        ):
+            entry.message = (
+                "Bookdrop supports one EPUB per book; use direct library import for "
+                "other formats or collections"
+            )
+            continue
         specification = PublicationSpec(
             entry_id=entry.id,
             plan_revision=plan.revision,
@@ -235,20 +268,23 @@ async def start_import(db, admin, plan_id: UUID, body: ImportInput, idempotency_
             journal_root=Path(configuration["journal_path"])
             if configuration.get("journal_path")
             else None,
-            folder=item["folder"].split("/", 1)[1],
+            folder=f"dewarr-{entry.id}" if bookdrop else item["folder"].split("/", 1)[1],
             mode="rename" if rename_seeding else destination.mode,
             files=[
                 PublishFile(
                     source=mapping["source"],
-                    name=PurePosixPath(mapping["destination"]).name,
+                    name=PurePosixPath(
+                        mapping["source"] if bookdrop else mapping["destination"]
+                    ).name,
                     sha256=files[mapping["source"]]["sha256"],
                     identity=files[mapping["source"]]["identity"],
                 )
                 for mapping in item["files"]
                 if mapping["source"] not in converted
+                and (not bookdrop or mapping["source"] == media_files[0]["path"])
             ],
             conversion=conversion,
-            sidecars=sidecars,
+            sidecars={} if bookdrop else sidecars,
         )
         entry.specification = specification.model_dump(mode="json")
         entry.configuration = {

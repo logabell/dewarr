@@ -146,6 +146,15 @@ async def view(db, user, row, selection):
             )
         ):
             message = "Import needs administrator attention; the completed download is preserved"
+        elif pending_review := await db.scalar(
+            select(ImportEntry)
+            .where(
+                ImportEntry.run_id == automatic.import_run_id,
+                ImportEntry.state.in_(["awaiting-review", "needs-link", "rejected"]),
+            )
+            .limit(1)
+        ):
+            message = pending_review.message
         elif await db.scalar(
             select(ImportEntry.id).where(
                 ImportEntry.run_id == automatic.import_run_id,

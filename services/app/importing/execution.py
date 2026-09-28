@@ -8,6 +8,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import os
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -83,8 +84,10 @@ async def context(db, entry, token, *, lock=False):
     integration = await db.get(
         Integration, UUID(backend["integration_id"]), with_for_update=lock, populate_existing=True
     )
-    library = await db.get(
-        Library, destination.library_id, with_for_update=lock, populate_existing=True
+    library = (
+        await db.get(Library, destination.library_id, with_for_update=lock, populate_existing=True)
+        if destination.library_id
+        else None
     )
     if lock:
         await db.refresh(destination, with_for_update=True)
@@ -97,7 +100,8 @@ async def context(db, entry, token, *, lock=False):
         or not actor.active
         or actor.role != "admin"
         or not integration.enabled
-        or not library.accessible
+        or (not library and destination.workflow != "bookdrop")
+        or (library and not library.accessible)
         or not destination.enabled
     ):
         raise PublicationError("Import access changed or recovery mode is active")
@@ -160,11 +164,15 @@ class RenameGuard:
         try:
             await self.db.begin()
             entry = await self.db.get(ImportEntry, self.entry_id)
-            _, _, _, library = await context(self.db, entry, self.token, lock=True)
+            _, destination, _, library = await context(self.db, entry, self.token, lock=True)
             run = await self.db.get(ImportRun, entry.run_id)
             plan = await self.db.get(FrozenImportPlan, run.plan_id)
             if await already_owned(
-                self.db, entry.version_id, library.id, inspection_id=plan.inspection_id
+                self.db,
+                entry.version_id,
+                library.id if library else None,
+                inspection_id=plan.inspection_id,
+                integration_id=destination.integration_id,
             ):
                 raise AlreadyOwned("This version became available before publication")
             if observation:
@@ -203,20 +211,26 @@ def published_sizes(spec, receipt):
     return sizes
 
 
-def verify_published_media(spec, receipt=None):
+def verify_published_media(spec, receipt=None, *, rewrite_names=()):
+    def verify(media, name, expected_hash):
+        if name in rewrite_names and spec.mode == "copy":
+            # The journaled handoff transferred these bytes to Grimmory. Its
+            # metadata writer leaves fileSizeKb stale until a later library scan.
+            # The caller must verify the recorded book, paths and metadata first.
+            if os.fstat(media).st_size == 0:
+                raise PublicationError("Grimmory's rewritten media is empty; review the book")
+        elif not expected_hash or digest(media, time.monotonic() + 300) != expected_hash:
+            raise PublicationError("Published media changed; library confirmation is held")
+
     with directory(spec.destination_root) as root, beneath(root, spec.folder, folder=True) as item:
         derived = (receipt or {}).get("derived") or {}
         if spec.conversion:
             recorded = derived.get(spec.conversion.output_name)
             with beneath(item, spec.conversion.output_name) as media:
-                if not recorded or digest(media, time.monotonic() + 300) != recorded["sha256"]:
-                    raise PublicationError(
-                        "Converted audiobook changed; library confirmation is held"
-                    )
+                verify(media, spec.conversion.output_name, (recorded or {}).get("sha256"))
         for file in spec.files:
             with beneath(item, file.name) as media:
-                if digest(media, time.monotonic() + 300) != file.sha256:
-                    raise PublicationError("Published media changed; library confirmation is held")
+                verify(media, file.name, file.sha256)
 
 
 def _size_matches(expected_bytes: int, file) -> bool:
@@ -521,7 +535,61 @@ def observe_cover(spec):
         return None  # External artwork changes do not invalidate the book's media.
 
 
-async def find_item(adapter, entry, library_external_id):
+async def resume_metadata_item(adapter, entry, library_external_id):
+    """Resume only the exact book verified before an acknowledged or uncertain PUT."""
+    handoff = (entry.receipt or {}).get("grimmory_metadata")
+    if not handoff:
+        return None
+    current = await adapter.item(handoff["item_id"])
+    spec = PublicationSpec.model_validate(entry.specification)
+    names = set(published_sizes(spec, entry.receipt))
+    folder = _published_folder(entry)
+    if (
+        current.id != handoff["item_id"]
+        or current.library_id != library_external_id
+        or handoff["library_id"] != library_external_id
+        or current.path != folder
+        or not _grimmory_ready(entry, current)
+        or {file.path for file in _media_files(current)}
+        != {str(PurePosixPath(folder) / name) for name in names}
+    ):
+        raise PublicationError("The Grimmory book changed after its metadata handoff; review it")
+    try:
+        _same_metadata(entry, current, playback_order=False)
+    except PublicationError:
+        # A request that never reached Grimmory can be retried only if the original
+        # hashes still match. execute performs that check before another PUT.
+        return None
+    await asyncio.to_thread(
+        verify_published_media,
+        spec,
+        entry.receipt,
+        rewrite_names=handoff["rewrite_names"],
+    )
+    return current
+
+
+async def record_metadata_handoff(entry_id, token, item, persistence):
+    async with session_factory()() as db, db.begin():
+        current = await db.get(ImportEntry, entry_id)
+        await context(db, current, token, lock=True)
+        spec = PublicationSpec.model_validate(current.specification)
+        formats = set(persistence["write_formats"])
+        rewrite_names = []
+        if spec.mode == "copy":
+            for name in published_sizes(spec, current.receipt):
+                kind = FORMAT_TYPES.get(PurePosixPath(name).suffix.lower().lstrip("."), "").lower()
+                if kind in formats:
+                    rewrite_names.append(name)
+        handoff = {
+            "item_id": item.id,
+            "library_id": item.library_id,
+            "rewrite_names": rewrite_names,
+        }
+        current.receipt = {**current.receipt, "grimmory_metadata": handoff}
+
+
+async def find_item(adapter, entry, library_external_id, *, before_metadata=None):
     page, expected_total, found = 0, None, []
     folder = str(
         PurePosixPath(entry.configuration["destination"]["backend_path"])
@@ -556,6 +624,16 @@ async def find_item(adapter, entry, library_external_id):
     if current.library_id != library_external_id or not _same_files(entry, current):
         raise PublicationError(f"{_app_name(current)} item changed during confirmation")
     if hasattr(adapter, "apply_catalog_metadata"):
+        from app.importing.backend import check_grimmory_persistence
+
+        persistence = await adapter.metadata_persistence()
+        check_grimmory_persistence(
+            persistence,
+            entry.expected_metadata["medium"],
+            entry.specification["mode"],
+        )
+        if before_metadata:
+            await before_metadata(current, persistence)
         await adapter.apply_catalog_metadata(
             current.id, entry.expected_metadata, observed_year=current.year
         )
@@ -739,7 +817,16 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
         if not operation or operation.kind != "organization.publish":
             return
         entry = await db.get(ImportEntry, UUID(operation.payload["entry_id"]), with_for_update=True)
-        if entry.state in {"confirmed", "skipped", "held", "cancel-held", "cancelled"}:
+        if entry.state in {
+            "confirmed",
+            "skipped",
+            "held",
+            "cancel-held",
+            "cancelled",
+            "awaiting-review",
+            "needs-link",
+            "rejected",
+        }:
             return
         cancelling = entry.state == "cancelling"
         entry_id = entry.id
@@ -759,7 +846,8 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
             _, _, integration, library = await context(db, entry, token)
             secrets = decrypt_secrets(integration.encrypted_secrets)
             secret = secrets if integration.kind == "grimmory" else secrets["token"]
-            url, external_library = integration.base_url, library.external_id
+            url, external_library = integration.base_url, library.external_id if library else None
+            bookdrop = entry.configuration["destination"].get("workflow") == "bookdrop"
             factory = client_factory or (
                 Grimmory if integration.kind == "grimmory" else Audiobookshelf
             )
@@ -775,8 +863,10 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                 spec.destination_root,
                 entry.expected_metadata["medium"],
                 staging_root=spec.staging_root,
+                mode=spec.mode,
+                workflow="bookdrop" if bookdrop else "library",
             )
-            if integration.kind == "grimmory":
+            if integration.kind == "grimmory" and not bookdrop:
                 allowed = set(
                     (capabilities.get("configuration") or {}).get("allowed_formats") or []
                 )
@@ -792,10 +882,25 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                         raise PublicationError(
                             f"This Grimmory library does not accept {book_type} files."
                         )
+            if bookdrop:
+                from app.importing.bookdrop import record_handoff, recovered_handoff
+
+                recovered = (
+                    entry.receipt
+                    if entry.published_at
+                    else await asyncio.to_thread(recovered_handoff, spec)
+                )
+                if recovered:
+                    async with session_factory()() as db, db.begin():
+                        current = await db.get(ImportEntry, entry_id, with_for_update=True)
+                        if current.run_token == token:
+                            await record_handoff(db, current, recovered)
+                    return
             published_now = not entry.published_at
             if published_now:
                 stage = "Preparing artwork"
-                spec = await prepare_cover(entry_id, token)
+                if not bookdrop:
+                    spec = await prepare_cover(entry_id, token)
                 entry.specification = spec.model_dump(mode="json")
                 stage = "Checking library storage"
                 observation = await capacity.observe_import(spec)
@@ -846,6 +951,16 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                     current = await db.get(ImportEntry, entry_id, with_for_update=True)
                     if current.run_token != token:
                         return
+                    if bookdrop:
+                        await record_handoff(db, current, receipt)
+                        db.add(
+                            AuditEvent(
+                                actor_id=operation.owner_id,
+                                action="organization.bookdrop.delivered",
+                                entity_id=current.id,
+                            )
+                        )
+                        return
                     current.receipt, current.published_at = receipt, datetime.now(UTC)
                     current.state, current.message = (
                         "awaiting-library",
@@ -863,11 +978,25 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
             stage = "Confirming the library copy"
             if capabilities["scan_capable"] and published_now:
                 await adapter.scan(external_library)
-            await asyncio.to_thread(verify_published_media, spec, receipt)
-            item = await find_item(adapter, entry, external_library)
+
+            async def before_metadata(item, persistence):
+                await record_metadata_handoff(entry_id, token, item, persistence)
+
+            item = (
+                await resume_metadata_item(adapter, entry, external_library)
+                if integration.kind == "grimmory"
+                else None
+            )
+            if item is None:
+                await asyncio.to_thread(verify_published_media, spec, receipt)
+                item = await find_item(
+                    adapter, entry, external_library, before_metadata=before_metadata
+                )
             if item is None and capabilities["scan_capable"] and not published_now:
                 await adapter.scan(external_library)
-                item = await find_item(adapter, entry, external_library)
+                item = await find_item(
+                    adapter, entry, external_library, before_metadata=before_metadata
+                )
             if detection_needs_another_scan(
                 integration.kind,
                 capabilities,
@@ -875,7 +1004,9 @@ async def execute(operation_id: UUID, *, client_factory=None, checkpoint=lambda 
                 found=item is not None,
             ):
                 await adapter.scan(external_library)
-                item = await find_item(adapter, entry, external_library)
+                item = await find_item(
+                    adapter, entry, external_library, before_metadata=before_metadata
+                )
             if item is None:
                 async with session_factory()() as db:
                     current = await db.get(ImportEntry, entry_id)

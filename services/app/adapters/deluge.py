@@ -83,7 +83,7 @@ class DelugeClient(RpcTransport):
                 raise AdapterError(
                     FailureKind.UNAVAILABLE, "Connect the Deluge Web UI to its daemon first."
                 )
-            version = await self.rpc("daemon.info")
+            version = await self.rpc("daemon.get_version")
             plugins = await self.rpc("core.get_enabled_plugins")
             operations = {"submit", "find", "status", "files", "pause", "resume"}
             if "Label" in plugins:

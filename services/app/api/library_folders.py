@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 from uuid import UUID
 
@@ -39,7 +40,12 @@ from app.importing.naming import StrictModel, fingerprint
 from app.importing.planning import assert_admin
 from app.importing.route_evidence import approval
 from app.importing.seeding_rename import normalize_seeding_target
-from app.importing.storage import storage_locations, storage_route, storage_settings
+from app.importing.storage import (
+    prune_unused_sources,
+    storage_locations,
+    storage_route,
+    storage_settings,
+)
 from app.security import decrypt_secrets
 
 router = APIRouter(prefix="/organization/library-folders", tags=["organization"])
@@ -48,6 +54,8 @@ UNFINISHED_IMPORTS = (
     "queued",
     "publishing",
     "awaiting-library",
+    "awaiting-review",
+    "needs-link",
     "held",
     "cancelling",
     "cancel-held",
@@ -55,7 +63,9 @@ UNFINISHED_IMPORTS = (
 
 
 class FolderOption(StrictModel):
-    library_id: UUID
+    library_id: UUID | None = None
+    integration_id: UUID | None = None
+    workflow: Literal["library", "bookdrop"] = "library"
     library_name: str
     server_name: str
     server_kind: str
@@ -123,7 +133,26 @@ async def folders(admin: Admin, db: Database):
             )
         return row
 
-    return await asyncio.gather(*(option(library, integration) for library, integration in rows))
+    options = await asyncio.gather(*(option(library, integration) for library, integration in rows))
+    for integration in await db.scalars(
+        select(Integration).where(
+            Integration.kind == "grimmory",
+            Integration.enabled.is_(True),
+            Integration.deleted_at.is_(None),
+        )
+    ):
+        options.append(
+            FolderOption(
+                integration_id=integration.id,
+                workflow="bookdrop",
+                library_name="Bookdrop review",
+                server_name=integration.name,
+                server_kind="grimmory",
+                folders=[""],
+                audio_allowed=False,
+            )
+        )
+    return options
 
 
 class LibraryFolderBrowseView(StrictModel):
@@ -143,7 +172,9 @@ async def browse_library_folders(
 
 
 class FolderInput(StrictModel):
-    library_id: UUID
+    library_id: UUID | None = None
+    integration_id: UUID | None = None
+    workflow: Literal["library", "bookdrop"] = "library"
     backend_path: str = Field(max_length=1024)
     local_path: str = Field(max_length=1024)
     destination_id: UUID | None = None
@@ -151,9 +182,15 @@ class FolderInput(StrictModel):
     seeding_rename: bool = False
     client_path: str | None = Field(default=None, max_length=1024)
     automatic: bool | None = None
+    mode: Literal["hardlink", "copy"] = "hardlink"
 
     @model_validator(mode="after")
     def seeding_target(self):
+        if self.workflow == "bookdrop":
+            if not self.integration_id or self.library_id or self.seeding_rename:
+                raise ValueError("Bookdrop requires a Grimmory connection and independent copies")
+        elif not self.library_id or self.integration_id:
+            raise ValueError("Select a final library for direct imports")
         self.seeding_rename, self.client_path = normalize_seeding_target(
             self.seeding_rename, self.client_path
         )
@@ -187,9 +224,31 @@ class FolderInput(StrictModel):
 @router.put("/{medium}", response_model=DestinationView)
 async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Admin, db: Database):
     await transaction_lock(db, "library-storage")
+    await transaction_lock(db, DEFAULTS_LOCK)
+    await transaction_lock(db, "downloaders:settings")
     await assert_admin(db, admin.id)
     try:
-        library, config = await configuration(db, body.library_id)
+        if body.workflow == "bookdrop":
+            if medium != "ebook":
+                raise HTTPException(422, "Bookdrop currently supports single-file EPUB downloads")
+            integration = await db.get(Integration, body.integration_id)
+            if (
+                not integration
+                or integration.deleted_at
+                or not integration.enabled
+                or integration.kind != "grimmory"
+            ):
+                raise HTTPException(422, "Choose a connected Grimmory server")
+            library = None
+            config = SimpleNamespace(
+                folders=[body.backend_path],
+                audiobooks_only=False,
+                audio_allowed=False,
+                watcher_enabled=True,
+            )
+        else:
+            library, config = await configuration(db, body.library_id)
+            integration = await db.get(Integration, library.integration_id)
     except (AdapterError, InvalidToken, ValueError, KeyError) as error:
         raise HTTPException(
             422,
@@ -209,7 +268,9 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
         )
     if medium == "audio" and getattr(config, "audio_allowed", True) is False:
         raise HTTPException(422, "This library does not accept audiobooks. Choose another library.")
-    root_key = f"library-{medium}"
+    root_key = (
+        f"bookdrop-{body.integration_id}" if body.workflow == "bookdrop" else f"library-{medium}"
+    )
     destination = (
         await db.get(ImportDestination, body.destination_id)
         if body.destination_id
@@ -220,6 +281,18 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
     if body.destination_id and (not destination or destination.deleted_at):
         raise HTTPException(404, "Destination no longer exists")
     if destination:
+        if destination.workflow != body.workflow and await db.scalar(
+            select(ImportEntry.id)
+            .where(ImportEntry.destination_id == destination.id, ImportEntry.reserved.is_(True))
+            .limit(1)
+        ):
+            raise HTTPException(
+                409,
+                (
+                    "This destination has retained import receipts. Create a "
+                    "separate destination for the other workflow."
+                ),
+            )
         await transaction_lock(db, f"automatic-policy:{destination.id}")
         await db.refresh(destination, with_for_update=True)
         if (
@@ -230,6 +303,7 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
                 409, "Folder settings changed. Reopen the folder picker and try again."
             )
         root_key = destination.root_key
+    await prune_unused_sources(db, admin.id)
     settings = await storage_settings(db)
     # Only the operator's setting fixes staging; a saved value is where an earlier pick put it.
     explicit = get_settings().import_staging_root
@@ -288,7 +362,33 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
     except ValueError as error:
         logger.warning("Library folder selection rejected: %s", error)
         raise HTTPException(422, str(error)) from error
-    integration = await db.get(Integration, library.integration_id)
+    bookdrop_roots = [
+        settings.import_destinations.get(row.root_key)
+        for row in await db.scalars(
+            select(ImportDestination).where(
+                ImportDestination.workflow == "bookdrop",
+                ImportDestination.deleted_at.is_(None),
+                ImportDestination.root_key != root_key,
+            )
+        )
+    ]
+    if any(path and overlaps(local, path) for path in bookdrop_roots):
+        raise HTTPException(422, "Final library folders must be separate from Bookdrop intake")
+    if body.workflow == "bookdrop" and (
+        overlaps(local, stage)
+        or any(
+            overlaps(local, path)
+            for key, path in settings.import_destinations.items()
+            if key != root_key
+        )
+    ):
+        raise HTTPException(
+            422,
+            (
+                "Bookdrop needs its own intake folder and staging outside that "
+                "folder. Mount a common parent or configure external staging."
+            ),
+        )
     try:
         check_staging_backend(
             integration.kind, local, stage, watcher_enabled=config.watcher_enabled
@@ -318,9 +418,10 @@ async def choose(medium: Literal["ebook", "audio"], body: FolderInput, admin: Ad
         destination = ImportDestination(root_key=root_key)
         db.add(destination)
     destination.library_id, destination.medium = body.library_id, medium
+    destination.workflow, destination.integration_id = body.workflow, body.integration_id
     destination.backend_path, destination.mode, destination.enabled = (
         body.backend_path,
-        "hardlink",
+        "copy" if body.workflow == "bookdrop" else body.mode,
         True,
     )
     destination.seeding_rename, destination.client_path = body.seeding_rename, body.client_path
@@ -376,8 +477,11 @@ async def activate(destination_id: UUID, body: ActivateInput, admin: Admin, db: 
         "destination_revision": current.revision,
         **approval(current.probe),
     }
-    # One choice sets library identity and physical route together. Preserve unrelated preferences.
-    for key, owner in [("installation", None), (f"user:{admin.id}", admin.id)]:
+    # Bookdrop is admin-only; preserve the shared route used by member downloads.
+    scopes = [(f"user:{admin.id}", admin.id)]
+    if destination.workflow != "bookdrop":
+        scopes.insert(0, ("installation", None))
+    for key, owner in scopes:
         defaults = await db.scalar(
             select(AcquisitionDefaults).where(AcquisitionDefaults.key == key)
         )
@@ -386,7 +490,9 @@ async def activate(destination_id: UUID, body: ActivateInput, admin: Admin, db: 
             db.add(defaults)
         defaults.preferences = {
             **defaults.preferences,
-            f"{destination.medium}_library_id": str(destination.library_id),
+            f"{destination.medium}_library_id": str(destination.library_id)
+            if destination.library_id
+            else None,
             f"{destination.medium}_destination_id": str(destination.id),
         }
         defaults.generation += 1

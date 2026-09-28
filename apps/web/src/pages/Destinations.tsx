@@ -20,6 +20,7 @@ import MountedFolderBrowser from "../components/MountedFolderBrowser";
 import "./library-setup.css";
 import BookDialog from "../components/BookDialog";
 import AutomaticImportPolicy from "./AutomaticImportPolicy";
+import LibraryFolderRecovery from "./LibraryFolderRecovery";
 import {
   useLibraryFolderSettings,
   selectLibraryDestination,
@@ -202,7 +203,7 @@ export default function Destinations({
                       )}
                       <p>
                         {destination
-                          ? `${library?.name || "Library"} · ${libraryApp(destination.server_kind)}`
+                          ? `${destination.workflow === "bookdrop" ? "Bookdrop review" : library?.name || "Library"} · ${libraryApp(destination.server_kind)}`
                           : "No folder selected"}
                       </p>
                       {destination && (
@@ -410,7 +411,11 @@ function FolderPicker({
   const [browsing, setBrowsing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(!!saved?.seeding_rename);
   const [choice, setChoice] = useState(
-    saved ? `${saved.library_id}|${saved.backend_path}` : "",
+    saved?.workflow === "bookdrop"
+      ? `${saved.integration_id}|bookdrop`
+      : saved
+        ? `${saved.library_id}|${saved.backend_path}`
+        : "",
   );
   const [localPath, setLocalPath] = useState(
     saved?.local_path && posixPath(saved.local_path)
@@ -427,6 +432,10 @@ function FolderPicker({
   );
   const [seedingRename, setSeedingRename] = useState(!!saved?.seeding_rename);
   const [clientPath, setClientPath] = useState(saved?.client_path || "");
+  const [bookdropPath, setBookdropPath] = useState(
+    saved?.workflow === "bookdrop" ? saved.backend_path : "",
+  );
+  const [copyOnly, setCopyOnly] = useState(saved?.mode === "copy");
   const [automaticChoice, setAutomatic] = useState<boolean | null>(null);
   const policy = useQuery({
     queryKey: [
@@ -476,7 +485,10 @@ function FolderPicker({
       item.folders.map((path) => ({
         ...item,
         path,
-        key: `${item.library_id}|${path}`,
+        key:
+          item.workflow === "bookdrop"
+            ? `${item.integration_id}|bookdrop`
+            : `${item.library_id}|${path}`,
       })),
     )
     .sort((a, b) =>
@@ -489,7 +501,10 @@ function FolderPicker({
     (folder) => folder.key === selectedChoice,
   );
   const library = selectedFolder;
-  const backendPath = selectedFolder?.path || "";
+  const bookdrop = selectedFolder?.workflow === "bookdrop";
+  const backendPath = bookdrop
+    ? bookdropPath.trim()
+    : selectedFolder?.path || "";
   const remotePath = !!backendPath && !posixPath(backendPath);
   const mapping = otherPath || remotePath;
   const eligible = !!selectedFolder;
@@ -506,17 +521,20 @@ function FolderPicker({
         folder.library_id === other.library_id &&
         folder.path === other.backend_path,
     );
-  const saveBlocker = !eligible
-    ? "Choose an available library folder first."
-    : !workerPath.trim()
-      ? "Choose the mounted folder Dewarr can access."
-      : seedingRename && !clientPath.trim()
-        ? "Enter the library folder path in qBittorrent."
-        : seedingRename && qbit.length !== 1
-          ? "Seeding rename requires one configured qBittorrent client."
-          : saved && !policy.data
-            ? "Load the automatic import settings before saving this folder."
-            : "";
+  const saveBlocker =
+    bookdrop && !backendPath
+      ? "Enter the Bookdrop folder configured in Grimmory."
+      : !eligible
+        ? "Choose an available library folder first."
+        : !workerPath.trim()
+          ? "Choose the mounted folder Dewarr can access."
+          : seedingRename && !clientPath.trim()
+            ? "Enter the library folder path in qBittorrent."
+            : seedingRename && qbit.length !== 1
+              ? "Seeding rename requires one configured qBittorrent client."
+              : saved && !policy.data
+                ? "Load the automatic import settings before saving this folder."
+                : "";
   const save = useMutation({
     mutationFn: async () => {
       if (saveBlocker) throw new Error(saveBlocker);
@@ -528,17 +546,53 @@ function FolderPicker({
         );
       setVerificationWarnings([]);
       setProgress("Saving folder…");
+      const workflow = library.workflow || "library";
+      if (
+        current.current?.workflow !== workflow ||
+        (workflow === "bookdrop" &&
+          current.current?.integration_id !== library.integration_id)
+      ) {
+        const existing = result(
+          await api.GET("/api/organization/destinations"),
+        );
+        current.current =
+          existing.find(
+            (row) =>
+              row.medium === medium &&
+              row.workflow === workflow &&
+              (workflow === "bookdrop"
+                ? row.integration_id === library.integration_id
+                : row.library_id === library.library_id &&
+                  row.backend_path === backendPath),
+          ) ||
+          (workflow === "library"
+            ? existing.find(
+                (row) =>
+                  row.workflow === "library" &&
+                  row.root_key === `library-${medium}`,
+              )
+            : undefined);
+      }
       const destination = result(
         await api.PUT("/api/organization/library-folders/{medium}", {
           params: { path: { medium } },
           body: {
             library_id: library.library_id,
+            workflow: library.workflow || "library",
+            integration_id: library.integration_id,
+            mode: bookdrop || copyOnly ? "copy" : "hardlink",
             backend_path: backendPath,
             local_path: workerPath,
-            destination_id: current.current?.id,
-            expected_revision: current.current?.revision,
-            seeding_rename: seedingRename,
-            client_path: seedingRename ? clientPath.trim() : null,
+            destination_id:
+              current.current?.workflow === (library.workflow || "library")
+                ? current.current.id
+                : undefined,
+            expected_revision:
+              current.current?.workflow === (library.workflow || "library")
+                ? current.current.revision
+                : undefined,
+            seeding_rename: !bookdrop && seedingRename,
+            client_path: !bookdrop && seedingRename ? clientPath.trim() : null,
             automatic,
           },
         }),
@@ -662,7 +716,8 @@ function FolderPicker({
                       separate book folders labeled Ebook or Audiobook.
                     </p>
                   )}
-                  {folders.length > 1 && (
+                  {(folders.length > 1 ||
+                    (folders.length === 1 && !eligible)) && (
                     <label className="library-selection">
                       Library
                       <select
@@ -678,6 +733,7 @@ function FolderPicker({
                             posixPath(folder.path) ? folder.path : "",
                           );
                           setClientPath("");
+                          setSeedingRename(false);
                         }}
                       >
                         {!eligible && (
@@ -700,12 +756,26 @@ function FolderPicker({
                               )
                               .map((folder) => (
                                 <option key={folder.key} value={folder.key}>
-                                  {folder.library_name} — {folder.path}
+                                  {folder.library_name} · {folder.server_name}
+                                  {folder.path ? ` — ${folder.path}` : ""}
                                 </option>
                               ))}
                           </optgroup>
                         ))}
                       </select>
+                    </label>
+                  )}
+                  {bookdrop && (
+                    <label>
+                      Bookdrop folder in Grimmory
+                      <input
+                        value={bookdropPath}
+                        onChange={(event) =>
+                          setBookdropPath(event.target.value)
+                        }
+                        placeholder="/bookdrop"
+                        spellCheck={false}
+                      />
                     </label>
                   )}
                   {selectedFolder && (
@@ -718,16 +788,18 @@ function FolderPicker({
                     </div>
                   )}
                   {!folders.length && (
-                    <p className="notice">
-                      {options.data.libraries.length
-                        ? "No compatible folders found. Check your library server’s folder settings."
-                        : "Connect Audiobookshelf or Grimmory to choose a library folder."}
-                    </p>
+                    <LibraryFolderRecovery
+                      refresh={() => void options.refetch()}
+                      refreshing={options.isFetching}
+                    />
                   )}
                   {options.data.libraries
                     .filter((item) => item.error)
                     .map((item) => (
-                      <p className="notice error" key={item.library_id}>
+                      <p
+                        className="notice error"
+                        key={item.library_id || item.integration_id}
+                      >
                         {item.library_name}: {item.error}
                       </p>
                     ))}
@@ -821,6 +893,31 @@ function FolderPicker({
                     </fieldset>
                   )}
                 </fieldset>
+                {selectedFolder && (
+                  <p className="notice">
+                    {bookdrop
+                      ? "Review in Grimmory Bookdrop · Dewarr copies one EPUB without changing its filename or metadata. Grimmory chooses the final name and library when you approve it. Staging must be outside Bookdrop. Admin downloads only; other formats use direct import."
+                      : selectedFolder.server_kind === "grimmory"
+                        ? "Direct library import · Dewarr names the files and supplies initial metadata. Grimmory’s global Move files to library pattern must be off. Use copies if Grimmory writes embedded metadata."
+                        : "Audiobookshelf scan · Dewarr organizes files and supplies initial OPF metadata. Keep Audiobookshelf metadata last in ABS precedence so your edits survive future scans."}
+                  </p>
+                )}
+                {!bookdrop && !seedingRename && (
+                  <label className="library-toggle">
+                    <input
+                      type="checkbox"
+                      checked={copyOnly}
+                      onChange={(event) => setCopyOnly(event.target.checked)}
+                    />
+                    <span>
+                      <strong>Use independent copies</strong>
+                      <small>
+                        Protect downloaded files when the library server writes
+                        embedded metadata.
+                      </small>
+                    </span>
+                  </label>
+                )}
                 <section className="library-import-behavior">
                   <div className="library-local-heading">
                     <Copy size={19} aria-hidden="true" />
@@ -833,7 +930,9 @@ function FolderPicker({
                       <p>
                         {seedingRename
                           ? "Dewarr will verify that qBittorrent can access the library folder."
-                          : "Dewarr uses hardlinks when supported and copies files otherwise."}
+                          : bookdrop || copyOnly
+                            ? "Dewarr copies files independently and preserves the download."
+                            : "Dewarr uses hardlinks when supported and copies files otherwise."}
                       </p>
                     </div>
                   </div>
@@ -845,19 +944,26 @@ function FolderPicker({
                       onChange={(event) => setAutomatic(event.target.checked)}
                     />
                     <span>
-                      <strong>Import on completion</strong>
+                      <strong>
+                        {bookdrop
+                          ? "Send to Bookdrop on completion"
+                          : "Import on completion"}
+                      </strong>
                       <small>
-                        Automatically add matched downloads to this library
-                        after verification. Uncertain matches stay in review.
+                        {bookdrop
+                          ? "Deliver matched EPUB downloads for review. Availability waits for a linked library copy."
+                          : "Automatically add matched downloads to this library after verification. Uncertain matches stay in review."}
                       </small>
                     </span>
                   </label>
                 </section>
                 <p className="muted">
-                  This is the final {medium === "audio" ? "audiobook" : "ebook"}{" "}
-                  destination for all sources. Download clients use their own
-                  download folders. Dewarr checks each connected client's file
-                  access here; this does not change your client defaults.
+                  This is the{" "}
+                  {bookdrop ? "review intake" : "final library destination"} for{" "}
+                  {medium === "audio" ? "audiobooks" : "ebooks"} from all
+                  sources. Download clients use their own download folders.
+                  Dewarr checks each connected client's file access here; this
+                  does not change your client defaults.
                 </p>
                 {!options.data.downloaders.length && (
                   <p className="notice">
@@ -882,7 +988,9 @@ function FolderPicker({
                       type="checkbox"
                       checked={seedingRename}
                       disabled={
-                        save.isPending || (!seedingRename && qbit.length !== 1)
+                        bookdrop ||
+                        save.isPending ||
+                        (!seedingRename && qbit.length !== 1)
                       }
                       onChange={(event) => {
                         setSeedingRename(event.target.checked);

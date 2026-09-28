@@ -262,7 +262,12 @@ async def prepare(db, checkpoint, owner_id, scan_id, finding_ids, key):
         seen.add(entry.id)
         proof = {}
         outcome, reason = "awaiting-library", "Record publication; ABS confirmation is pending"
-        if entry.state in WITHDRAWN:
+        if entry.configuration["destination"].get("workflow") == "bookdrop":
+            outcome = "rejected" if entry.state == "rejected" else "awaiting-review"
+            reason = (
+                "Bookdrop handoff retained; review in Grimmory and link the actual library copy"
+            )
+        elif entry.state in WITHDRAWN:
             outcome, reason = "cancel-held", "Published files exist for a withdrawn import"
         else:
             try:

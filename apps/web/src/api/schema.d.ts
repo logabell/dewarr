@@ -312,6 +312,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/users/{user_id}/profile": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Update Account Profile */
+    put: operations["update_account_profile_api_auth_users__user_id__profile_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/users/{user_id}/automation": {
     parameters: {
       query?: never;
@@ -393,6 +410,25 @@ export interface paths {
     put: operations["update_permissions_api_auth_users__user_id__permissions_put"];
     post?: never;
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/oidc/link": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Link Status */
+    get: operations["link_status_api_auth_oidc_link_get"];
+    put?: never;
+    /** Begin Link */
+    post: operations["begin_link_api_auth_oidc_link_post"];
+    /** Unlink Identity */
+    delete: operations["unlink_identity_api_auth_oidc_link_delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -2680,6 +2716,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/integrations/{integration_id}/sync/{operation_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Sync Status */
+    get: operations["sync_status_api_integrations__integration_id__sync__operation_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/library/groups/{kind}": {
     parameters: {
       query?: never;
@@ -3955,6 +4008,40 @@ export interface paths {
     put?: never;
     /** Retry Entry */
     post: operations["retry_entry_api_organization_imports__run_id__entries__entry_id__retry_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/organization/imports/{run_id}/entries/{entry_id}/bookdrop-candidates": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Bookdrop Candidates */
+    get: operations["bookdrop_candidates_api_organization_imports__run_id__entries__entry_id__bookdrop_candidates_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/organization/imports/{run_id}/entries/{entry_id}/bookdrop": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Review Bookdrop */
+    post: operations["review_bookdrop_api_organization_imports__run_id__entries__entry_id__bookdrop_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -5581,6 +5668,21 @@ export interface components {
        */
       enabled: boolean;
     };
+    /** AccountProfileInput */
+    AccountProfileInput: {
+      /** Username */
+      username: string;
+      /** Display Name */
+      display_name: string;
+      /** Active */
+      active: boolean;
+      /** Expected Username */
+      expected_username: string;
+      /** Expected Display Name */
+      expected_display_name: string;
+      /** Expected Active */
+      expected_active: boolean;
+    };
     /** AccountView */
     AccountView: {
       /** Configured */
@@ -6397,6 +6499,28 @@ export interface components {
        * Format: date-time
        */
       expires_at: string;
+    };
+    /** BookdropCandidate */
+    BookdropCandidate: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Title */
+      title: string;
+      /** Library Name */
+      library_name: string;
+    };
+    /** BookdropReviewInput */
+    BookdropReviewInput: {
+      /**
+       * Action
+       * @enum {string}
+       */
+      action: "refresh" | "link" | "reject";
+      /** Asset Id */
+      asset_id?: string | null;
     };
     /** BootstrapInput */
     BootstrapInput: {
@@ -7320,11 +7444,8 @@ export interface components {
        * Format: uuid
        */
       id: string;
-      /**
-       * Library Id
-       * Format: uuid
-       */
-      library_id: string;
+      /** Library Id */
+      library_id: string | null;
       /** Name */
       name: string;
       /** Medium */
@@ -7387,11 +7508,16 @@ export interface components {
       id: string;
       /** Root Key */
       root_key: string;
+      /** Library Id */
+      library_id: string | null;
+      /** Integration Id */
+      integration_id?: string | null;
       /**
-       * Library Id
-       * Format: uuid
+       * Workflow
+       * @default library
+       * @enum {string}
        */
-      library_id: string;
+      workflow: "library" | "bookdrop";
       /** Medium */
       medium: string;
       /** Backend Path */
@@ -7888,6 +8014,8 @@ export interface components {
        * @default false
        */
       can_cancel: boolean;
+      /** Bookdrop Url */
+      bookdrop_url?: string | null;
       cover_export?: components["schemas"]["CoverExportView"] | null;
     };
     /** ExcludedFile */
@@ -8000,11 +8128,16 @@ export interface components {
     };
     /** FolderInput */
     FolderInput: {
+      /** Library Id */
+      library_id?: string | null;
+      /** Integration Id */
+      integration_id?: string | null;
       /**
-       * Library Id
-       * Format: uuid
+       * Workflow
+       * @default library
+       * @enum {string}
        */
-      library_id: string;
+      workflow: "library" | "bookdrop";
       /** Backend Path */
       backend_path: string;
       /** Local Path */
@@ -8022,14 +8155,25 @@ export interface components {
       client_path?: string | null;
       /** Automatic */
       automatic?: boolean | null;
+      /**
+       * Mode
+       * @default hardlink
+       * @enum {string}
+       */
+      mode: "hardlink" | "copy";
     };
     /** FolderOption */
     FolderOption: {
+      /** Library Id */
+      library_id?: string | null;
+      /** Integration Id */
+      integration_id?: string | null;
       /**
-       * Library Id
-       * Format: uuid
+       * Workflow
+       * @default library
+       * @enum {string}
        */
-      library_id: string;
+      workflow: "library" | "bookdrop";
       /** Library Name */
       library_name: string;
       /** Server Name */
@@ -8217,6 +8361,8 @@ export interface components {
       schema_version: number;
       /** Shared Media */
       shared_media?: ("ebook" | "audio")[];
+      /** Bookdrop Media */
+      bookdrop_media?: ("ebook" | "audio")[];
       /** Destinations */
       destinations?: {
         [key: string]: string;
@@ -10106,6 +10252,28 @@ export interface components {
        * Format: date-time
        */
       last_seen_at: string;
+    };
+    /** OidcLinkInput */
+    OidcLinkInput: {
+      /**
+       * Password
+       * Format: password
+       */
+      password: string;
+    };
+    /** OidcLinkStartView */
+    OidcLinkStartView: {
+      /** Authorization Url */
+      authorization_url: string;
+    };
+    /** OidcLinkView */
+    OidcLinkView: {
+      /** Password Available */
+      password_available: boolean;
+      /** Linked */
+      linked: boolean;
+      /** Issuer */
+      issuer?: string | null;
     };
     /** OidcPublicView */
     OidcPublicView: {
@@ -14788,6 +14956,41 @@ export interface operations {
       };
     };
   };
+  update_account_profile_api_auth_users__user_id__profile_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        user_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AccountProfileInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UserView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   automation_permission_api_auth_users__user_id__automation_put: {
     parameters: {
       query?: never;
@@ -14962,6 +15165,92 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["UserView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  link_status_api_auth_oidc_link_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OidcLinkView"];
+        };
+      };
+    };
+  };
+  begin_link_api_auth_oidc_link_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OidcLinkInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OidcLinkStartView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  unlink_identity_api_auth_oidc_link_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OidcLinkInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthView"];
         };
       };
       /** @description Validation Error */
@@ -19820,6 +20109,38 @@ export interface operations {
       };
     };
   };
+  sync_status_api_integrations__integration_id__sync__operation_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        integration_id: string;
+        operation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OperationView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   groups_api_library_groups__kind__get: {
     parameters: {
       query?: {
@@ -22515,6 +22836,74 @@ export interface operations {
     responses: {
       /** @description Successful Response */
       202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  bookdrop_candidates_api_organization_imports__run_id__entries__entry_id__bookdrop_candidates_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+        entry_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BookdropCandidate"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  review_bookdrop_api_organization_imports__run_id__entries__entry_id__bookdrop_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+        entry_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BookdropReviewInput"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
         headers: {
           [name: string]: unknown;
         };

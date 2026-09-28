@@ -170,11 +170,19 @@ class GrimmoryFixture:
         self.organization = "BOOK_PER_FOLDER"
         self.metadata_source = "PREFER_SIDECAR"
         self.watch = True
+        self.persistence = {
+            "moveFilesToLibraryPattern": False,
+            "saveToOriginalFile": {
+                key: {"enabled": False} for key in ("epub", "pdf", "cbx", "audiobook")
+            },
+        }
+        self.bookdrop_queue = []
         self.allowed = []
         self.admin = True
         self.manage = False
         self.edit = True
         self.library_path = "/books"
+        self.path_root = None
         self.unauthorized = False
         self.reject_login = False
         self.metadata_updates = []
@@ -237,6 +245,10 @@ class GrimmoryFixture:
                     "assignedLibraries": [{"id": 7}, {"id": 9}],
                 },
             )
+        if path == "/api/v1/settings":
+            return httpx.Response(200, json={"metadataPersistenceSettings": self.persistence})
+        if path == "/api/v1/bookdrop/files":
+            return httpx.Response(200, json={"content": self.bookdrop_queue, "last": True})
         if path == "/api/v1/version":
             return httpx.Response(200, json={"current": self.version, "latest": "3.5.0"})
         if path == "/api/v1/libraries":
@@ -276,7 +288,7 @@ class GrimmoryFixture:
                 200, json={"bookId": 2, "folderBased": True, "tracks": self.tracks}
             )
         if path == "/api/v1/path":
-            assert request.url.params["path"] == self.library_path
+            assert request.url.params["path"] == (self.path_root or self.library_path)
             names = [child.name for child in self.root.iterdir()] if self.root else []
             return httpx.Response(200, json=names)
         if path == "/api/v1/libraries/7/refresh":
@@ -723,4 +735,46 @@ async def test_grimmory_nested_staging_needs_disabled_watcher_and_scan(tmp_path,
                     "ebook",
                     staging_root=fixture.root / ".book-search-staging",
                 )
+    assert not list(fixture.root.iterdir())
+
+
+async def test_direct_import_refuses_competing_renaming_and_shared_file_writes(tmp_path):
+    fixture = GrimmoryFixture(tmp_path.resolve())
+    fixture.persistence["moveFilesToLibraryPattern"] = True
+    async with fixture.client() as adapter:
+        with pytest.raises(PublicationError, match="globally"):
+            await verify_backend(adapter, "7", "/books", fixture.root, "ebook", mode="copy")
+        fixture.persistence["moveFilesToLibraryPattern"] = False
+        fixture.persistence["saveToOriginalFile"]["epub"]["enabled"] = True
+        for mode in ("hardlink", "rename"):
+            with pytest.raises(PublicationError, match="independent copies"):
+                await verify_backend(adapter, "7", "/books", fixture.root, "ebook", mode=mode)
+        verified = await verify_backend(adapter, "7", "/books", fixture.root, "ebook", mode="copy")
+    assert verified["metadata_persistence"]["write_formats"] == ["epub"]
+    assert fixture.metadata_updates == []
+
+
+async def test_bookdrop_rejects_internal_staging_and_final_library_root(tmp_path):
+    fixture = GrimmoryFixture(tmp_path.resolve())
+    async with fixture.client() as adapter:
+        with pytest.raises(PublicationError, match="outside"):
+            await verify_backend(
+                adapter,
+                None,
+                "/books",
+                fixture.root,
+                "ebook",
+                workflow="bookdrop",
+                staging_root=fixture.root / ".hidden",
+            )
+        with pytest.raises(PublicationError, match="separate"):
+            await verify_backend(
+                adapter,
+                None,
+                "/books",
+                fixture.root,
+                "ebook",
+                workflow="bookdrop",
+                staging_root=fixture.root.parent / "stage",
+            )
     assert not list(fixture.root.iterdir())

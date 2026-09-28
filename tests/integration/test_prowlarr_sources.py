@@ -34,6 +34,7 @@ def prowlarr_http(monkeypatch):
         "indexers": [indexer()],
         "releases": [release()],
         "bytes": torrent_bytes(),
+        "redirect": None,
     }
 
     async def handler(req):
@@ -43,6 +44,8 @@ def prowlarr_http(monkeypatch):
         if state["gate"]:
             await state["gate"].wait()
         if req.url.path.endswith("/download"):
+            if state["redirect"]:
+                return httpx.Response(301, headers={"Location": state["redirect"]})
             return httpx.Response(state["status"], content=state["bytes"], headers=state["headers"])
         body = (
             state["indexers"]
@@ -53,10 +56,25 @@ def prowlarr_http(monkeypatch):
         )
         return httpx.Response(state["status"], json=body, headers=state["headers"])
 
+    async def resolver(host, port):
+        return ["93.184.216.34"]
+
+    async def redirected(req):
+        state["calls"].append(req)
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "indexer.test"
+        assert "x-api-key" not in req.headers
+        return httpx.Response(state["status"], content=state["bytes"])
+
     monkeypatch.setattr(
         prowlarr_network,
         "ProwlarrClient",
-        lambda *args: ProwlarrClient(*args, transport=httpx.MockTransport(handler)),
+        lambda *args: ProwlarrClient(
+            *args,
+            transport=httpx.MockTransport(handler),
+            redirect_transport=httpx.MockTransport(redirected),
+            resolver=resolver,
+        ),
     )
     monkeypatch.setattr(prowlarr_network, "REQUEST_INTERVAL", 0)
     return state
@@ -84,9 +102,11 @@ async def resolve(client, result_id):
     return await client.post(f"/api/sources/prowlarr/results/{result_id}/artifact")
 
 
+@pytest.mark.parametrize("redirect", [None, "https://indexer.test/file?apikey=secret-indexer"])
 async def test_private_search_resolution_and_shared_download_path(
-    client, admin, database, selection_route, prowlarr_http, monkeypatch, caplog
+    client, admin, database, selection_route, prowlarr_http, monkeypatch, caplog, redirect
 ):
+    prowlarr_http["redirect"] = redirect
     caplog.set_level(logging.INFO, logger="httpx")
     assert (await configure(client)).status_code == 200
     assert (await client.post("/api/sources/prowlarr/connection/test")).json()[
@@ -219,9 +239,11 @@ async def test_expired_read_lease_recovers_and_revoked_actor_does_not_get_result
         assert (await db.get(SourceConnection, "prowlarr")).lease_token is None
 
 
+@pytest.mark.parametrize("redirect", [None, "https://indexer.test/file?apikey=secret-indexer"])
 async def test_unsupported_and_invalid_torrents_never_become_artifacts(
-    client, admin, database, prowlarr_http
+    client, admin, database, prowlarr_http, redirect
 ):
+    prowlarr_http["redirect"] = redirect
     await configure(client)
     prowlarr_http["releases"] = [release(protocol="usenet")]
     result_id = (await search(client)).json()["items"][0]["id"]

@@ -81,3 +81,5 @@ coverage/
 /config/
 /compose.override.yaml
 /compose.override.yml
+
+!/docs/NATIVE-LIBRARY-IMPORTS.md

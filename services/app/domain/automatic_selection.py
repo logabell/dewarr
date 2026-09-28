@@ -819,7 +819,12 @@ async def run(identifier):
                     db,
                     operation,
                     row.id,
-                    ["Release could not be inspected or is unsupported; review this source result"],
+                    [str(error)]
+                    if isinstance(error, AdapterError)
+                    else [
+                        "Release could not be inspected or is unsupported; "
+                        "review this source result"
+                    ],
                 )
                 return
             finish(
@@ -827,6 +832,8 @@ async def run(identifier):
                 "queued" if retry else "held",
                 "Source access is temporarily unavailable"
                 if retry
+                else str(error)
+                if isinstance(error, AdapterError)
                 else "Release inspection needs review; inspect the source result manually",
             )
         if retry:

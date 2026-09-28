@@ -12,6 +12,9 @@ const labels: Record<string, string> = {
   queued: "Queued",
   publishing: "Publishing",
   "awaiting-library": "Waiting for the library",
+  "awaiting-review": "Awaiting Bookdrop review",
+  "needs-link": "Bookdrop handoff needs review",
+  rejected: "Rejected · resend suppressed",
   confirmed: "Available",
   held: "Needs attention",
   skipped: "Already available",
@@ -125,7 +128,8 @@ export default function ImportExecution({
     onSuccess: refresh,
   });
   const executable =
-    plan.document.profile.layout === "conventional" &&
+    (plan.document.profile.layout === "conventional" ||
+      media.every((medium) => choice(medium)?.workflow === "bookdrop")) &&
     !!Object.keys(plan.document.version_revisions || {}).length;
   const cancel = useMutation({
     mutationFn: async ({
@@ -155,8 +159,9 @@ export default function ImportExecution({
         <>
           <h3>Import into your library</h3>
           <p className="muted">
-            Resolved books import independently. Availability updates after
-            Audiobookshelf confirms the item and files.
+            Resolved books import independently. Availability updates after the
+            library confirms the item and files. Bookdrop deliveries wait for
+            your review and a linked library copy.
           </p>
           {media.map((medium) => (
             <label key={medium}>
@@ -176,12 +181,22 @@ export default function ImportExecution({
                 <option value="">Choose a verified destination</option>
                 {eligible(medium).map((row) => (
                   <option key={row.id} value={row.id}>
-                    {row.root_key} · {row.mode === "copy" ? "Copy" : "Hardlink"}
+                    {row.workflow === "bookdrop"
+                      ? "Grimmory Bookdrop review"
+                      : row.root_key}{" "}
+                    · {row.mode === "copy" ? "Copy" : "Hardlink"}
                   </option>
                 ))}
               </select>
             </label>
           ))}
+          {media.some((medium) => choice(medium)?.workflow === "bookdrop") && (
+            <p className="notice">
+              Bookdrop receives an independent EPUB copy with its original
+              filename and metadata. The final library naming preview and
+              selected covers do not apply to this handoff.
+            </p>
+          )}
           {!executable && (
             <p className="notice">
               Use a fresh conventional plan with frozen metadata and version
@@ -229,6 +244,16 @@ export default function ImportExecution({
                 {entry.state === "confirmed" && item && (
                   <Link to={`/books/${item.work_id}`}>View library book</Link>
                 )}
+                {entry.bookdrop_url &&
+                  ["awaiting-review", "needs-link", "rejected"].includes(
+                    entry.state,
+                  ) && (
+                    <BookdropReview
+                      runId={run.id}
+                      entry={entry}
+                      refresh={refresh}
+                    />
+                  )}
                 {entry.can_retry && (
                   <button
                     className="primary"
@@ -276,5 +301,99 @@ export default function ImportExecution({
         </section>
       ))}
     </section>
+  );
+}
+
+function BookdropReview({
+  runId,
+  entry,
+  refresh,
+}: {
+  runId: string;
+  entry: components["schemas"]["EntryView"];
+  refresh: () => Promise<unknown>;
+}) {
+  const [assetId, setAssetId] = useState("");
+  const candidates = useQuery({
+    queryKey: ["bookdrop-candidates", entry.id],
+    queryFn: async () =>
+      result(
+        await api.GET(
+          "/api/organization/imports/{run_id}/entries/{entry_id}/bookdrop-candidates",
+          { params: { path: { run_id: runId, entry_id: entry.id } } },
+        ),
+      ),
+  });
+  const review = useMutation({
+    mutationFn: async (action: "refresh" | "link" | "reject") =>
+      result(
+        await api.POST(
+          "/api/organization/imports/{run_id}/entries/{entry_id}/bookdrop",
+          {
+            params: { path: { run_id: runId, entry_id: entry.id } },
+            body: { action, asset_id: action === "link" ? assetId : null },
+          },
+        ),
+      ),
+    onSuccess: async () => {
+      await refresh();
+      await candidates.refetch();
+    },
+  });
+  return (
+    <div>
+      <a href={entry.bookdrop_url!} target="_blank" rel="noreferrer">
+        Review in Grimmory Bookdrop
+      </a>
+      <p className="muted">
+        After importing in Grimmory, sync its library in Dewarr and link the
+        reviewed copy. Leaving the queue alone does not prove it was imported.
+      </p>
+      <button
+        disabled={review.isPending}
+        onClick={() => {
+          if (entry.state === "rejected") candidates.refetch();
+          else review.mutate("refresh");
+        }}
+      >
+        Refresh review status
+      </button>
+      <label>
+        Imported library copy
+        <select
+          value={assetId}
+          onChange={(event) => setAssetId(event.target.value)}
+        >
+          <option value="">Choose a confirmed copy of this edition</option>
+          {candidates.data?.map((asset) => (
+            <option key={asset.id} value={asset.id}>
+              {asset.title} · {asset.library_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        disabled={!assetId || review.isPending}
+        onClick={() => review.mutate("link")}
+      >
+        Link reviewed copy
+      </button>
+      {entry.state !== "rejected" && (
+        <details>
+          <summary>Other outcome</summary>
+          <p>
+            Mark this handoff rejected to retain the receipt and prevent
+            resending. This does not delete files from Grimmory.
+          </p>
+          <button
+            disabled={review.isPending}
+            onClick={() => review.mutate("reject")}
+          >
+            Mark rejected
+          </button>
+        </details>
+      )}
+      <Notice error={review.error || candidates.error} />
+    </div>
   );
 }

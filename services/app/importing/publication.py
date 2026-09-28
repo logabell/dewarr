@@ -406,6 +406,34 @@ def _private_directory(fd, path):
         )
 
 
+def secure_managed_directory(fd, path):
+    """Constrain inherited POSIX ACL access on an owned, empty control directory."""
+    info = os.fstat(fd)
+    if not stat.S_IMODE(info.st_mode) & 0o077:
+        # Preserve already-private legacy directories, including inherited setgid.
+        return
+    # Existing receipts may have been writable by somebody else. Changing their
+    # parent mode cannot make those receipts trustworthy again.
+    with os.scandir(fd) as entries:
+        empty = next(entries, None) is None
+    if info.st_uid != os.geteuid() or not empty:
+        raise PublicationError(
+            f"Cannot secure folder {path}: it must be owned by Dewarr (uid {os.geteuid()}) "
+            "and empty before automatic permission repair. Review its ownership, ACLs "
+            "and any existing recovery files, then set private permissions (0700)."
+        )
+    try:
+        os.fchmod(fd, 0o700)
+    except OSError as error:
+        raise PublicationError(
+            f"Cannot set private permissions (0700) on {path}. "
+            "Check the NAS ACL and mount permission settings for Dewarr's user."
+        ) from error
+    _private_directory(fd, path)
+    if stat.S_IMODE(os.fstat(fd).st_mode) != 0o700:
+        raise PublicationError(f"The filesystem did not keep private permissions (0700) on {path}")
+
+
 @contextmanager
 def private_staging(path, journal_root=None):
     with directory(path) as media:
@@ -428,13 +456,17 @@ def prepare_journals(path):
         return
     except FileNotFoundError:
         pass
+    created = False
     with directory(path.parent) as parent:
         try:
             os.mkdir(path.name, mode=0o700, dir_fd=parent)
+            created = True
             sync_directory(parent)
         except FileExistsError:
             pass
     with directory(path) as control:
+        if created:
+            secure_managed_directory(control, path)
         _private_directory(control, path)
 
 

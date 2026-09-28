@@ -90,6 +90,17 @@ class OidcIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class OidcLinkAttempt(Base):
+    __tablename__ = "oidc_link_attempts"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_hash: Mapped[str] = mapped_column(
+        ForeignKey("login_sessions.token_hash", ondelete="CASCADE"), index=True
+    )
+    issuer: Mapped[str] = mapped_column(String(300))
+    client_id: Mapped[str] = mapped_column(String(200))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class OidcProvider(Base):
     __tablename__ = "oidc_provider"
     __table_args__ = (
@@ -1227,9 +1238,17 @@ class ImportDestination(Identity, Base):
     __table_args__ = (
         CheckConstraint("medium IN ('ebook', 'audio')"),
         CheckConstraint("mode IN ('hardlink', 'copy')"),
+        CheckConstraint(
+            "(workflow = 'library' AND library_id IS NOT NULL AND integration_id IS NULL) OR "
+            "(workflow = 'bookdrop' AND library_id IS NULL AND integration_id IS NOT NULL "
+            "AND medium = 'ebook' AND mode = 'copy' AND NOT seeding_rename)",
+            name="destination_workflow",
+        ),
     )
     root_key: Mapped[str] = mapped_column(String(60), unique=True)
-    library_id: Mapped[UUID] = mapped_column(ForeignKey("libraries.id"))
+    workflow: Mapped[str] = mapped_column(String(20), default="library", server_default="library")
+    integration_id: Mapped[UUID | None] = mapped_column(ForeignKey("integrations.id"))
+    library_id: Mapped[UUID | None] = mapped_column(ForeignKey("libraries.id"))
     medium: Mapped[str] = mapped_column(String(10))
     backend_path: Mapped[str] = mapped_column(String(1024))
     mode: Mapped[str] = mapped_column(String(10), default="hardlink")
@@ -1302,7 +1321,9 @@ class ImportEntry(Identity, Base):
         UniqueConstraint("run_id", "group_id"),
         CheckConstraint(
             "state IN ('queued', 'publishing', 'awaiting-library', 'confirmed', 'held', 'skipped', "
-            "'cancelling', 'cancel-held', 'cancelled')"
+            "'cancelling', 'cancel-held', 'cancelled', "
+            "'awaiting-review', 'needs-link', 'rejected')",
+            name="import_entry_state",
         ),
         Index(
             "uq_import_reserved_version",

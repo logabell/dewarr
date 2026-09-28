@@ -13,6 +13,7 @@ from app.db.models import (
     AuditEvent,
     DownloadInspection,
     FrozenImportPlan,
+    ImportDestination,
     ProviderObject,
     User,
     Version,
@@ -104,6 +105,7 @@ class FreezeInput(StrictModel):
 class FrozenDocument(StrictModel):
     schema_version: int
     shared_media: list[Literal["ebook", "audio"]] = Field(default_factory=list)
+    bookdrop_media: list[Literal["ebook", "audio"]] = Field(default_factory=list)
     destinations: dict[Literal["ebook", "audio"], UUID] = Field(default_factory=dict)
     inspection_revision: str
     grouping_revision: str | None = None
@@ -282,12 +284,39 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
     shared_media = await shared_naming_media(
         db, {group.medium for group in groups}, body.destinations
     )
-    plan = plan_import(
-        groups,
-        profile,
-        combine_parts=(await preferences(db)).combine_library_parts,
-        shared_media=shared_media,
+    bookdrop_media = {
+        destination.medium
+        for destination in await db.scalars(
+            select(ImportDestination).where(
+                ImportDestination.id.in_(body.destinations.values()),
+                ImportDestination.workflow == "bookdrop",
+            )
+        )
+    }
+    library_groups = [group for group in groups if group.medium not in bookdrop_media]
+    plan = (
+        plan_import(
+            library_groups,
+            profile,
+            combine_parts=(await preferences(db)).combine_library_parts,
+            shared_media=shared_media,
+        )
+        if library_groups
+        else ImportPlan(
+            items=[],
+            expected_items=0,
+            held_items=0,
+            skipped_items=0,
+            profile_revision=fingerprint(profile.model_dump()),
+        )
     )
+    if bookdrop_media:
+        from app.importing.bookdrop import plan_item
+
+        plan.items.extend(plan_item(group) for group in groups if group.medium in bookdrop_media)
+        plan.expected_items = sum(item.state == "ready" for item in plan.items)
+        plan.held_items = sum(item.state == "held" for item in plan.items)
+        plan.skipped_items = sum(item.state == "skipped" for item in plan.items)
     # Replacements publish alongside the reported copy; no rename, overwrite or
     # deletion of library content is part of failed-download recovery.
     from app.db.models import AcquisitionSelection, DownloadAttempt, DownloadMembership
@@ -306,6 +335,7 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
     document = {
         "schema_version": 2,
         "shared_media": sorted(shared_media),
+        "bookdrop_media": sorted(bookdrop_media),
         "destinations": {
             medium: str(identifier) for medium, identifier in body.destinations.items()
         },

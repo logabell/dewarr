@@ -14,6 +14,7 @@ from app.db.session import session_factory
 from app.domain.downloaders import SETTINGS_LOCK, remember_download_root
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
+from app.importing.storage import prune_unused_sources
 from app.security import decrypt_secrets, encrypt_secrets
 
 # Cover a timed-out create, the search poll, the response fetch, and the delete.
@@ -72,6 +73,7 @@ async def save(db, admin, body):
     client.base_url = body.base_url
     client.enabled = body.enabled
     client.encrypted_secrets = encoded
+    previous_mappings = (client.config or {}).get("mappings", [])
     client.config = (
         {**blank_config(), **(client.config or {})}
         if previous_url == body.base_url
@@ -82,6 +84,9 @@ async def save(db, admin, body):
     client.status, client.last_error, client.last_success_at = "untested", None, None
     client.last_checked_at = None
     await db.flush()
+    await prune_unused_sources(
+        db, admin.id, candidates={item["source_key"] for item in previous_mappings}
+    )
     db.add(AuditEvent(actor_id=admin.id, action="source.slskd.updated", entity_id=client.id))
     return source, client
 

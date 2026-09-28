@@ -10,14 +10,11 @@ from app.config import get_settings
 from app.db.models import (
     AutomaticImportPolicy,
     ImportDestination,
-    Integration,
-    Library,
     Operation,
     User,
 )
 from app.domain.book_sources import identity, same_identity
 from app.domain.release_profiles import ProfileSnapshot, refresh_profile, same_profile
-from app.domain.visibility import visible_library
 from app.domain.work_graph import canonical_work
 from app.importing.settings import current_profile
 
@@ -96,15 +93,10 @@ async def approve_route(
     if not user or not user.active or user.role == "viewer":
         raise HTTPException(403, "The requesting account can no longer acquire books")
     destination = await db.get(ImportDestination, destination_id, populate_existing=True)
+    from app.domain.destination_defaults import configured_destinations
+
     if not destination or not await db.scalar(
-        select(Library.id)
-        .join(Integration)
-        .where(
-            Library.id == destination.library_id,
-            Library.accessible.is_(True),
-            Integration.enabled.is_(True),
-            visible_library(user),
-        )
+        configured_destinations(user).where(ImportDestination.id == destination_id)
     ):
         raise HTTPException(404, "Automatic import destination is not accessible")
     query = select(AutomaticImportPolicy).where(

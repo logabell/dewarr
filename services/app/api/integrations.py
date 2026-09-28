@@ -13,7 +13,7 @@ from app.adapters.http import configured_url
 from app.api.dependencies import Admin, Database
 from app.api.operations import OperationView
 from app.config import get_settings
-from app.db.models import AuditEvent, Integration, Library
+from app.db.models import AuditEvent, Integration, Library, Operation
 from app.domain.operations import enqueue_sync
 from app.security import decrypt_secrets, encrypt_secrets
 
@@ -186,22 +186,31 @@ async def update_connection(
     if record.kind != body.kind:
         raise HTTPException(422, "A connection cannot change library apps")
     generation = record.credential_generation
-    secrets = connection_secrets(body, decrypt_secrets(record.encrypted_secrets))
+    saved_secrets = decrypt_secrets(record.encrypted_secrets)
+    secrets = connection_secrets(body, saved_secrets)
     capabilities = await inspect_connection(body.kind, body.base_url, secrets)
     await db.refresh(record, with_for_update=True)
     if record.deleted_at or record.credential_generation != generation:
         raise HTTPException(409, "Connection changed while checking. Try again.")
+    access_changed = (
+        record.base_url != body.base_url
+        or saved_secrets != secrets
+        or record.enabled != body.enabled
+    )
     record.name, record.base_url, record.enabled = body.name.strip(), body.base_url, body.enabled
     record.config = {**record.config, "public_url": body.public_url or body.base_url}
     if body.token or body.username or body.password:
         record.encrypted_secrets = encrypt_secrets(secrets)
-    record.credential_generation += 1
-    record.lease_token, record.lease_until = None, None
-    record.status, record.last_error, record.next_sync_at = "connected", None, None
+    if access_changed:
+        record.credential_generation += 1
+        record.lease_token, record.lease_until = None, None
+        record.status, record.last_error, record.next_sync_at = "connected", None, None
+        # Display-only edits must not hide libraries or invalidate verified routes.
+        # Access changes still require a complete inventory under the new credentials.
+        await db.execute(
+            update(Library).where(Library.integration_id == record.id).values(accessible=False)
+        )
     record.capabilities = capabilities
-    await db.execute(
-        update(Library).where(Library.integration_id == record.id).values(accessible=False)
-    )
     db.add(AuditEvent(actor_id=admin.id, action="integration.updated", entity_id=record.id))
     await db.commit()
     return connection_view(record)
@@ -256,4 +265,23 @@ async def sync_connection(
     operation = await enqueue_sync(db, admin.id, record.id, idempotency_key)
     record.next_sync_at = datetime.now(UTC)
     await db.commit()
+    return operation
+
+
+@router.get("/{integration_id}/sync/{operation_id}", response_model=OperationView)
+async def sync_status(integration_id: UUID, operation_id: UUID, admin: Admin, db: Database):
+    await connection_or_404(db, integration_id)
+    # Sync jobs are shared per connection, including scheduled jobs owned by the
+    # first admin. Permit admins to observe only this connection's library sync.
+    operation = await db.scalar(
+        select(Operation).where(
+            Operation.id == operation_id,
+            Operation.integration_id == integration_id,
+            Operation.kind == "library.sync",
+        )
+    )
+    if not operation:
+        raise HTTPException(
+            404, "Library sync no longer available. Refresh libraries or sync again."
+        )
     return operation

@@ -189,6 +189,9 @@ async def test_confirmation_writes_catalog_metadata_before_comparing():
             assert item_id == "1"
             return corrected if self.applied else embedded
 
+        async def metadata_persistence(self):
+            return {"move_files": False, "write_formats": []}
+
         async def apply_catalog_metadata(self, book_id, facts, *, observed_year=None):
             assert book_id == "1"
             self.applied = facts
@@ -287,6 +290,9 @@ async def test_grimmory_file_move_after_metadata_update_still_confirms():
 
         async def item(self, item_id):
             return moved if self.applied else embedded
+
+        async def metadata_persistence(self):
+            return {"move_files": False, "write_formats": []}
 
         async def apply_catalog_metadata(self, book_id, facts, *, observed_year=None):
             self.applied = True
@@ -430,6 +436,9 @@ async def test_moved_grimmory_tracks_confirm_with_grimmory_playback_order():
 
         async def item(self, item_id):
             return relocated if self.applied else embedded
+
+        async def metadata_persistence(self):
+            return {"move_files": False, "write_formats": []}
 
         async def apply_catalog_metadata(self, book_id, facts, *, observed_year=None):
             self.applied = True

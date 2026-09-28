@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
@@ -46,6 +47,7 @@ class EntryView(BaseModel):
     asset_id: UUID | None
     can_retry: bool = False
     can_cancel: bool = False
+    bookdrop_url: str | None = None
     cover_export: CoverExportView | None = None
 
 
@@ -74,6 +76,13 @@ async def view(db, run):
         entries=[
             EntryView.model_validate(entry).model_copy(
                 update={
+                    "bookdrop_url": entry.configuration["destination"]["backend"][
+                        "base_url"
+                    ].rstrip("/")
+                    + "/bookdrop"
+                    if (entry.configuration or {}).get("destination", {}).get("workflow")
+                    == "bookdrop"
+                    else None,
                     "can_retry": bool(
                         not hold
                         and entry.reserved
@@ -227,5 +236,178 @@ async def retry_entry(run_id: UUID, entry_id: UUID, admin: Admin, db: Database):
     operation.status = "queued"
     operation.job_id = await enqueue(db, "organization.publish", operation_id=str(operation.id))
     db.add(AuditEvent(actor_id=admin.id, action="organization.import.retry", entity_id=entry.id))
+    await db.commit()
+    return await view(db, run)
+
+
+class BookdropReviewInput(BaseModel):
+    action: Literal["refresh", "link", "reject"]
+    asset_id: UUID | None = None
+
+
+class BookdropCandidate(BaseModel):
+    id: UUID
+    title: str
+    library_name: str
+
+
+async def bookdrop_entry(db, admin, run_id, entry_id):
+    from app.db.models import Integration
+    from app.domain.recovery_approvals import require_current
+    from app.importing.bookdrop import REVIEW_STATES
+
+    await assert_admin(db, admin.id)
+    if get_settings().recovery_mode:
+        raise HTTPException(409, "Bookdrop review is paused during recovery")
+    run = await db.scalar(
+        select(ImportRun).where(ImportRun.id == run_id, ImportRun.owner_id == admin.id)
+    )
+    entry = await db.get(ImportEntry, entry_id, with_for_update=True)
+    if not run or not entry or entry.run_id != run.id:
+        raise HTTPException(404, "Import entry not found")
+    await require_current(db, "import-plan", run.plan_id)
+    if (
+        entry.state not in REVIEW_STATES
+        or not entry.published_at
+        or (entry.configuration or {}).get("destination", {}).get("workflow") != "bookdrop"
+    ):
+        raise HTTPException(409, "This entry is not awaiting Bookdrop review")
+    backend = entry.configuration["destination"]["backend"]
+    integration = await db.get(Integration, UUID(backend["integration_id"]))
+    if (
+        not integration
+        or integration.deleted_at
+        or not integration.enabled
+        or integration.kind != "grimmory"
+        or integration.base_url != backend["base_url"]
+    ):
+        raise HTTPException(409, "Restore this handoff's Grimmory connection before reviewing it")
+    return run, entry, integration
+
+
+def bookdrop_candidates_query(entry, integration):
+    from app.db.models import Library, LibraryAsset
+
+    return (
+        select(LibraryAsset, Library)
+        .join(Library)
+        .where(
+            Library.integration_id == integration.id,
+            Library.accessible.is_(True),
+            LibraryAsset.version_id == entry.version_id,
+            LibraryAsset.medium == "ebook",
+            LibraryAsset.state == "present",
+            LibraryAsset.full_content.is_(True),
+            LibraryAsset.match_status == "matched",
+        )
+    )
+
+
+@router.get(
+    "/imports/{run_id}/entries/{entry_id}/bookdrop-candidates",
+    response_model=list[BookdropCandidate],
+)
+async def bookdrop_candidates(run_id: UUID, entry_id: UUID, admin: Admin, db: Database):
+    _, entry, integration = await bookdrop_entry(db, admin, run_id, entry_id)
+    return [
+        BookdropCandidate(
+            id=asset.id, title=asset.title or "Imported book", library_name=library.name
+        )
+        for asset, library in (
+            await db.execute(bookdrop_candidates_query(entry, integration))
+        ).all()
+    ]
+
+
+@router.post("/imports/{run_id}/entries/{entry_id}/bookdrop", response_model=RunView)
+async def review_bookdrop(
+    run_id: UUID, entry_id: UUID, body: BookdropReviewInput, admin: Admin, db: Database
+):
+    from app.adapters.contracts import AdapterError
+    from app.api.library_folders import library_client
+    from app.db.models import LibraryAsset, Version
+    from app.importing.bookdrop import observe
+
+    run, entry, integration = await bookdrop_entry(db, admin, run_id, entry_id)
+    if body.action == "reject":
+        entry.state = "rejected"
+        entry.message = (
+            "Marked rejected in Dewarr. The delivery receipt is retained to prevent "
+            "resending. Manage or discard the intake file in Grimmory."
+        )
+    elif body.action == "refresh":
+        if entry.state == "rejected":
+            raise HTTPException(
+                409, "Rejected handoffs remain suppressed; link an imported copy to resolve one"
+            )
+        try:
+            async with library_client(integration) as adapter:
+                await observe(adapter, entry)
+        except (AdapterError, InvalidToken, KeyError, ValueError) as error:
+            raise HTTPException(
+                422,
+                str(error)
+                if isinstance(error, AdapterError)
+                else "Reconnect Grimmory before reviewing this handoff",
+            ) from error
+    else:
+        if not body.asset_id:
+            raise HTTPException(422, "Select the actual library copy after syncing Grimmory")
+        row = (
+            await db.execute(
+                bookdrop_candidates_query(entry, integration)
+                .where(LibraryAsset.id == body.asset_id)
+                .with_for_update()
+            )
+        ).first()
+        if not row:
+            raise HTTPException(
+                409,
+                (
+                    "Sync Grimmory and resolve the imported book's edition before "
+                    "linking its complete library copy"
+                ),
+            )
+        asset, library = row
+        try:
+            async with library_client(integration) as adapter:
+                item = await adapter.item(asset.external_id)
+        except (AdapterError, InvalidToken, KeyError, ValueError) as error:
+            raise HTTPException(
+                422,
+                str(error)
+                if isinstance(error, AdapterError)
+                else "Reconnect Grimmory before reviewing this handoff",
+            ) from error
+        if (
+            item.id != asset.external_id
+            or item.library_id != library.external_id
+            or item.invalid
+            or item.unreadable
+            or not item.full_ebook
+            or item.missing
+            or not item.ebook
+        ):
+            raise HTTPException(
+                409, "The library copy changed or is incomplete; sync Grimmory before linking"
+            )
+        observed = {file.path for file in item.ebook}
+        if not {file["path"] for file in asset.files}.issubset(observed):
+            raise HTTPException(409, "The library files changed; sync Grimmory before linking")
+        entry.asset_id, entry.confirmed_at, entry.state = asset.id, datetime.now(UTC), "confirmed"
+        entry.message = "Linked the reviewed copy in " + library.name
+        version = await db.get(Version, entry.version_id)
+        await enqueue(db, "acquisition.fulfillment", work_id=str(version.work_id))
+    entry.next_check_at = entry.run_token = None
+    operation = await db.get(Operation, entry.operation_id)
+    operation.status, operation.message = "completed", entry.message
+    db.add(
+        AuditEvent(
+            actor_id=admin.id,
+            action=f"organization.bookdrop.{body.action}",
+            entity_id=entry.id,
+            detail={"asset_id": str(entry.asset_id) if entry.asset_id else None},
+        )
+    )
     await db.commit()
     return await view(db, run)

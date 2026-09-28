@@ -100,7 +100,7 @@ async def test_mutation_timeout_never_retries_add(client_class):
         result = {
             "auth.login": True,
             "web.connected": True,
-            "daemon.info": "2.2",
+            "daemon.get_version": "2.2",
             "core.get_enabled_plugins": [],
         }.get(payload["method"])
         return httpx.Response(200, json={"id": payload["id"], "result": result, "error": None})
@@ -121,7 +121,7 @@ async def test_deluge_label_and_completed_folder_without_global_mutations():
         result = {
             "auth.login": True,
             "web.connected": True,
-            "daemon.info": "2.2",
+            "daemon.get_version": "2.2",
             "core.get_enabled_plugins": ["Label"],
             "label.get_labels": ["books"],
             "label.get_options": {
@@ -186,7 +186,7 @@ async def test_deluge_duplicate_race_does_not_label_or_resume_an_existing_transf
         values = {
             "auth.login": True,
             "web.connected": True,
-            "daemon.info": "2.2",
+            "daemon.get_version": "2.2",
             "core.get_enabled_plugins": ["Label"],
             "label.get_labels": ["books"],
             "label.get_options": {},

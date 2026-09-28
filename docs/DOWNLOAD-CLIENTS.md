@@ -6,6 +6,14 @@ folder the worker can read. Torrent and Usenet sources use their respective defa
 client; Soulseek uses slskd. A sole enabled client of a type is the automatic default.
 With multiple clients of the same type, choose the default in Settings → Download clients.
 
+Download clients do not supply search results. For qBittorrent, configure torrent
+sources in Prowlarr (or connect a supported native torrent source). Replacing
+SABnzbd with qBittorrent leaves Prowlarr's indexers unchanged, and NZB releases
+still require a Usenet client. The book's Sources page reports how many torrent
+and Usenet indexers were selected. If no torrent indexers qualify, check that they
+are enabled, support search and book/audiobook categories, and are not excluded
+in Dewarr's Prowlarr settings. Native MAM handles its own indexer when enabled.
+
 Settings → Libraries selects the final ebook and audiobook folders. These folders are
 shared destinations, independent of which client downloaded the content. Saving and
 verifying a library folder checks every ready client's download path and does not change

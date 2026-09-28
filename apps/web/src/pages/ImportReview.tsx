@@ -601,7 +601,9 @@ function Review({ inspection }: { inspection: Inspection }) {
           </p>
           <p className="notice">
             Recorded for review. Source revalidation, destination checks and
-            Audiobookshelf compatibility are still required before publication.
+            backend compatibility are still required before publication.
+            Bookdrop handoffs preserve the original EPUB; final metadata, naming
+            and library choice happen in Grimmory.
           </p>
           <p className="muted">
             {Object.keys(frozen.data.document.cover_sources || {}).length}{" "}
@@ -639,7 +641,12 @@ function Review({ inspection }: { inspection: Inspection }) {
                 )
                 .map((file) => (
                   <span key={file.source}>
-                    {file.source} → {libraryRelativePath(file.destination)}
+                    {file.source} →{" "}
+                    {frozen.data.document.bookdrop_media?.includes(
+                      item.medium as "ebook" | "audio",
+                    )
+                      ? "Grimmory Bookdrop (original filename)"
+                      : libraryRelativePath(file.destination)}
                   </span>
                 ))}
             </div>

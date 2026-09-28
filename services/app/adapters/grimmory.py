@@ -483,6 +483,8 @@ class Grimmory(JsonEndpoint):
             operations.add("scan")
         if edit:
             operations.add("metadata")
+        if permissions.get("admin") or permissions.get("canAccessBookdrop"):
+            operations.add("bookdrop")
         libraries = user.get("assignedLibraries") or []
         if not isinstance(libraries, list):
             raise AdapterError(FailureKind.PARSER, "Grimmory returned invalid library access.")
@@ -506,6 +508,61 @@ class Grimmory(JsonEndpoint):
             if "scan" in operations
             else ["Library detection relies on Grimmory's folder watch."],
         ), scope
+
+    async def metadata_persistence(self) -> dict:
+        settings = await self.request("GET", "api/v1/settings")
+        value = settings.get("metadataPersistenceSettings")
+        if not isinstance(value, dict) or type(value.get("moveFilesToLibraryPattern")) is not bool:
+            raise AdapterError(
+                FailureKind.PARSER,
+                (
+                    "Grimmory did not expose its metadata persistence settings. Use "
+                    "an account that can read them."
+                ),
+            )
+        formats = value.get("saveToOriginalFile")
+        if not isinstance(formats, dict) or any(
+            not isinstance(formats.get(key), dict) or type(formats[key].get("enabled")) is not bool
+            for key in ("epub", "pdf", "cbx", "audiobook")
+        ):
+            raise AdapterError(
+                FailureKind.PARSER, "Grimmory did not expose its embedded metadata write settings."
+            )
+        return {
+            "move_files": value["moveFilesToLibraryPattern"],
+            "write_formats": [
+                key for key in ("epub", "pdf", "cbx", "audiobook") if formats[key]["enabled"]
+            ],
+        }
+
+    async def bookdrop_files(self) -> list[dict]:
+        rows, seen = [], set()
+        for page in range(100):
+            value = await self.request(
+                "GET", "api/v1/bookdrop/files", params={"page": page, "size": 100, "sort": "id,asc"}
+            )
+            content = value.get("content")
+            if not isinstance(content, list) or type(value.get("last")) is not bool:
+                raise AdapterError(
+                    FailureKind.PARSER, "Grimmory returned an invalid Bookdrop queue."
+                )
+            for row in content:
+                if (
+                    not isinstance(row, dict)
+                    or type(row.get("id")) is not int
+                    or not isinstance(row.get("filePath"), str)
+                    or type(row.get("fileSize")) is not int
+                    or row["id"] in seen
+                ):
+                    raise AdapterError(
+                        FailureKind.PARSER,
+                        "Bookdrop changed while reading its queue; refresh again.",
+                    )
+                seen.add(row["id"])
+                rows.append(row)
+            if value["last"]:
+                return rows
+        raise AdapterError(FailureKind.PARSER, "Bookdrop queue exceeds the supported review limit.")
 
     async def libraries(self) -> list[dict]:
         values = await self.request("GET", "api/v1/libraries", allow_list=True)

@@ -28,6 +28,7 @@ from app.importing.publication import (
     private_staging,
     probe_destination,
     probe_download_folder,
+    secure_managed_directory,
 )
 from app.importing.route_evidence import receipts
 from app.importing.storage import import_sources, storage_route, storage_settings
@@ -43,10 +44,16 @@ async def confirm_library_mapping(downloader_id, client_path, worker_root, *, cl
 
 
 async def destination_configuration(db, destination):
-    library = await db.get(Library, destination.library_id, populate_existing=True)
+    library = (
+        await db.get(Library, destination.library_id, populate_existing=True)
+        if destination.library_id
+        else None
+    )
     integration = (
         await db.get(Integration, library.integration_id, populate_existing=True)
         if library
+        else await db.get(Integration, destination.integration_id, populate_existing=True)
+        if destination.integration_id
         else None
     )
     settings = await storage_settings(db)
@@ -59,17 +66,18 @@ async def destination_configuration(db, destination):
             "generation": integration.credential_generation,
             "base_url": integration.base_url,
             "enabled": integration.enabled,
-            "library_external_id": library.external_id,
-            "accessible": library.accessible,
+            "library_external_id": library.external_id if library else None,
+            "accessible": library.accessible if library else destination.workflow == "bookdrop",
             "kind": integration.kind,
         }
-        if integration and library
+        if integration
         else None,
+        **({"workflow": "bookdrop"} if destination.workflow == "bookdrop" else {}),
         "root_key": destination.root_key,
         "root_path": str(root) if root else None,
         "staging_path": str(staging) if staging else None,
         **({"journal_path": str(route.journal_root)} if route and route.journal_root else {}),
-        "library_id": str(destination.library_id),
+        "library_id": str(destination.library_id) if destination.library_id else None,
         "medium": destination.medium,
         "backend_path": destination.backend_path,
         "mode": destination.mode,
@@ -92,18 +100,23 @@ async def destination_configuration(db, destination):
 
 async def permitted(db, operation, destination):
     actor = await db.get(User, operation.owner_id, populate_existing=True)
-    library = await db.get(Library, destination.library_id, populate_existing=True)
+    library = (
+        await db.get(Library, destination.library_id, populate_existing=True)
+        if destination.library_id
+        else None
+    )
     integration = (
         await db.get(Integration, library.integration_id, populate_existing=True)
         if library
+        else await db.get(Integration, destination.integration_id, populate_existing=True)
+        if destination.integration_id
         else None
     )
     return bool(
         actor
         and actor.active
         and actor.role == "admin"
-        and library
-        and library.accessible
+        and ((library and library.accessible) or destination.workflow == "bookdrop")
         and integration
         and integration.kind in {"audiobookshelf", "grimmory"}
         and integration.enabled
@@ -299,6 +312,12 @@ async def probe_route(operation_id: UUID, *, client_factory=None):
                     Path(configuration["root_path"]),
                     configuration["medium"],
                     staging_root=Path(configuration["staging_path"]),
+                    mode="rename"
+                    if seeding_rename
+                    else "copy"
+                    if copy_fallback
+                    else configuration["mode"],
+                    workflow=configuration.get("workflow", "library"),
                 )
 
         uses_copy = (
@@ -514,4 +533,9 @@ def prepare_staging(path, journal_root=None):
         try:
             os.mkdir(path.name, mode=0o777 if journal_root is not None else 0o700, dir_fd=parent)
         except FileExistsError:
-            pass  # private_staging subsequently verifies ownership, mode and no symlinks.
+            pass
+        if journal_root is None:
+            with directory(path) as staging:
+                # Repair only our empty legacy control folder. Media-only staging
+                # retains share permissions; its journals live in protected app storage.
+                secure_managed_directory(staging, path)

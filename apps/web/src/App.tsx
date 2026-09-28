@@ -104,7 +104,8 @@ export default function App() {
 const OIDC_ERRORS: Record<string, string> = {
   denied: "Your identity provider did not sign you in.",
   mismatch: "That sign-in attempt expired. Try again.",
-  rejected: "This account cannot sign in with the identity provider.",
+  rejected:
+    "This account cannot sign in with the identity provider. If you have a local account, sign in with your password and link it in Settings → Sign-in.",
   unavailable: "The identity provider could not be reached.",
   paused: "Sign-in is paused during recovery review.",
   limited: "Too many sign-in attempts. Try again in ten minutes.",

@@ -21,7 +21,12 @@ from app.domain.download_folders import browse_folders
 from app.domain.downloaders import DownloadMapping
 from app.domain.operations import transaction_lock
 from app.domain.source_network import check_actor
-from app.importing.storage import import_sources, storage_settings
+from app.importing.storage import (
+    historical_source_keys,
+    import_sources,
+    prune_unused_sources,
+    storage_settings,
+)
 from app.jobs.queue import enqueue
 from app.security import decrypt_secrets, encrypt_secrets
 
@@ -185,7 +190,8 @@ async def remember_sources(db, declared, retired):
         db.add(storage)
         await db.flush()
     sources = {**storage.sources, **declared}
-    for key in retired:
+    retained = await historical_source_keys(db) if retired else set()
+    for key in set(retired) - retained:
         sources.pop(key, None)
     storage.sources = sources
 
@@ -195,6 +201,7 @@ def retired_keys(previous, bound, env_sources, others):
     used_elsewhere = {
         mapping["source_key"]
         for row in others
+        if row.deleted_at is None
         for mapping in (row.config or {}).get("mappings", [])
     }
     return [
@@ -290,6 +297,11 @@ async def save(body, admin, db, connection_id=None):
     row.last_checked_at = None
     # Preserve active diagnostic leases and cooldowns across configuration edits.
     await db.flush()
+    await prune_unused_sources(
+        db,
+        admin.id,
+        candidates={item["source_key"] for item in previous_config.get("mappings", [])},
+    )
     db.add(AuditEvent(actor_id=admin.id, action="downloader.saved", entity_id=row.id))
     await db.commit()
     return view(row, await import_sources(db))

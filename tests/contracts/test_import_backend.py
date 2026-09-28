@@ -197,3 +197,17 @@ async def test_malformed_import_settings_do_not_get_default_capabilities():
         ) as adapter:
             with pytest.raises(AdapterError):
                 await adapter.import_configuration("synthetic")
+
+
+async def test_opf_must_not_overwrite_native_abs_edits(tmp_path):
+    fixture = ImportBackendFixture(tmp_path.resolve())
+    fixture.settings["metadataPrecedence"] = [
+        "folderStructure",
+        "audioMetatags",
+        "absMetadata",
+        "opfFile",
+    ]
+    async with fixture.client() as adapter:
+        with pytest.raises(PublicationError, match="edits made in ABS survive"):
+            await verify_backend(adapter, "synthetic", "/books", fixture.root, "ebook")
+    assert not fixture.path_checks

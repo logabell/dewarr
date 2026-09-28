@@ -607,6 +607,59 @@
         }
       }
     },
+    "/api/auth/users/{user_id}/profile": {
+      "put": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Update Account Profile",
+        "operationId": "update_account_profile_api_auth_users__user_id__profile_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountProfileInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/users/{user_id}/automation": {
       "put": {
         "tags": [
@@ -845,6 +898,105 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/oidc/link": {
+      "get": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Link Status",
+        "operationId": "link_status_api_auth_oidc_link_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcLinkView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Begin Link",
+        "operationId": "begin_link_api_auth_oidc_link_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcLinkInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcLinkStartView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Unlink Identity",
+        "operationId": "unlink_identity_api_auth_oidc_link_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcLinkInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthView"
                 }
               }
             }
@@ -8588,6 +8740,59 @@
         }
       }
     },
+    "/api/integrations/{integration_id}/sync/{operation_id}": {
+      "get": {
+        "tags": [
+          "integrations"
+        ],
+        "summary": "Sync Status",
+        "operationId": "sync_status_api_integrations__integration_id__sync__operation_id__get",
+        "parameters": [
+          {
+            "name": "integration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Integration Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/library/groups/{kind}": {
       "get": {
         "tags": [
@@ -13048,6 +13253,126 @@
         ],
         "responses": {
           "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organization/imports/{run_id}/entries/{entry_id}/bookdrop-candidates": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "summary": "Bookdrop Candidates",
+        "operationId": "bookdrop_candidates_api_organization_imports__run_id__entries__entry_id__bookdrop_candidates_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookdropCandidate"
+                  },
+                  "title": "Response Bookdrop Candidates Api Organization Imports  Run Id  Entries  Entry Id  Bookdrop Candidates Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organization/imports/{run_id}/entries/{entry_id}/bookdrop": {
+      "post": {
+        "tags": [
+          "organization"
+        ],
+        "summary": "Review Bookdrop",
+        "operationId": "review_bookdrop_api_organization_imports__run_id__entries__entry_id__bookdrop_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookdropReviewInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -17629,6 +17954,50 @@
         "type": "object",
         "title": "AccountInput"
       },
+      "AccountProfileInput": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.@-]+$",
+            "title": "Username"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "expected_username": {
+            "type": "string",
+            "title": "Expected Username"
+          },
+          "expected_display_name": {
+            "type": "string",
+            "title": "Expected Display Name"
+          },
+          "expected_active": {
+            "type": "boolean",
+            "title": "Expected Active"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username",
+          "display_name",
+          "active",
+          "expected_username",
+          "expected_display_name",
+          "expected_active"
+        ],
+        "title": "AccountProfileInput"
+      },
       "AccountView": {
         "properties": {
           "configured": {
@@ -19812,6 +20181,60 @@
           "expires_at"
         ],
         "title": "BookSearchView"
+      },
+      "BookdropCandidate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "library_name": {
+            "type": "string",
+            "title": "Library Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "library_name"
+        ],
+        "title": "BookdropCandidate"
+      },
+      "BookdropReviewInput": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "refresh",
+              "link",
+              "reject"
+            ],
+            "title": "Action"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "BookdropReviewInput"
       },
       "BootstrapInput": {
         "properties": {
@@ -22278,8 +22701,15 @@
             "title": "Id"
           },
           "library_id": {
-            "type": "string",
-            "format": "uuid",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Library Id"
           },
           "name": {
@@ -22420,9 +22850,37 @@
             "title": "Root Key"
           },
           "library_id": {
-            "type": "string",
-            "format": "uuid",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Library Id"
+          },
+          "integration_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Id"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "library",
+              "bookdrop"
+            ],
+            "title": "Workflow",
+            "default": "library"
           },
           "medium": {
             "type": "string",
@@ -23853,6 +24311,17 @@
             "title": "Can Cancel",
             "default": false
           },
+          "bookdrop_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bookdrop Url"
+          },
           "cover_export": {
             "anyOf": [
               {
@@ -24166,9 +24635,37 @@
       "FolderInput": {
         "properties": {
           "library_id": {
-            "type": "string",
-            "format": "uuid",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Library Id"
+          },
+          "integration_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Id"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "library",
+              "bookdrop"
+            ],
+            "title": "Workflow",
+            "default": "library"
           },
           "backend_path": {
             "type": "string",
@@ -24230,12 +24727,20 @@
               }
             ],
             "title": "Automatic"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "hardlink",
+              "copy"
+            ],
+            "title": "Mode",
+            "default": "hardlink"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "library_id",
           "backend_path",
           "local_path"
         ],
@@ -24244,9 +24749,37 @@
       "FolderOption": {
         "properties": {
           "library_id": {
-            "type": "string",
-            "format": "uuid",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Library Id"
+          },
+          "integration_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Id"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "library",
+              "bookdrop"
+            ],
+            "title": "Workflow",
+            "default": "library"
           },
           "library_name": {
             "type": "string",
@@ -24293,7 +24826,6 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "library_id",
           "library_name",
           "server_name",
           "server_kind"
@@ -24671,6 +25203,17 @@
             },
             "type": "array",
             "title": "Shared Media"
+          },
+          "bookdrop_media": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "ebook",
+                "audio"
+              ]
+            },
+            "type": "array",
+            "title": "Bookdrop Media"
           },
           "destinations": {
             "additionalProperties": {
@@ -29770,6 +30313,66 @@
           "last_seen_at"
         ],
         "title": "ObservationView"
+      },
+      "OidcLinkInput": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "OidcLinkInput"
+      },
+      "OidcLinkStartView": {
+        "properties": {
+          "authorization_url": {
+            "type": "string",
+            "title": "Authorization Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "authorization_url"
+        ],
+        "title": "OidcLinkStartView"
+      },
+      "OidcLinkView": {
+        "properties": {
+          "password_available": {
+            "type": "boolean",
+            "title": "Password Available"
+          },
+          "linked": {
+            "type": "boolean",
+            "title": "Linked"
+          },
+          "issuer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issuer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "password_available",
+          "linked"
+        ],
+        "title": "OidcLinkView"
       },
       "OidcPublicView": {
         "properties": {

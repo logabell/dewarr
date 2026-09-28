@@ -6,7 +6,7 @@ from app.db.models import AssetContains, Integration, Library, LibraryAsset
 from app.domain.availability import owned_coverage
 
 
-async def already_owned(db, version_id, library_id, *, inspection_id=None):
+async def already_owned(db, version_id, library_id, *, inspection_id=None, integration_id=None):
     from app.domain.download_recovery import replacement_exclusions
 
     excluded = await replacement_exclusions(db, inspection_id) if inspection_id else set()
@@ -24,7 +24,9 @@ async def already_owned(db, version_id, library_id, *, inspection_id=None):
         .where(
             LibraryAsset.version_id == version_id,
             LibraryAsset.id.not_in(excluded),
-            LibraryAsset.library_id == library_id,
+            Library.integration_id == integration_id
+            if integration_id
+            else LibraryAsset.library_id == library_id,
             LibraryAsset.state == "present",
             LibraryAsset.full_content.is_(True),
             LibraryAsset.match_status.in_(["matched", "collection"]),

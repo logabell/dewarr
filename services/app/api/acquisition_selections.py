@@ -101,7 +101,7 @@ class DownloaderChoice(BaseModel):
 
 class DestinationChoice(BaseModel):
     id: UUID
-    library_id: UUID
+    library_id: UUID | None
     name: str
     medium: str
     revision: str
@@ -220,7 +220,7 @@ async def options(user: Member, db: Database):
             DestinationChoice(
                 id=row.id,
                 library_id=row.library_id,
-                name=name,
+                name=name or "Grimmory Bookdrop review",
                 medium=row.medium,
                 revision=fingerprint(configuration),
                 source_key=source_key,
