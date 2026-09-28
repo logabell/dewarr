@@ -1,5 +1,5 @@
 import QuotaSummary from "../components/QuotaSummary";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -10,7 +10,6 @@ import {
   CircleCheck,
   LoaderCircle,
   Download,
-  Ellipsis,
   ExternalLink,
   Eye,
   Headphones,
@@ -96,101 +95,6 @@ type RowAction = {
   danger?: boolean;
   onSelect?: () => void;
 };
-
-function ActionMenu({
-  label,
-  items,
-  disabled,
-}: {
-  label: string;
-  items: RowAction[];
-  disabled: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    root.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
-    function onPointer(event: PointerEvent) {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-        trigger.current?.focus();
-        return;
-      }
-      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-      if (!root.current?.contains(event.target as Node)) return;
-      const entries = [
-        ...(root.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ??
-          []),
-      ];
-      if (!entries.length) return;
-      const index = entries.indexOf(document.activeElement as HTMLElement);
-      const step = event.key === "ArrowDown" ? 1 : -1;
-      entries[(index + step + entries.length) % entries.length]?.focus();
-      event.preventDefault();
-    }
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  if (!items.length) return null;
-  return (
-    <div className="request-menu" ref={root}>
-      <button
-        ref={trigger}
-        type="button"
-        className="control-icon"
-        aria-label={label}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <Ellipsis size={16} aria-hidden />
-      </button>
-      {open && (
-        <div className="request-menu-panel" role="menu" aria-label={label}>
-          {items.map((item) => {
-            const Icon = item.icon;
-            return item.href ? (
-              <Link
-                key={item.key}
-                role="menuitem"
-                to={item.href}
-                onClick={() => setOpen(false)}
-              >
-                <Icon size={14} aria-hidden />
-                {item.label}
-              </Link>
-            ) : (
-              <button
-                key={item.key}
-                type="button"
-                role="menuitem"
-                data-danger={item.danger ? "true" : undefined}
-                disabled={disabled}
-                onClick={() => {
-                  setOpen(false);
-                  item.onSelect?.();
-                }}
-              >
-                <Icon size={14} aria-hidden />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function requester(request: Request) {
   if (request.reasons.some((reason) => reason.label === "Your request"))
@@ -552,7 +456,12 @@ function ActionButton({ action, busy }: { action: RowAction; busy: boolean }) {
       </Link>
     );
   return (
-    <button type="button" disabled={busy} onClick={action.onSelect}>
+    <button
+      type="button"
+      disabled={busy}
+      data-danger={action.danger || undefined}
+      onClick={action.onSelect}
+    >
       <Icon size={14} aria-hidden />
       {action.label}
     </button>
@@ -584,9 +493,9 @@ function RequestCard({
   ]
     .filter(Boolean)
     .join(" · ");
-  const menu: RowAction[] = [];
+  const secondaryActions: RowAction[] = [];
   if (request.can_decide)
-    menu.push({
+    secondaryActions.push({
       key: "decline",
       label: "Decline",
       icon: X,
@@ -598,7 +507,7 @@ function RequestCard({
     request.targets.some((target) => target.state !== "satisfied")
   )
     for (const reason of request.reasons.filter((item) => item.active))
-      menu.push({
+      secondaryActions.push({
         key: `withdraw-${reason.id}`,
         label: `Withdraw ${reason.label.toLowerCase()}`,
         icon: Undo2,
@@ -613,7 +522,7 @@ function RequestCard({
       onClaim,
     );
     const primary = actions[0];
-    if (actions.length > 1) menu.push(...actions.slice(1));
+    if (actions.length > 1) secondaryActions.push(...actions.slice(1));
     return { target, primary };
   });
   const [expanded, setExpanded] = useState(false);
@@ -669,10 +578,15 @@ function RequestCard({
               </span>
             </td>
             <td>
-              <span
+              <button
+                type="button"
                 className="request-status"
                 data-state={chipState(label)}
-                title={notes.join(". ")}
+                title={["View request details", ...notes].join(". ")}
+                aria-label={`${label}: ${request.work_title} ${mediumLabel(target.slot).toLowerCase()} request details`}
+                aria-expanded={expanded}
+                aria-controls={`request-details-${request.id}`}
+                onClick={() => setExpanded(!expanded)}
               >
                 {spinning ? (
                   <LoaderCircle
@@ -687,7 +601,7 @@ function RequestCard({
                   <CircleAlert size={14} aria-hidden />
                 ) : null}
                 {label}
-              </span>
+              </button>
               {label === "Needs review" && (
                 <p className="request-status-hint">
                   {target.inspection_id || target.can_claim
@@ -744,34 +658,13 @@ function RequestCard({
                   </button>
                 )}
                 {primary && <ActionButton action={primary} busy={busy} />}
-                {index === 0 && (
-                  <>
-                    <button
-                      className="control-icon"
-                      aria-label={`Details for ${request.work_title}`}
-                      aria-expanded={expanded}
-                      onClick={() => setExpanded(!expanded)}
-                    >
-                      <ChevronRight
-                        size={16}
-                        className={expanded ? "request-chevron-open" : ""}
-                        aria-hidden
-                      />
-                    </button>
-                    <ActionMenu
-                      label={`Actions for ${request.work_title}`}
-                      items={menu}
-                      disabled={busy}
-                    />
-                  </>
-                )}
               </div>
             </td>
           </tr>
         );
       })}
       {expanded && (
-        <tr className="request-detail-row">
+        <tr id={`request-details-${request.id}`} className="request-detail-row">
           <td colSpan={7}>
             <div className="request-detail-content">
               {request.targets.map((target) => (
@@ -809,6 +702,17 @@ function RequestCard({
                 ))}
               </ul>
               <RequestDetails request={request} />
+              {!!secondaryActions.length && (
+                <div className="actions" aria-label="Request actions">
+                  {secondaryActions.map((action) => (
+                    <ActionButton
+                      key={action.key}
+                      action={action}
+                      busy={busy}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </td>
         </tr>

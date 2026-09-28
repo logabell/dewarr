@@ -70,6 +70,7 @@ test("requests show transfer telemetry, review actions and counts in compact row
         progress,
         download_speed: 2516582,
         eta_seconds: 185,
+        can_recheck: true,
       }),
       request("review", "The Martian", {
         attempt_id: "held",
@@ -95,6 +96,8 @@ test("requests show transfer telemetry, review actions and counts in compact row
         cover_url: "https://assets.hardcover.app/editions/artemis.jpg",
       },
     ];
+    items[0].can_withdraw = true;
+    items[0].targets.push({ ...items[0].targets[0], slot: "ebook" });
     return route.fulfill({
       json: {
         items:
@@ -133,7 +136,9 @@ test("requests show transfer telemetry, review actions and counts in compact row
     fulfilled.getByRole("button", { name: "Actions for Artemis" }),
   ).toHaveCount(0);
   await expect(
-    fulfilled.getByRole("button", { name: "Details for Artemis" }),
+    fulfilled.getByRole("button", {
+      name: "In library: Artemis audiobook request details",
+    }),
   ).toBeVisible();
   const cover = fulfilled.locator(".request-cover img");
   await expect(cover).toHaveAttribute(
@@ -156,15 +161,43 @@ test("requests show transfer telemetry, review actions and counts in compact row
   await expect(
     filters.getByRole("link", { name: "Review", exact: true }),
   ).toContainText("1");
-  expect((await downloading.boundingBox())!.height).toBeLessThan(110);
+  for (const row of await downloading.getByRole("row").all())
+    expect((await row.boundingBox())!.height).toBeLessThan(110);
+  const rechecks = downloading.getByRole("button", { name: /^Recheck/ });
+  await expect(rechecks).toHaveCount(2);
+  const positions = await rechecks.evaluateAll((buttons) =>
+    buttons.map((button) => button.getBoundingClientRect().right),
+  );
+  expect(positions[0]).toBe(positions[1]);
+  await expect(table.getByRole("button", { name: /^Actions for/ })).toHaveCount(
+    0,
+  );
+  await expect(table.getByRole("button", { name: /^Details for/ })).toHaveCount(
+    0,
+  );
   progress = 0.67;
   await expect(downloading).toContainText("67%", { timeout: 10000 });
   await page.screenshot({
     path: testInfo.outputPath("request-ledger-desktop.png"),
     fullPage: true,
   });
-  await review.getByRole("button", { name: "Details for The Martian" }).click();
+  await review
+    .getByRole("button", {
+      name: "Needs review: The Martian audiobook request details",
+    })
+    .click();
   await expect(review).toContainText("Files need review");
+  await expect(
+    review.getByRole("button", { name: "Recheck", exact: true }),
+  ).toBeVisible();
+  await downloading
+    .getByRole("button", {
+      name: "Downloading: Project Hail Mary audiobook request details",
+    })
+    .click();
+  await expect(
+    downloading.getByRole("button", { name: "Withdraw your request" }),
+  ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   const layout = await page.evaluate(() => ({
     width: innerWidth,
