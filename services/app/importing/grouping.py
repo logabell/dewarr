@@ -156,8 +156,7 @@ async def latest_grouping(db, inspection_id):
     )
 
 
-async def current_grouping(db, inspection):
-    latest = await latest_grouping(db, inspection.id)
+def resolved_grouping(inspection, latest):
     if latest:
         return latest.revision, GroupingContent.model_validate(latest.content)
     content = proposed(inspection.snapshot)
@@ -171,3 +170,7 @@ async def current_grouping(db, inspection):
     ):
         revision = fingerprint({"inspection": revision, "grouping": content.model_dump()})
     return revision, content
+
+
+async def current_grouping(db, inspection):
+    return resolved_grouping(inspection, await latest_grouping(db, inspection.id))

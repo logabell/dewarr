@@ -62,6 +62,70 @@ async def save(client, inspection, body):
     return await client.put(f"/api/organization/inspections/{inspection['id']}/grouping", json=body)
 
 
+async def test_legacy_numbered_audio_uses_current_revision_for_review_and_matching(
+    client, admin, database, tmp_path, monkeypatch
+):
+    root = tmp_path.resolve()
+    for number in (1, 2):
+        audio(root / f"pack/{number:02}.mp3", track="")
+    monkeypatch.setattr(get_settings(), "import_sources", {"fixture": root})
+    submitted = await submit(client)
+    await get_queue().run_worker_async(wait=False, concurrency=1)
+    inspection_id = submitted.json()["id"]
+    endpoint = f"/api/organization/inspections/{inspection_id}"
+    async with database() as db, db.begin():
+        row = await db.get(DownloadInspection, UUID(inspection_id))
+        snapshot = deepcopy(row.snapshot)
+        for group in snapshot["groups"]:
+            for file in group["files"]:
+                file["track"] = None  # An inspection saved before filename ordering.
+        row.snapshot = snapshot
+
+    inspection = (await client.get(endpoint)).json()
+    response = await client.get(f"{endpoint}/grouping")
+    assert response.status_code == 200, response.text
+    grouping = response.json()
+    assert grouping["revision"] != snapshot["revision"]
+    assert [file["track"] for file in grouping["content"]["groups"][0]["files"]] == [1, 2]
+    stale = await client.get(
+        f"{endpoint}/matches", params={"grouping_revision": snapshot["revision"]}
+    )
+    assert stale.status_code == 409
+    matched = await client.get(
+        f"{endpoint}/matches", params={"grouping_revision": grouping["revision"]}
+    )
+    assert matched.status_code == 200, matched.text
+    assert matched.json()["grouping_revision"] == grouping["revision"]
+
+    # Saving/resetting the proposal must use the same revision as matching.
+    reset = await save(
+        client,
+        inspection,
+        {
+            "inspection_revision": snapshot["revision"],
+            "expected_revision": grouping["revision"],
+            "action": "reset",
+        },
+    )
+    assert reset.status_code == 200, reset.text
+    assert reset.json() == grouping
+    changed = request(inspection, grouping)
+    for file in changed["groups"][0]["files"]:
+        file["track"] = 3 - file["track"]
+    reviewed = await save(client, inspection, changed)
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["revision"] != grouping["revision"]
+    fetched = (await client.get(f"{endpoint}/grouping")).json()
+    assert fetched == reviewed.json()
+    matched = await client.get(
+        f"{endpoint}/matches", params={"grouping_revision": fetched["revision"]}
+    )
+    assert matched.status_code == 200, matched.text
+    assert (await client.get(endpoint)).json()["snapshot"] == inspection["snapshot"]
+    async with database() as db:
+        assert (await db.get(DownloadInspection, UUID(inspection_id))).snapshot == snapshot
+
+
 async def test_regroup_merge_split_and_restore_preserve_original_evidence(
     client, admin, database, pack
 ):

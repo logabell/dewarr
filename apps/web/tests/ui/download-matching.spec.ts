@@ -8,6 +8,8 @@ for (const scenario of [
   "automatic",
   "conflict",
   "unknown-conflict",
+  "stale-review",
+  "unavailable-review",
 ] as const) {
   test(`download review ${scenario} keeps the decision visible and reuses the saved request`, async ({
     page,
@@ -16,6 +18,8 @@ for (const scenario of [
     let automaticRetries = 0;
     let plans = 0;
     let editions = 0;
+    let matchRequests = 0;
+    let reviewAvailable = false;
     const submissions: { key: string | undefined; body: unknown }[] = [];
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -143,7 +147,21 @@ for (const scenario of [
           revision: "grouping-revision",
           content: { groups: [group], excluded: [] },
         };
-      else if (path.endsWith("/matches"))
+      else if (path.endsWith("/matches")) {
+        matchRequests++;
+        expect(
+          new URL(route.request().url()).searchParams.get("grouping_revision"),
+        ).toBe("grouping-revision");
+        if (scenario === "stale-review" && matchRequests === 1)
+          return route.fulfill({
+            status: 409,
+            json: { detail: "File groups changed; reload before matching" },
+          });
+        if (scenario === "unavailable-review" && !reviewAvailable)
+          return route.fulfill({
+            status: 503,
+            json: { detail: "Review temporarily unavailable" },
+          });
         data = {
           items: [
             {
@@ -165,7 +183,7 @@ for (const scenario of [
           ],
           total: 1,
         };
-      else if (path === "/api/organization/settings")
+      } else if (path === "/api/organization/settings")
         data = { revision: "settings-revision" };
       else if (path === "/api/organization/destinations") data = [destination];
       else if (path === "/api/organization/inspections/download/editions") {
@@ -228,6 +246,13 @@ for (const scenario of [
       name: "Download next step",
     });
     await expect(review).toBeVisible();
+    if (scenario === "unavailable-review") {
+      await expect(
+        review.getByText("Review temporarily unavailable"),
+      ).toBeVisible();
+      reviewAvailable = true;
+      await review.getByRole("button", { name: "Refresh review" }).click();
+    }
     await expect(page.getByLabel("Find catalog book")).not.toBeVisible();
     await expect(
       page.getByText("Inspection details", { exact: true }),
@@ -277,6 +302,8 @@ for (const scenario of [
     await expect(
       review.getByRole("button", { name: "Add to library" }),
     ).toBeDisabled();
+    if (scenario === "stale-review" || scenario === "unavailable-review")
+      expect(matchRequests).toBe(2);
     await page.screenshot({
       path: testInfo.outputPath("download-review-desktop.png"),
       fullPage: true,

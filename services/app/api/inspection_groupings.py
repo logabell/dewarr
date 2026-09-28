@@ -16,6 +16,7 @@ from app.importing.grouping import (
     latest_grouping,
     proposed,
     regroup,
+    resolved_grouping,
 )
 from app.importing.naming import StrictModel, fingerprint
 from app.importing.storage import import_sources
@@ -39,10 +40,11 @@ class GroupingView(StrictModel):
 
 
 def view(inspection, row):
+    revision, content = resolved_grouping(inspection, row)
     return GroupingView(
-        revision=row.revision if row else inspection.snapshot["revision"],
+        revision=revision,
         position=row.position if row else 0,
-        content=row.content if row else proposed(inspection.snapshot),
+        content=content,
     )
 
 

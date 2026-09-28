@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, result } from "../api/client";
+import { api, ApiError, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import { Link } from "react-router-dom";
@@ -30,6 +30,8 @@ export default function DownloadMatchReview({
     key: string;
   } | null>(null);
   const context = useQuery({
+    retry: (attempt, error) =>
+      attempt < 1 && error instanceof ApiError && error.status === 409,
     queryKey: [
       "download-review-context",
       inspection.id,
@@ -306,6 +308,14 @@ export default function DownloadMatchReview({
         )
       ) : null}
       <Notice error={context.error || confirm.error} />
+      {context.isError && (
+        <button
+          disabled={context.isFetching}
+          onClick={() => void context.refetch()}
+        >
+          {context.isFetching ? "Refreshing…" : "Refresh review"}
+        </button>
+      )}
     </section>
   );
 }
