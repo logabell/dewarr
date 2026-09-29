@@ -64,6 +64,7 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
     selected_files=False,
     reviewed_tags=False,
     swapped_review=False,
+    reviewed_subtitle=False,
 ):
     route = ready_route
     # Exercise the finite acquisition/import graph, not wall-clock cron ticks.
@@ -86,7 +87,7 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
     )
     epub(
         pack / ("Second Harbor.epub" if manual_prepare else "second.epub"),
-        title="Second Harbor",
+        title="Second Harbor: An Island Novella" if reviewed_subtitle else "Second Harbor",
         isbn=None if reviewed_tags else "9780140328721",
     )
     if ambiguous_first:
@@ -365,6 +366,17 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
             wait=False, concurrency=1, listen_notify=False, install_signal_handlers=False
         )
     if ambiguous_first:
+        pending = await client.get("/api/requests/" + selections[0]["intent_id"])
+        assert pending.status_code == 200, pending.text
+        target = pending.json()["targets"][0]
+        assert target["needs_review"] and target["import_state"] == "held", target
+        assert target["inspection_id"], target
+        review_queue = await client.get("/api/requests?status=review")
+        assert review_queue.status_code == 200, review_queue.text
+        assert selections[0]["intent_id"] in {r["id"] for r in review_queue.json()["items"]}
+        assert selections[1]["intent_id"] not in {r["id"] for r in review_queue.json()["items"]}
+        counts = await client.get("/api/requests/counts")
+        assert counts.status_code == 200 and counts.json()["review"] == 1, counts.text
         current = (await client.get(f"/api/acquisition/downloads/{started.json()['id']}")).json()
         first_member = next(
             m for m in current["members"] if m["selection_id"] == selections[0]["id"]
@@ -463,8 +475,9 @@ async def test_selected_pack_files_skip_existing_unrequested_bytes_end_to_end(
     )
 
 
+@pytest.mark.parametrize("reviewed_subtitle", [False, True])
 async def test_reviewed_pack_without_isbns_imports_each_corroborated_book_end_to_end(
-    client, admin, database, ready_route, monkeypatch
+    client, admin, database, ready_route, monkeypatch, reviewed_subtitle
 ):
     await test_reviewed_pack_imports_books_independently_and_preserves_seeded_files(
         client,
@@ -477,6 +490,7 @@ async def test_reviewed_pack_without_isbns_imports_each_corroborated_book_end_to
         False,
         selected_files=True,
         reviewed_tags=True,
+        reviewed_subtitle=reviewed_subtitle,
     )
 
 

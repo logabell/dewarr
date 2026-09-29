@@ -52,6 +52,7 @@ from app.security import decrypt_secrets
 
 LEASE_SECONDS = 240
 NETWORK_SECONDS = 180
+COLLECTION_START_GRACE_SECONDS = 120
 TERMINAL = {"complete", "cancelled"}
 
 
@@ -562,6 +563,23 @@ async def finish_observation(db, attempt, selection, state):
         return
     attempt.observation = state.model_dump(mode="json")
     next_state, message = transfer_stage(selection, state)
+    # qBittorrent can acknowledge start before its next status snapshot changes.
+    # Keep observing that one submitted transfer during a bounded startup window;
+    # never resend start (which could undo a user's later pause).
+    receipt = attempt.receipt or {}
+    start_requested = receipt.get("file_selection_start_requested_at")
+    if (
+        next_state == "held"
+        and message == "Selected collection transfer is stopped; review it in qBittorrent"
+        and state.state in {"stoppedDL", "stoppedUP"}
+        and start_requested
+        and not receipt.get("file_selection_start_observed")
+        and datetime.now(UTC) - datetime.fromisoformat(start_requested)
+        < timedelta(seconds=COLLECTION_START_GRACE_SECONDS)
+    ):
+        next_state, message = "downloading", "Starting the selected collection files"
+    elif selection.frozen.get("selected_paths") and next_state in {"downloading", "complete"}:
+        attempt.receipt = {**receipt, "file_selection_start_observed": True}
     if (
         next_state == "held"
         and policy.enabled
@@ -942,6 +960,7 @@ async def run(identifier):
                         attempt.receipt = {
                             **(attempt.receipt or {}),
                             "file_selection_start_attempted": True,
+                            "file_selection_start_requested_at": datetime.now(UTC).isoformat(),
                             "selected_paths": frozen["selected_paths"],
                         }
                     await client.start_transfer(observed.external_id)

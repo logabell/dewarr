@@ -394,6 +394,44 @@ def _selection_review():
     )
 
 
+def _partial_collection_review():
+    """A requested book omitted from a partial import still needs file review."""
+    roots, imported = canonical_map(), canonical_map()
+    root = (
+        select(roots.c.work_id)
+        .where(roots.c.origin_id == AcquisitionIntent.work_id)
+        .correlate(AcquisitionIntent)
+        .scalar_subquery()
+    )
+    planned = (
+        select(ImportEntry.id)
+        .join(Version, Version.id == ImportEntry.version_id)
+        .join(imported, imported.c.origin_id == Version.work_id)
+        .join(ImportRun, ImportRun.id == ImportEntry.run_id)
+        .join(FrozenImportPlan, FrozenImportPlan.id == ImportRun.plan_id)
+        .where(
+            FrozenImportPlan.inspection_id == AutomaticImport.inspection_id,
+            imported.c.work_id == root,
+            Version.medium == AcquisitionSelection.frozen["requirements"]["medium"].astext,
+            ImportEntry.state != "cancelled",
+        )
+        .correlate(AutomaticImport, AcquisitionIntent, AcquisitionSelection)
+        .exists()
+    )
+    partial = (
+        select(AutomaticImport.id)
+        .where(
+            AutomaticImport.attempt_id == DownloadAttempt.id,
+            AutomaticImport.import_run_id.is_not(None),
+            AutomaticImport.evidence["held_groups"] != [],
+            ~planned,
+        )
+        .correlate(DownloadAttempt, AcquisitionIntent, AcquisitionSelection)
+        .exists()
+    )
+    return _attempt_exists(DownloadAttempt.state == "complete", partial, wanted_target=True)
+
+
 def _status_filters(status: RequestStatus):
     if status == "pending":
         return [exists(_active_reasons(AcquisitionReason.approval_status == "pending"))]
@@ -415,7 +453,9 @@ def _status_filters(status: RequestStatus):
                 _committed_selection(),
             )
         ]
-    return [or_(_attempt_exists(_review_clause()), _selection_review())]
+    return [
+        or_(_attempt_exists(_review_clause()), _selection_review(), _partial_collection_review())
+    ]
 
 
 def _committed_selection():
@@ -607,6 +647,29 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
             if automatic.state == "held":
                 target.needs_review = True
                 target.review_message = automatic.message
+            elif automatic.import_run_id and automatic.evidence.get("held_groups"):
+                selected = await db.get(AcquisitionSelection, selection_id)
+                planned = await db.scalar(
+                    select(ImportEntry.id)
+                    .join(Version, Version.id == ImportEntry.version_id)
+                    .join(ImportRun, ImportRun.id == ImportEntry.run_id)
+                    .join(FrozenImportPlan, FrozenImportPlan.id == ImportRun.plan_id)
+                    .where(
+                        FrozenImportPlan.inspection_id == automatic.inspection_id,
+                        Version.work_id.in_(family_ids(intent.work_id)),
+                        Version.medium == selected.frozen["requirements"]["medium"],
+                        ImportEntry.state != "cancelled",
+                    )
+                    .limit(1)
+                )
+                if not planned:
+                    target.import_state = "held"
+                    target.needs_review = True
+                    target.message = target.review_message = (
+                        "This book's files need review; other books in the collection were imported"
+                    )
+                    if user.role == "admin":
+                        target.inspection_id = automatic.inspection_id
     target.shared_download = len(members) > 1
     target.shared_books = [
         label for item in members if item.id != selection_id and (label := _shared_book(item))
@@ -652,7 +715,7 @@ async def _decorate_target(db, user, intent, target: TargetView) -> None:
     queued = await db.scalar(
         select(DownloadAttempt.id).where(DownloadAttempt.id == attempt.id, _review_clause())
     )
-    if not queued:
+    if not queued and not target.needs_review:
         return
     target.needs_review = True
     if automatic and automatic.import_run_id:
@@ -1172,9 +1235,11 @@ class RequestCounts(BaseModel):
 async def request_counts(user: CurrentUser, db: Database):
     # Count requests once, independently of pagination, without projecting every card.
     pending = exists(_active_reasons(AcquisitionReason.approval_status == "pending"))
-    review = or_(_attempt_exists(_review_clause()), _selection_review())
+    partial = _partial_collection_review()
+    review = or_(_attempt_exists(_review_clause()), _selection_review(), partial)
     downloading = and_(
         ~pending,
+        ~partial,
         or_(
             _attempt_exists(DownloadAttempt.state.in_(_LIVE_DOWNLOADS)),
             _attempt_exists(

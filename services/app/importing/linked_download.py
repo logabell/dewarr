@@ -15,12 +15,12 @@ from app.importing.file_editions import attach_file_edition
 from app.importing.match_evidence import group_evidence, language_key
 
 
-def request_file_conflicts(work, release, facts, *, series=()):
+def request_file_conflicts(work, release, facts, *, series=(), reviewed_collection=False):
     """Absent tags are neutral; contradictory tags need a different download or correction."""
     catalog = {"title": work.title, "authors": work.authors, "series": list(series)}
     credited = release.get("source") in {"audiobookbay", "prowlarr"}
     title_agrees = bool(facts.titles) and all(
-        compatible_title(value, work.title)
+        compatible_title(value, work.title, allow_extra_subtitle=reviewed_collection)
         or (credited and title_outside_series_note(value, catalog) is not None)
         for value in facts.titles
     )
@@ -163,7 +163,7 @@ async def linked_collection_version(
         not facts.titles
         or not facts.authors
         or work.metadata_fields.get("identity_rejected")
-        or request_file_conflicts(work, member.frozen["release"], facts)
+        or request_file_conflicts(work, member.frozen["release"], facts, reviewed_collection=True)
     ):
         return None
     identified = [c for c in match.candidates if c.identifier_match]

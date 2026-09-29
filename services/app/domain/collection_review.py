@@ -25,7 +25,7 @@ from app.db.models import (
 )
 from app.domain import book_sources, collection_contents, collection_signals
 from app.domain.automatic_eligibility import AUDIO, EBOOKS, collection_candidate
-from app.domain.catalog_metadata import import_book
+from app.domain.catalog_metadata import attach_source, import_book, same_work
 from app.domain.operations import transaction_lock
 from app.domain.title_matching import compatible_title
 from app.domain.visibility import visible_work
@@ -217,6 +217,7 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
         observations.setdefault(
             membership.work_id,
             {
+                "book": snapshot.get("book", {}),
                 "cover_url": snapshot.get("book", {}).get("cover_url"),
                 "external_id": snapshot.get("book", {}).get("external_id"),
                 "series": [
@@ -271,6 +272,19 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
             )
         )
         documents[key] = {"work_id": str(book.id)}
+        observed = observations.get(book.id)
+        if observed and observed.get("external_id"):
+            metadata = BookData.model_validate(
+                {
+                    **observed["book"],
+                    "provider": "hardcover",
+                    "series": observed["series"],
+                }
+            )
+            # A series observation is only a proposal until this exact book is
+            # selected in the review. Never attach a changed provider identity.
+            if same_work(book, metadata):
+                documents[key]["metadata"] = metadata.model_dump(mode="json")
     from app.domain.availability import availability_for
     from app.domain.series_projection import project
     from app.domain.work_graph import canonical_map
@@ -728,6 +742,8 @@ async def download(db, user, review_id, body, key):
                 else await book_sources.accessible_work(db, user, UUID(doc["work_id"]))
             )
             work = await canonical_work(db, work.id)
+            if doc.get("metadata"):
+                await attach_source(db, work, BookData.model_validate(doc["metadata"]))
             if work.id in works:
                 raise HTTPException(
                     422, "Alternate recordings of one book need separate reviewed downloads"

@@ -328,8 +328,9 @@ async def test_file_backed_matches_collapse_aliases_and_allow_catalog_correction
         assert selection.frozen["selected_paths"] == first["files"]
 
 
+@pytest.mark.parametrize("rejected_after_preview", [False, True])
 async def test_series_observation_seeds_collection_catalog_before_metadata_is_imported(
-    client, database, admin, catalog, selection_route, monkeypatch
+    client, database, admin, catalog, selection_route, monkeypatch, rejected_after_preview
 ):
     from sqlalchemy import delete
 
@@ -366,7 +367,14 @@ async def test_series_observation_seeds_collection_catalog_before_metadata_is_im
                 present=True,
                 snapshot={
                     "position": "1",
-                    "book": {"external_id": "42", "title": title, "cover_url": cover},
+                    "book": {
+                        "provider": "hardcover",
+                        "external_id": "42",
+                        "title": title,
+                        "authors": book.authors,
+                        "cover_url": cover,
+                        "description": "The first Harbor adventure.",
+                    },
                 },
             )
         )
@@ -390,3 +398,56 @@ async def test_series_observation_seeds_collection_catalog_before_metadata_is_im
     candidate = next(c for c in review["catalog_candidates"] if c["title"] == title)
     assert candidate["cover_url"] == cover
     assert candidate["series"] == [{"external_id": "808", "name": "Harbor Saga", "position": "1"}]
+    async with database() as db:
+        assert (await db.get(Work, catalog["work"])).cover_url != cover
+        assert not await db.scalar(
+            select(WorkMetadataSource.id).where(WorkMetadataSource.work_id == catalog["work"])
+        )
+    monkeypatch.setattr(get_settings(), "download_dispatch_enabled", True)
+    if rejected_after_preview:
+        async with database() as db, db.begin():
+            db.add(
+                WorkMetadataSource(
+                    work_id=catalog["work"],
+                    provider="hardcover",
+                    external_id="42",
+                    accepted=False,
+                    snapshot={},
+                    fetched_at=datetime.now(UTC),
+                )
+            )
+    entry = next(
+        e for e in review["entries"] if candidate["id"] in {c["id"] for c in e["candidates"]}
+    )
+    accepted = await client.post(
+        f"/api/collection-reviews/{review['review_id']}/download",
+        headers={"Idempotency-Key": "confirm-series-metadata"},
+        json={
+            "revision": review["revision"],
+            "choices": [
+                {
+                    "entry_id": entry["id"],
+                    "candidate_id": candidate["id"],
+                    "paths": [review["files"][0]["path"]],
+                }
+            ],
+        },
+    )
+    if rejected_after_preview:
+        assert accepted.status_code == 409, accepted.text
+        async with database() as db:
+            assert not await db.scalar(select(DownloadAttempt.id))
+            assert (await db.get(Work, catalog["work"])).cover_url != cover
+        return
+    assert accepted.status_code == 202, accepted.text
+    async with database() as db:
+        saved = await db.get(Work, catalog["work"])
+        assert saved.cover_url == cover
+        assert saved.description == "The first Harbor adventure."
+        assert await db.scalar(
+            select(WorkMetadataSource.accepted).where(
+                WorkMetadataSource.work_id == saved.id, WorkMetadataSource.external_id == "42"
+            )
+        )
+    requests = (await client.get("/api/requests")).json()["items"]
+    assert next(r for r in requests if r["work_id"] == str(catalog["work"]))["cover_url"] == cover

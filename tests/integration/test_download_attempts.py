@@ -686,3 +686,62 @@ async def test_selected_transfer_rechecks_authority_before_start(
     saved = await row(database, response.json()["id"])
     assert saved.state == "held"
     assert not (saved.receipt or {}).get("file_selection_start_attempted")
+
+
+@pytest.mark.parametrize("outcome", ["started", "never-started", "paused-later"])
+async def test_collection_start_acknowledgement_keeps_polling_without_restarting(
+    client, database, selected, monkeypatch, outcome
+):
+    async with database() as db, db.begin():
+        selection = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        descriptor = selection.frozen["descriptor"]
+        selection.frozen = {
+            **selection.frozen,
+            "selected_paths": [f["path"] for f in descriptor["files"]],
+        }
+
+    class DelayedStartClient(Client):
+        async def submit(self, content, *, stopped=False, **kwargs):
+            assert stopped
+            receipt = await super().submit(content, **kwargs)
+            self.states[0].state = "stoppedDL"
+            for i, file in enumerate(self.states[0].files):
+                file.index, file.priority = i, 1
+            return receipt
+
+        async def select_files(self, state, expected, paths):
+            self.calls.append("select-files")
+
+        async def start_transfer(self, key):
+            self.calls.append("start-transfer")
+            # Successful API acknowledgement; the status snapshot still lags.
+
+    downloader = DelayedStartClient(database, descriptor)
+    monkeypatch.setattr(downloads, "QbitClient", lambda *args: downloader)
+    response = await start(client, selected)
+    identifier = UUID(response.json()["id"])
+    await downloads.run(identifier)
+    saved = await row(database, str(identifier))
+    assert saved.state == "downloading" and saved.next_check_at is not None
+    assert not saved.receipt.get("file_selection_start_observed")
+    if outcome == "never-started":
+        async with database() as db, db.begin():
+            saved = await db.get(DownloadAttempt, identifier)
+            saved.receipt = {
+                **saved.receipt,
+                "file_selection_start_requested_at": (
+                    datetime.now(UTC) - timedelta(minutes=3)
+                ).isoformat(),
+            }
+    else:
+        downloader.states[0].state = "downloading"
+    await downloads.run(identifier)
+    saved = await row(database, str(identifier))
+    assert saved.state == ("held" if outcome == "never-started" else "downloading")
+    if outcome == "paused-later":
+        downloader.states[0].state = "stoppedDL"
+        await downloads.run(identifier)
+        assert (await row(database, str(identifier))).state == "held"
+    assert downloader.calls.count("submit") == 1
+    assert downloader.calls.count("select-files") == 1
+    assert downloader.calls.count("start-transfer") == 1
