@@ -23,9 +23,7 @@ def test_reviewed_collection_subtitle_still_requires_same_primary_title_and_auth
     work = SimpleNamespace(
         title="The Short Second Life of Bree Tanner", authors=["Stephenie Meyer"], language="en"
     )
-    facts = SimpleNamespace(
-        titles=[title], authors=[[author.lower()]], languages=["en"], issues=[]
-    )
+    facts = SimpleNamespace(titles=[title], authors=[[author.lower()]], languages=["en"], issues=[])
     conflicts = request_file_conflicts(work, {"source": "mam"}, facts, reviewed_collection=True)
     assert (not conflicts) == accepted
     if accepted:

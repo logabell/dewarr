@@ -458,6 +458,7 @@ async def test_noisy_first_search_is_refined_automatically_before_backoff(
                 book["progress"]["audio"].update(search_id=None, selection_id=None, next_at=later)
                 book["next_at"] = later
             controller.payload = payload
+
         # Direct fixture runs leave queue rows untouched; emulate the completed
         # worker before exercising the actual scheduler's due-time query.
         async def completed_job(db, row):
