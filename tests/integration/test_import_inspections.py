@@ -183,10 +183,10 @@ async def test_actor_revoked_during_filesystem_work_discards_result(
     started, release = threading.Event(), threading.Event()
     original = workflow.inspect_download
 
-    def slow(*args):
+    def slow(*args, **kwargs):
         started.set()
         assert release.wait(10)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(workflow, "inspect_download", slow)
     response = await submit(client)
@@ -239,13 +239,13 @@ async def test_superseded_inspection_attempt_cannot_overwrite_newer_result(
     original = workflow.inspect_download
     calls = 0
 
-    def delayed_first(*args):
+    def delayed_first(*args, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
             started.set()
             assert release.wait(10)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(workflow, "inspect_download", delayed_first)
     response = await submit(client)

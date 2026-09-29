@@ -106,6 +106,18 @@ async function fixtures(page: Page, role = "viewer") {
           ambiguous_position: false,
         })),
       };
+    else if (url.pathname === "/api/acquisition/profiles")
+      data = [
+        {
+          id: null,
+          name: "My defaults",
+          preferences: { desired_media: "both" },
+          overrides: {},
+          origins: {},
+        },
+      ];
+    else if (url.pathname === "/api/acquisition/selections/options")
+      data = { downloaders: [], destinations: [] };
     else if (url.pathname === "/api/lists/page") data = { items: [], total: 0 };
     else if (url.pathname.endsWith("/requests/saved-request"))
       return route.fulfill({
@@ -268,7 +280,7 @@ test("series selections survive browsing tabs and requests are separate", async 
   await page.getByLabel("Select A Wizard of Earthsea", { exact: true }).check();
   await expect(
     page.getByRole("region", { name: "Series requests", exact: true }),
-  ).toContainText("1 books selected");
+  ).toContainText("1 book selected");
   await page.getByRole("tab", { name: "About", exact: true }).click();
   await page.getByRole("tab", { name: "Requests", exact: true }).click();
   await expect(
@@ -391,7 +403,7 @@ test("series with no synopsis still shows authors, language and a separate reque
     .click();
   await expect(
     page.getByLabel("Select A Wizard of Earthsea", { exact: true }),
-  ).not.toBeChecked();
+  ).toBeChecked();
   await expect(
     page.getByLabel("Select The Tombs of Atuan", { exact: true }),
   ).toBeChecked();
@@ -399,8 +411,9 @@ test("series with no synopsis still shows authors, language and a separate reque
   await expect(
     page.getByRole("button", { name: "Audiobook", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Download automatically", { exact: true }).uncheck();
   await expect(
-    page.getByRole("button", { name: "Review 2 selected books", exact: true }),
+    page.getByRole("button", { name: "Review request", exact: true }),
   ).toBeEnabled();
   await expect(
     page.getByRole("region", { name: "Series requests", exact: true }),

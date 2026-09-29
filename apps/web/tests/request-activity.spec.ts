@@ -132,9 +132,9 @@ test("activity requests preserve independent reasons and route missing media to 
       name: "Wanted: Activity Journey Alpha audiobook request details",
     })
     .click();
-  await card.getByText("Details", { exact: true }).click();
+  await card.getByText("Request preferences", { exact: true }).click();
   await expect(card).toContainText("Effective request scope");
-  await card.getByText("Details", { exact: true }).click();
+  await card.getByText("Request preferences", { exact: true }).click();
   expect(writes).toEqual([]);
   await card.getByRole("link", { name: "Choose release", exact: true }).click();
   await expect(page).toHaveURL(
@@ -169,6 +169,10 @@ test("activity requests preserve independent reasons and route missing media to 
   await card
     .getByRole("button", { name: "Withdraw your request", exact: true })
     .click();
+  await page
+    .getByRole("dialog", { name: "Withdraw request" })
+    .getByRole("button", { name: "Withdraw request", exact: true })
+    .click();
   await expect(
     card.getByText("Your request · Withdrawn", { exact: true }),
   ).toBeVisible();
@@ -180,6 +184,10 @@ test("activity requests preserve independent reasons and route missing media to 
       name: "Withdraw activity follow list",
       exact: true,
     })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Withdraw request" })
+    .getByRole("button", { name: "Withdraw request", exact: true })
     .click();
   await expect(card).toHaveCount(0);
   await page.getByRole("link", { name: "Withdrawn", exact: true }).click();

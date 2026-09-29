@@ -340,7 +340,7 @@ async def test_inspection_rechecks_requester_before_read_and_snapshot(
         async with database() as db, db.begin():
             await db.execute(delete(LibraryGrant))
 
-    def inspect(*args):
+    def inspect(*args, **kwargs):
         reads.append(True)
         asyncio.run_coroutine_threadsafe(revoke(), loop).result(timeout=10)
         return {"revision": "never-publish-this-snapshot"}

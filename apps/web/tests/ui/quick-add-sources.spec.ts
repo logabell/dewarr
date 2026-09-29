@@ -183,6 +183,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     else if (path === "/api/catalog/works/work-1/source-searches") {
       refreshes++;
       search.id = `search-refreshed-${refreshes}`;
+      search.medium = route.request().postDataJSON().medium;
       search.expires_at = new Date(Date.now() + 60 * 60_000).toISOString();
       search.items.forEach((item) => {
         item.expires_at = search.expires_at;
@@ -454,7 +455,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   ).toHaveAttribute("title", "Selected release download started");
   await expect(sourceDownload.first()).toBeDisabled();
   expect(releaseDownloads).toEqual([
-    "/api/source-searches/search-1/results/result-1/download",
+    "/api/source-searches/search-refreshed-1/results/result-1/download",
   ]);
   expect(wedgeChoices).toEqual(["true"]);
   await page.getByLabel("Sort this view").click();
@@ -555,8 +556,8 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     dialog.getByRole("link", { name: /Download not started/ }),
   ).toHaveCount(0);
   expect(releaseDownloads).toEqual([
-    "/api/source-searches/search-1/results/result-1/download",
-    "/api/source-searches/search-1/results/result-1/download",
+    "/api/source-searches/search-refreshed-1/results/result-1/download",
+    "/api/source-searches/search-refreshed-1/results/result-1/download",
   ]);
   expect(wedgeChoices).toEqual(["true", null]);
   await page.keyboard.press("Escape");
@@ -664,7 +665,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await page
     .getByRole("button", { name: "Refresh results", exact: true })
     .click();
-  await expect.poll(() => refreshes).toBe(1);
+  await expect.poll(() => refreshes).toBe(2);
   await expect(sourceDownload.first()).toBeEnabled();
   await expect(
     page.getByText("Search results expired", { exact: true }),

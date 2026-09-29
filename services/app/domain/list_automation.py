@@ -231,7 +231,7 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
             operation.status == "held"
             and not progress.get("refined")
             and not (series_authority or {}).get("pack_origin")
-            and "decisions" in operation.payload
+            and operation.payload.get("decisions")
         ):
             progress.update(refined=True, search_id=None, selection_id=None)
             progress.pop("next_at", None)
