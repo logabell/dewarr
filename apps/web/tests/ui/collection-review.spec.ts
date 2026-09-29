@@ -20,6 +20,7 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
       generation: 0,
       name: "Balanced",
       preferences: {
+        desired_media: "both",
         source_order: ["mam"],
         criteria: ["format", "source", "seeders"],
         preferred_narrators: [],
@@ -279,7 +280,7 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
       .click();
     await page.getByRole("button", { name: "Audiobook", exact: true }).click();
     await page
-      .getByRole("button", { name: "Review 1 selected book", exact: true })
+      .getByRole("button", { name: "Review request", exact: true })
       .click();
     await expect(page).toHaveURL(/request=series-request/);
     await page.reload();

@@ -644,3 +644,33 @@
     padding-inline: 12px;
   }
 }
+
+.series-format-status,
+.series-format-status > span,
+.series-format-choices button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.series-format-status {
+  flex-wrap: wrap;
+  column-gap: 12px;
+}
+.series-format-status svg,
+.series-format-choices svg {
+  flex-shrink: 0;
+}
+.series-missing-summary {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.series-missing-summary > .muted {
+  font-size: 12px;
+}
+.series-route-options fieldset {
+  padding-top: 12px;
+}

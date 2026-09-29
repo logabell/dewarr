@@ -2,12 +2,20 @@ import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "../components/InfiniteScroll";
 import BookLink from "../components/BookLink";
 import ListChoice from "./ListChoice";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type SetStateAction } from "react";
+import type { components } from "../api/schema";
+import type { Choice } from "./RequestPreferences";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
 import { Loading, Notice } from "../components";
-import { ArrowLeft, ExternalLink, LibraryBig } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  LibraryBig,
+  BookOpen,
+  Headphones,
+} from "lucide-react";
 import BookCover from "../components/BookCover";
 import DetailTabs from "../components/DetailTabs";
 import SeriesRequests from "./SeriesRequests";
@@ -30,7 +38,7 @@ function missingWorkIds(
       availability: { owned: boolean; ebook: boolean; audio: boolean };
     };
   }[],
-  medium: "any" | "ebook" | "audio",
+  medium: "either" | "both" | "ebook" | "audio",
 ) {
   return [
     ...new Set(
@@ -43,9 +51,12 @@ function missingWorkIds(
             !entry.merged_record &&
             !entry.ambiguous_position &&
             entry.publication === "published" &&
-            (medium === "any"
-              ? !entry.work.availability.owned
-              : !entry.work.availability[medium]),
+            (medium === "either"
+              ? !entry.work.availability.ebook && !entry.work.availability.audio
+              : medium === "both"
+                ? !entry.work.availability.ebook ||
+                  !entry.work.availability.audio
+                : !entry.work.availability[medium]),
         )
         .map((entry) => entry.work.id),
     ),
@@ -85,7 +96,31 @@ function SeriesContent({
       ? "requests"
       : "books";
   const [listId, setListId] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [manualSelected, setManualSelected] = useState<string[]>([]);
+  const [selectMissing, setSelectMissing] = useState(
+    params.get("gaps") === "1",
+  );
+  const [spec, setSpec] = useState<components["schemas"]["RequestOptions"]>(
+    () => ({
+      mode:
+        params.get("medium") === "ebook" || params.get("medium") === "audio"
+          ? (params.get("medium") as "ebook" | "audio")
+          : undefined,
+    }),
+  );
+  const [preferences, setPreferences] = useState<Choice>({});
+  const profiles = useQuery({
+    queryKey: ["release-profiles"],
+    enabled: canEdit,
+    queryFn: async () => result(await api.GET("/api/acquisition/profiles")),
+  });
+  const profile = profiles.data?.find(
+    (p) => (p.id || "") === (preferences.profile_id || ""),
+  );
+  const effectiveMode =
+    spec.mode ||
+    preferences.overrides?.desired_media ||
+    profile?.preferences.desired_media;
   const [added, setAdded] = useState(0);
   const section =
     params.get("section") === "all"
@@ -118,6 +153,34 @@ function SeriesContent({
       return last.items.length && count < last.total ? count : undefined;
     },
   });
+  const missingIds =
+    effectiveMode && catalog.data
+      ? missingWorkIds(catalog.data.items, effectiveMode)
+      : [];
+  const selected =
+    selectMissing && tab === "requests"
+      ? missingIds.slice(0, 100)
+      : manualSelected;
+  const setSelected = (value: SetStateAction<string[]>) => {
+    setManualSelected(typeof value === "function" ? value(selected) : value);
+    setSelectMissing(false);
+  };
+  const missingCounts = { ebook: 0, audio: 0, either: 0 };
+  const counted = new Set<string>();
+  for (const entry of catalog.data?.items || []) {
+    if (!selected.includes(entry.work.id) || counted.has(entry.work.id))
+      continue;
+    counted.add(entry.work.id);
+    const { ebook, audio } = entry.work.availability;
+    if (effectiveMode === "either") {
+      if (!ebook && !audio) missingCounts.either++;
+    } else {
+      if ((effectiveMode === "ebook" || effectiveMode === "both") && !ebook)
+        missingCounts.ebook++;
+      if ((effectiveMode === "audio" || effectiveMode === "both") && !audio)
+        missingCounts.audio++;
+    }
+  }
   const mainBooks = useQuery({
     queryKey: ["series-main-books", externalId, catalog.data?.generation],
     queryFn: async () =>
@@ -209,12 +272,7 @@ function SeriesContent({
         );
     },
   });
-  const gapsRequested = params.get("gaps") === "1";
-  const gapMedium =
-    params.get("medium") === "ebook" || params.get("medium") === "audio"
-      ? (params.get("medium") as "ebook" | "audio")
-      : "any";
-  const gapsApplied = useRef(false);
+  const gapsRequested = selectMissing && tab === "requests";
   useEffect(() => {
     void (async () => {
       try {
@@ -243,24 +301,6 @@ function SeriesContent({
     catalog.isFetchingNextPage,
     catalog.isFetchNextPageError,
     catalog.fetchNextPage,
-  ]);
-  useEffect(() => {
-    if (
-      !gapsRequested ||
-      gapsApplied.current ||
-      !catalog.data ||
-      catalog.hasNextPage ||
-      catalog.isFetchingNextPage
-    )
-      return;
-    gapsApplied.current = true;
-    setSelected(missingWorkIds(catalog.data.items, gapMedium));
-  }, [
-    gapsRequested,
-    gapMedium,
-    catalog.data,
-    catalog.hasNextPage,
-    catalog.isFetchingNextPage,
   ]);
   if (catalog.isPending) return <Loading />;
   if (!catalog.data) return <Notice error={catalog.error} />;
@@ -292,7 +332,11 @@ function SeriesContent({
               .reverse()
               .map((entry) => (
                 <div key={entry.membership_id}>
-                  <BookCover title={entry.work.title} work={entry.work} />
+                  <BookCover
+                    title={entry.work.title}
+                    work={entry.work}
+                    actions={tab !== "requests" && tab !== "lists"}
+                  />
                 </div>
               ))
           ) : (
@@ -396,15 +440,12 @@ function SeriesContent({
           >
             {data.fetched_at ? "Refresh series" : "Load series from Hardcover"}
           </button>
-          {data.fetched_at && data.books > data.owned && (
+          {data.fetched_at && data.books > 0 && (
             <button
               type="button"
               onClick={() => {
                 setParams({ tab: "requests", gaps: "1" });
-                if (catalog.data && !catalog.hasNextPage) {
-                  gapsApplied.current = true;
-                  setSelected(missingWorkIds(catalog.data.items, "any"));
-                } else gapsApplied.current = false;
+                setSelectMissing(true);
               }}
             >
               Request missing books
@@ -534,12 +575,18 @@ function SeriesContent({
               {(tab === "requests" || tab === "lists") && canEdit && (
                 <div className="button-row series-selection-actions">
                   <button
-                    disabled={loading || add.isPending}
-                    onClick={() =>
-                      setSelected(
-                        missingWorkIds(data.items, gapMedium).slice(0, 100),
-                      )
+                    disabled={
+                      loading ||
+                      add.isPending ||
+                      (tab === "requests" && !effectiveMode)
                     }
+                    onClick={() => {
+                      if (tab === "requests") setSelectMissing(true);
+                      else
+                        setSelected(
+                          missingWorkIds(data.items, "either").slice(0, 100),
+                        );
+                    }}
                   >
                     Select missing
                   </button>
@@ -587,7 +634,11 @@ function SeriesContent({
                         className="series-row-cover"
                         to={`/books/${entry.work.id}`}
                       >
-                        <BookCover title={entry.work.title} work={entry.work} />
+                        <BookCover
+                          title={entry.work.title}
+                          work={entry.work}
+                          actions={tab !== "requests" && tab !== "lists"}
+                        />
                       </BookLink>
                       <div className="series-row-copy">
                         {(tab === "requests" || tab === "lists") && canEdit && (
@@ -626,12 +677,21 @@ function SeriesContent({
                         <p>
                           {entry.work.authors.join(", ") || "Author unknown"}
                         </p>
-                        <p>
+                        <p className="series-format-status">
                           {entry.work.availability.owned
                             ? "✓ In library"
                             : "Not in your library"}
-                          {entry.work.availability.ebook && " · Ebook"}
-                          {entry.work.availability.audio && " · Audiobook"}
+                          {entry.work.availability.ebook && (
+                            <span>
+                              <BookOpen size={14} aria-hidden="true" /> Ebook
+                            </span>
+                          )}
+                          {entry.work.availability.audio && (
+                            <span>
+                              <Headphones size={14} aria-hidden="true" />{" "}
+                              Audiobook
+                            </span>
+                          )}
                           {entry.work.availability.stale &&
                             " · Inventory needs refresh"}
                         </p>
@@ -721,6 +781,29 @@ function SeriesContent({
                     externalId={externalId}
                     generation={data.generation}
                     selected={selected}
+                    spec={spec}
+                    onSpecChange={(next) => {
+                      if (next.mode !== spec.mode) setSelectMissing(true);
+                      setSpec(next);
+                    }}
+                    preferences={preferences}
+                    onPreferencesChange={(next) => {
+                      if (
+                        next.profile_id !== preferences.profile_id ||
+                        next.overrides?.desired_media !==
+                          preferences.overrides?.desired_media
+                      )
+                        setSelectMissing(true);
+                      setPreferences(next);
+                    }}
+                    effectiveMode={effectiveMode}
+                    missingCounts={missingCounts}
+                    selectionLoading={
+                      gapsRequested &&
+                      (catalog.hasNextPage || catalog.isFetchingNextPage)
+                    }
+                    selectionLimit={selectMissing && missingIds.length > 100}
+                    defaultsError={profiles.error}
                     mainBookReview={mainBooks.data}
                     scopeReview={
                       mainBooks.data && !loading ? (

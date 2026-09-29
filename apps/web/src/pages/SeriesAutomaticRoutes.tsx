@@ -126,57 +126,61 @@ export default function SeriesAutomaticRoutes({
     setDownloaderId,
     setDestinations,
   } = selection;
+  const [expanded, setExpanded] = useState(false);
+  const ready = Boolean(selection.input);
   return (
-    <fieldset className="editor">
-      <legend>Automatic series acquisition</legend>
-      <Notice error={options.error || profiles.error} />
-      <p>
-        Search for missing requested media, download eligible releases, and
-        import the reviewed books. Existing library items are skipped. Future
-        series additions are not included.
-      </p>
-      {!media.length && (
-        <p>Choose the requested media above or save a media default.</p>
-      )}
-      <label>
-        Series downloader
-        <select
-          value={downloader?.id || ""}
-          onChange={(event) => setDownloaderId(event.target.value)}
-        >
-          <option value="">Choose a tested downloader</option>
-          {downloaders.map((item) => (
-            <option key={item.id} value={item.id}>
-              {downloaderLabel(item)}
-            </option>
-          ))}
-        </select>
-      </label>
-      {media.map((medium) => (
-        <label key={medium}>
-          {medium === "audio" ? "Audiobook" : "Ebook"} series destination
+    <details
+      className="series-request-options series-route-options"
+      open={!ready || expanded}
+      onToggle={(event) => {
+        if (ready) setExpanded(event.currentTarget.open);
+      }}
+    >
+      <summary>
+        Download settings{ready ? " · Ready" : " · Setup needed"}
+      </summary>
+      <fieldset className="editor">
+        <legend className="sr-only">Automatic series acquisition</legend>
+        <Notice error={options.error || profiles.error} />
+        {!media.length && (
+          <p>Choose the requested media above or save a media default.</p>
+        )}
+        <label>
+          Downloader
           <select
-            value={destination(medium)?.id || ""}
-            onChange={(event) =>
-              setDestinations((current) => ({
-                ...current,
-                [medium]: event.target.value,
-              }))
-            }
+            value={downloader?.id || ""}
+            onChange={(event) => setDownloaderId(event.target.value)}
           >
-            <option value="">Choose an approved destination</option>
-            {available(medium).map((item) => (
+            <option value="">Choose a tested downloader</option>
+            {downloaders.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.name}
+                {downloaderLabel(item)}
               </option>
             ))}
           </select>
         </label>
-      ))}
-      <p className="muted">
-        Only tested downloaders and administrator-approved import routes are
-        offered. Your download settings control format and source ranking.
-      </p>
-    </fieldset>
+        {media.map((medium) => (
+          <label key={medium}>
+            {medium === "audio" ? "Audiobook" : "Ebook"} destination
+            <select
+              value={destination(medium)?.id || ""}
+              onChange={(event) =>
+                setDestinations((current) => ({
+                  ...current,
+                  [medium]: event.target.value,
+                }))
+              }
+            >
+              <option value="">Choose an approved destination</option>
+              {available(medium).map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </fieldset>
+    </details>
   );
 }

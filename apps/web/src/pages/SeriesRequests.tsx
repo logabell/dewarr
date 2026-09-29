@@ -14,6 +14,7 @@ import type { MainBookReview } from "./SeriesScopeReview";
 import SeriesAutomaticRoutes, {
   useSeriesRoutes,
 } from "./SeriesAutomaticRoutes";
+import { BookOpen, Headphones } from "lucide-react";
 import { randomUUID } from "../randomUUID";
 
 type Spec = components["schemas"]["RequestOptions"];
@@ -33,10 +34,28 @@ export default function SeriesRequests({
   selected,
   mainBookReview,
   scopeReview,
+  spec,
+  onSpecChange: setSpec,
+  preferences,
+  onPreferencesChange: setPreferences,
+  effectiveMode,
+  missingCounts,
+  selectionLoading,
+  selectionLimit,
+  defaultsError,
 }: {
   externalId: string;
   generation: number;
   selected: string[];
+  spec: Spec;
+  onSpecChange: (spec: Spec) => void;
+  preferences: Choice;
+  onPreferencesChange: (choice: Choice) => void;
+  effectiveMode?: Spec["mode"];
+  missingCounts: { ebook: number; audio: number; either: number };
+  selectionLoading: boolean;
+  selectionLimit: boolean;
+  defaultsError: Error | null;
   mainBookReview?: MainBookReview;
   scopeReview?: ReactNode;
 }) {
@@ -66,8 +85,6 @@ export default function SeriesRequests({
     scope === "complete_series" && useMainBookReview && matchingReview
       ? mainBookReview?.id
       : undefined;
-  const [spec, setSpec] = useState<Spec>({});
-  const [preferences, setPreferences] = useState<Choice>({});
   const [automatic, setAutomatic] = useState(false);
   const routes = useSeriesRoutes(automatic, spec.mode, preferences);
   const session = useQuery<Auth | null>({
@@ -251,8 +268,8 @@ export default function SeriesRequests({
       <div className="series-composer-heading">
         <h2>{id ? "Review request" : "Your request"}</h2>
         <span className="muted">
-          {id && saved.data ? saved.data.records.length : selected.length} books
-          selected
+          {id && saved.data ? saved.data.records.length : selected.length}{" "}
+          {selected.length === 1 ? "book" : "books"} selected
         </span>
       </div>
       <Notice
@@ -303,11 +320,72 @@ export default function SeriesRequests({
                       })
                     }
                   >
+                    {mode === "ebook" && (
+                      <BookOpen size={15} aria-hidden="true" />
+                    )}
+                    {mode === "audio" && (
+                      <Headphones size={15} aria-hidden="true" />
+                    )}
                     {String(label)}
                   </button>
                 ))}
             </div>
-            {spec.mode === "either" && (
+            <div
+              className="series-missing-summary"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="muted">
+                {!spec.mode
+                  ? effectiveMode
+                    ? `My defaults · ${{ ebook: "Ebook", audio: "Audiobook", both: "Both formats", either: "Either format" }[effectiveMode]}`
+                    : "Loading my defaults…"
+                  : "Missing from your library"}
+              </span>
+              {effectiveMode && !selectionLoading ? (
+                <div className="series-format-status">
+                  {effectiveMode !== "either" && (
+                    <>
+                      {(effectiveMode === "ebook" ||
+                        effectiveMode === "both") && (
+                        <span>
+                          <BookOpen size={16} aria-hidden="true" />{" "}
+                          {missingCounts.ebook}{" "}
+                          {missingCounts.ebook === 1 ? "ebook" : "ebooks"}
+                        </span>
+                      )}
+                      {(effectiveMode === "audio" ||
+                        effectiveMode === "both") && (
+                        <span>
+                          <Headphones size={16} aria-hidden="true" />{" "}
+                          {missingCounts.audio}{" "}
+                          {missingCounts.audio === 1
+                            ? "audiobook"
+                            : "audiobooks"}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {effectiveMode === "either" && (
+                    <span>
+                      {missingCounts.either}{" "}
+                      {missingCounts.either === 1 ? "book" : "books"} · either
+                      format
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <span>Loading formats and books…</span>
+              )}
+            </div>
+            <Notice error={!effectiveMode ? defaultsError : null} />
+            {selectionLimit && (
+              <p>
+                First 100 missing books selected. Request these, then select the
+                remaining books.
+              </p>
+            )}
+            {effectiveMode === "either" && (
               <label>
                 Series first medium
                 <select
@@ -335,13 +413,13 @@ export default function SeriesRequests({
                 checked={automatic}
                 onChange={(event) => setAutomatic(event.target.checked)}
               />
-              Automatically acquire missing books after review
+              Download automatically
             </label>
             {automatic && <SeriesAutomaticRoutes selection={routes} />}
             <p className="muted series-request-hint">
               {automatic
-                ? "Verified packs can serve multiple selected books in one download. Uncertain contents stay in review."
-                : "Save your requests, then review sources. Collection sources open a book and file selection dialog."}
+                ? "Downloads only missing formats. Verified collections can cover several books."
+                : "Save requests and choose sources yourself."}
             </p>
             <details className="series-request-options">
               <summary>Request options</summary>
@@ -398,15 +476,15 @@ export default function SeriesRequests({
             <button
               className="primary series-review-button"
               disabled={
+                !effectiveMode ||
+                selectionLoading ||
                 !selected.length ||
                 selected.length > 100 ||
                 (automatic && !routes.input) ||
                 (scope === "complete_series" && !confirmed && !scopeReviewId)
               }
             >
-              {preview.isPending
-                ? "Preparing review…"
-                : `Review ${selected.length} selected book${selected.length === 1 ? "" : "s"}`}
+              {preview.isPending ? "Preparing review…" : "Review request"}
             </button>
           </fieldset>
         </form>
