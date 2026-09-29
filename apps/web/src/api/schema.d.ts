@@ -7017,6 +7017,11 @@ export interface components {
        */
       bibliography_count: number;
       /**
+       * Catalog Candidates
+       * @default []
+       */
+      catalog_candidates: components["schemas"]["CollectionCandidate"][];
+      /**
        * Excluded
        * @default []
        */
@@ -10911,6 +10916,10 @@ export interface components {
       recording_options: {
         [key: string]: unknown;
       }[];
+      /** Suggested Candidate Id */
+      suggested_candidate_id?: string | null;
+      /** Suggested Recording Id */
+      suggested_recording_id?: string | null;
     };
     /** PackCoverage */
     PackCoverage: {

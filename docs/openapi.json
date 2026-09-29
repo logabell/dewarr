@@ -21707,6 +21707,14 @@
             "title": "Bibliography Count",
             "default": 0
           },
+          "catalog_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionCandidate"
+            },
+            "type": "array",
+            "title": "Catalog Candidates",
+            "default": []
+          },
           "excluded": {
             "items": {
               "additionalProperties": true,
@@ -32036,6 +32044,28 @@
             "type": "array",
             "title": "Recording Options",
             "default": []
+          },
+          "suggested_candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Candidate Id"
+          },
+          "suggested_recording_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Recording Id"
           }
         },
         "type": "object",

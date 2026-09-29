@@ -86,7 +86,7 @@
   font-weight: 500;
 }
 .quick-add .quick-add-options > button:hover {
-  background: var(--bg);
+  background: var(--surface);
 }
 .quick-add-preference {
   display: flex;
@@ -355,7 +355,7 @@
   overflow-wrap: anywhere;
   font-size: 12px;
   padding: 16px;
-  background: var(--bg);
+  background: var(--surface);
   border-radius: 6px;
   max-height: 360px;
   overflow: auto;
@@ -901,4 +901,119 @@
 .collection-actions {
   border-top: 1px solid var(--line);
   padding: 1rem 0;
+}
+
+/* Collection review leads with the books; evidence and corrections stay nearby. */
+.collection-heading h2 {
+  margin: 0.25rem 0 0.5rem;
+}
+.collection-heading .eyebrow {
+  margin-top: 0;
+}
+.collection-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+.collection-toolbar input {
+  flex: 1;
+  min-width: 0;
+}
+.collection-book-list {
+  gap: 0;
+  margin: 0;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+.collection-book {
+  grid-template-columns: 20px 42px minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: start;
+  padding: 0.85rem 0;
+}
+.collection-book > input {
+  margin-top: 1rem;
+}
+.collection-cover {
+  width: 42px;
+}
+.collection-book h3 {
+  margin-bottom: 0.2rem;
+  font-size: 1rem;
+}
+.collection-book-copy > p {
+  margin: 0.2rem 0;
+  font-size: 0.85rem;
+}
+.collection-book-status {
+  display: inline;
+}
+.collection-edit {
+  margin-left: 0.6rem;
+  padding: 0.2rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+.collection-match-editor {
+  padding: 0.75rem 0;
+}
+.collection-match-editor input {
+  width: 100%;
+  min-width: 0;
+}
+.collection-match-results {
+  display: grid;
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+  gap: 0.3rem;
+}
+.collection-match-results button {
+  text-align: left;
+  white-space: normal;
+  border-radius: 0.5rem;
+}
+.collection-match-results button[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+.collection-unresolved,
+.collection-extra {
+  margin: 1rem 0;
+}
+.collection-actions {
+  position: sticky;
+  bottom: -1px;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  z-index: 1;
+}
+.collection-loading {
+  padding: 2rem 0;
+  text-align: center;
+}
+@media (max-width: 540px) {
+  .collection-toolbar {
+    flex-wrap: wrap;
+  }
+  .collection-actions {
+    flex-wrap: wrap;
+  }
+  .collection-actions > button {
+    width: 100%;
+  }
+  .collection-book {
+    gap: 0.6rem;
+  }
+}
+
+.collection-cover .cover-formats {
+  display: none;
 }

@@ -10,7 +10,7 @@ from app.adapters.mam import plain
 
 MAX_TEXT = 100000
 MAX_ROWS = 100
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 
 
 def title_key(value):
@@ -26,6 +26,7 @@ def extract(description):
     lines = (plain(text, MAX_TEXT) or "").splitlines()
     active, kind, negative = False, "unspecified", False
     items, excluded = {}, []
+    alternate = False
     for line_number, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line:
@@ -47,6 +48,7 @@ def extract(description):
             line,
             re.I,
         ):
+            alternate = bool(re.match(r"alternate versions", line, re.I))
             active, negative, kind = True, False, "unspecified"
             continue
         if re.search(r"^tales from .+ include:", line, re.I):
@@ -94,6 +96,8 @@ def extract(description):
             title = re.sub(r"^\d+(?:\.\d+)?\.\s+", "", line)
         else:
             continue
+        if alternate:
+            facts["alternate"] = True
         if negative:
             excluded.append({"title": title, **facts})
             continue

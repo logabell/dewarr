@@ -118,9 +118,22 @@ async def test_alternate_recording_requires_explicit_choice_and_freezes_evidence
                 f"1980 - {book.title} (read by Second Reader)"
             ),
         }
+        artifact = await db.get(SourceArtifact, UUID(selection_route["artifact_id"]))
+        artifact.descriptor = {
+            **artifact.descriptor,
+            "files": [
+                {
+                    "index": i,
+                    "path": f"{artifact.descriptor['name']}/{book.title}/{reader}.m4b",
+                    "size_bytes": 100,
+                }
+                for i, reader in enumerate(("First Reader", "Second Reader"))
+            ],
+        }
     review = (await client.get(url, params={"artifact_id": selection_route["artifact_id"]})).json()
     entry = review["entries"][0]
     assert len(entry["recording_options"]) == 2
+    assert entry["suggested_recording_id"] == "0"
     body = {
         "revision": review["revision"],
         "choices": [
@@ -218,8 +231,162 @@ async def test_range_and_files_supplement_partial_description_without_reviving_e
         }
     review = (await client.get(url, params={"artifact_id": selection_route["artifact_id"]})).json()
     entries = {e["title"]: e for e in review["entries"]}
-    assert set(entries) == {"Harbor", "Next Harbor", "Bonus Harbor"}
-    assert any(e["basis"] == "MAM series range" for e in entries["Next Harbor"]["evidence"])
+    assert set(entries) == {"Harbor", "Bonus Harbor"}
+    assert any(e["basis"] == "MAM series range" for e in entries["Harbor"]["evidence"])
     assert entries["Harbor"]["files"] == ["Pack/Harbor.epub"]
     assert entries["Bonus Harbor"]["files"] == ["Pack/Bonus Harbor.epub"]
-    assert entries["Bonus Harbor"]["match"] == "review"
+    assert entries["Bonus Harbor"]["suggested_candidate_id"] == "hardcover:45"
+
+
+async def test_file_backed_matches_collapse_aliases_and_allow_catalog_correction(
+    client, database, admin, catalog, selection_route, monkeypatch
+):
+    from app.api import metadata
+
+    books = [
+        {"external_id": "42", "title": "Harbor", "users_count": 100},
+        {"external_id": "43", "title": "Harbor", "users_count": 1},
+        {"external_id": "44", "title": "The Harbor Saga", "aliases": ["Harbor"]},
+        {"external_id": "45", "title": "The Next Harbor"},
+        {"external_id": "46", "title": "Corrected Book"},
+        {
+            "external_id": "47",
+            "title": "The Short Tale of Harbor",
+            "cover_url": "https://assets.hardcover.app/novella.jpg",
+        },
+        {"external_id": "48", "title": "The Short Tale of Harbor An Eclipse Novella"},
+        {"external_id": "49", "title": "Eclipse"},
+    ]
+    for book in books:
+        book.update(provider="hardcover", authors=["Writer"])
+        book.setdefault("series", [{"external_id": "9", "name": "Harbor Saga", "position": "1"}])
+
+    async def bibliography(*args):
+        return {"books": books, "truncated": False}, False, None
+
+    monkeypatch.setattr(metadata, "provider_call", bibliography)
+    url, _ = await setup_review(client, database, admin, catalog, selection_route)
+    async with database() as db, db.begin():
+        artifact = await db.get(SourceArtifact, UUID(selection_route["artifact_id"]))
+        artifact.descriptor = {
+            **artifact.descriptor,
+            "name": "Pack",
+            "files": [
+                {"index": 0, "path": "Pack/The Harbor Saga/Harbor.epub", "size_bytes": 100},
+                {"index": 1, "path": "Pack/The Harbor Saga/Next Harbor.epub", "size_bytes": 100},
+                {
+                    "index": 2,
+                    "path": "Pack/Short Tale of Harbor An Eclipse Novella.epub",
+                    "size_bytes": 100,
+                },
+            ],
+        }
+    response = await client.get(url, params={"artifact_id": selection_route["artifact_id"]})
+    assert response.status_code == 200, response.text
+    review = response.json()
+    assert len(review["entries"]) == 3
+    assert review["entries"][1]["title"] == "The Next Harbor"
+    first, second, novella = review["entries"]
+    assert novella["suggested_candidate_id"] == "hardcover:47"
+    assert novella["files"] == ["Pack/Short Tale of Harbor An Eclipse Novella.epub"]
+    assert first["title"] == "Harbor"
+    assert first["suggested_candidate_id"] == "hardcover:42"
+    assert first["files"] == ["Pack/The Harbor Saga/Harbor.epub"]
+    assert {c["id"] for c in first["candidates"]} == {
+        "hardcover:42",
+        "hardcover:43",
+        "hardcover:44",
+    }
+    assert second["suggested_candidate_id"] == "hardcover:45"
+    assert second["files"] == ["Pack/The Harbor Saga/Next Harbor.epub"]
+    assert any(c["id"] == "hardcover:46" for c in review["catalog_candidates"])
+    assert not review["warnings"]
+    monkeypatch.setattr(get_settings(), "download_dispatch_enabled", True)
+    body = {
+        "revision": review["revision"],
+        "choices": [
+            {
+                "entry_id": first["id"],
+                "candidate_id": "hardcover:46",
+                "paths": first["files"],
+            }
+        ],
+    }
+    endpoint = f"/api/collection-reviews/{review['review_id']}/download"
+    invalid = await client.post(
+        endpoint,
+        headers={"Idempotency-Key": "unknown-correction"},
+        json={**body, "choices": [{**body["choices"][0], "candidate_id": "hardcover:999"}]},
+    )
+    assert invalid.status_code == 422
+    corrected = await client.post(
+        endpoint, headers={"Idempotency-Key": "known-correction"}, json=body
+    )
+    assert corrected.status_code == 202, corrected.text
+    async with database() as db:
+        selection = await db.scalar(select(AcquisitionSelection))
+        assert selection.frozen["selected_paths"] == first["files"]
+
+
+async def test_series_observation_seeds_collection_catalog_before_metadata_is_imported(
+    client, database, admin, catalog, selection_route, monkeypatch
+):
+    from sqlalchemy import delete
+
+    from app.api import metadata
+    from app.db.models import CatalogSeries, ProviderObject, SeriesMembership, WorkMetadataSource
+
+    url, _ = await setup_review(client, database, admin, catalog, selection_route)
+    cover = "https://assets.hardcover.app/book-cover.jpg"
+    async with database() as db, db.begin():
+        book = await db.get(Work, catalog["work"])
+        title = book.title
+        await db.execute(
+            delete(ProviderObject).where(
+                ProviderObject.metadata_source_id.in_(
+                    select(WorkMetadataSource.id).where(WorkMetadataSource.work_id == book.id)
+                )
+            )
+        )
+        await db.execute(delete(WorkMetadataSource).where(WorkMetadataSource.work_id == book.id))
+        series = CatalogSeries(
+            owner_id=UUID(admin["id"]),
+            provider="hardcover",
+            external_id="808",
+            name="Harbor Saga",
+            fetched_at=datetime.now(UTC),
+        )
+        db.add(series)
+        await db.flush()
+        db.add(
+            SeriesMembership(
+                series_id=series.id,
+                external_id="42",
+                work_id=book.id,
+                present=True,
+                snapshot={
+                    "position": "1",
+                    "book": {"external_id": "42", "title": title, "cover_url": cover},
+                },
+            )
+        )
+
+    search = await begin(client, catalog, key="series-observation-search")
+    async with database() as db, db.begin():
+        row = await db.get(SourceResult, UUID(url.split("/")[5]))
+        row.operation_id = UUID(search["id"])
+    url = f"/api/source-searches/{search['id']}/results/{url.split('/')[5]}/contents"
+    calls = []
+
+    async def bibliography(db, owner, provider, method, external_id):
+        calls.append((provider, method, external_id))
+        return {"books": [], "truncated": False}, False, None
+
+    monkeypatch.setattr(metadata, "provider_call", bibliography)
+    response = await client.get(url, params={"artifact_id": selection_route["artifact_id"]})
+    assert response.status_code == 200, response.text
+    review = response.json()
+    assert calls == [("hardcover", "collection_bibliography", "42")]
+    candidate = next(c for c in review["catalog_candidates"] if c["title"] == title)
+    assert candidate["cover_url"] == cover
+    assert candidate["series"] == [{"external_id": "808", "name": "Harbor Saga", "position": "1"}]

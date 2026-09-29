@@ -50,10 +50,15 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
       description: "Includes five books",
       freeleech: true,
     };
-    const entries = ["Angels & Demons", "Digital Fortress"].map((title, i) => ({
+    const entries = [
+      "Angels & Demons",
+      "Digital Fortress",
+      "The Lost Symbol",
+    ].map((title, i) => ({
       id: `entry-${i}`,
       title,
-      match: "exact",
+      match: "review",
+      suggested_candidate_id: `candidate-${i}`,
       evidence: [{ basis: "description" }],
       recordings:
         alternate && i === 0
@@ -92,7 +97,7 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
           external_id: String(i + 1),
           cover_url: null,
           series: [],
-          owned: false,
+          owned: i === 2,
         },
       ],
     }));
@@ -306,23 +311,37 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
       }),
     ).toBeVisible();
     expect(downloads).toEqual([]);
-    await dialog
-      .getByRole("button", { name: "Review downloadable files" })
-      .click();
+    await expect.poll(() => inspected).toBe(true);
+    await expect(
+      dialog.getByText("1 already in your library", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "The Lost Symbol", exact: true }),
+    ).toBeHidden();
     if (alternate) {
       await expect(
-        dialog.getByText("0 books selected", { exact: false }),
+        dialog.getByText("1 book selected", { exact: false }),
       ).toBeVisible();
+      await dialog
+        .getByText("1 items need a match or recording choice", { exact: true })
+        .click();
       const book = dialog.locator("article").filter({
         has: page.getByRole("heading", { name: /Angels & Demons/ }),
       });
       await expect(
-        book.getByRole("checkbox", { name: /Select this book/ }),
+        book.getByRole("checkbox", {
+          name: "Select Angels & Demons",
+          exact: true,
+        }),
       ).toBeDisabled();
+      await book.getByRole("button", { name: "Change match or files" }).click();
       await dialog
         .getByLabel("Recording for Angels & Demons")
         .selectOption("0");
       if (unmapped) {
+        await dialog
+          .getByText("Collection details and other files", { exact: true })
+          .click();
         await dialog
           .getByRole("button", { name: /^Download all files/ })
           .click();
@@ -343,10 +362,43 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
         expect(errors).toEqual([]);
         return;
       }
-      await book.getByRole("checkbox", { name: /Select this book/ }).check();
     }
     await expect(
-      dialog.getByText("1 books selected", { exact: false }),
+      dialog.getByText("2 books selected", { exact: false }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("checkbox", {
+        name: "Select Angels & Demons",
+        exact: true,
+      }),
+    ).toBeChecked();
+    await expect(
+      dialog.getByRole("checkbox", {
+        name: "Select Digital Fortress",
+        exact: true,
+      }),
+    ).toBeChecked();
+    await dialog
+      .getByRole("checkbox", { name: "Select Digital Fortress", exact: true })
+      .uncheck();
+    if (!alternate) {
+      const book = dialog.locator("article").filter({
+        has: page.getByRole("heading", { name: /Angels & Demons/ }),
+      });
+      await book.getByRole("button", { name: "Change match or files" }).click();
+      await book
+        .getByLabel("Search matches for Angels & Demons")
+        .fill("Angels");
+      await book
+        .getByRole("button", {
+          name: "Angels & Demons · Dan Brown",
+          exact: true,
+        })
+        .click();
+      await book.getByRole("button", { name: "Change match or files" }).click();
+    }
+    await expect(
+      dialog.getByText("1 book selected", { exact: false }),
     ).toBeVisible();
     expect(downloads).toEqual([]);
     for (const width of [1280, 390]) {

@@ -16,7 +16,7 @@ BOOKS = """query CollectionAuthorBooks($ids: [Int!]!) {
  contributions: {author_id: {_in: $ids},
  _or: [{contribution: {_eq: "Author"}}, {contribution: {_is_null: true}}]}},
  order_by: {id: asc}, limit: 1001) {
- id canonical_id title release_year release_date cached_image cached_contributors
+ id canonical_id title users_count release_year release_date cached_image cached_contributors
  english: editions(where: {language: {code2: {_eq: "en"}}},
  order_by: [{users_count: desc}, {id: asc}], limit: 5) { title }
  book_series(limit: 20) { position details series { id name } }
@@ -46,6 +46,7 @@ async def bibliography(query, external_id):
             if not value["english"]:
                 continue
             item = book(value).model_dump(mode="json")
+            item["users_count"] = value.get("users_count", 0) or 0
             item["aliases"] = [e["title"] for e in value["english"]]
             item["series"] = [
                 {

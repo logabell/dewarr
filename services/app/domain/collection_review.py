@@ -1,5 +1,6 @@
 """Owner-scoped collection review: uploader claims → catalog choices → frozen files."""
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 from uuid import UUID
@@ -13,7 +14,9 @@ from app.adapters.catalog_types import BookData
 from app.adapters.contracts import AdapterError
 from app.adapters.source_releases import release_value
 from app.db.models import (
+    CatalogSeries,
     Operation,
+    SeriesMembership,
     SourceArtifact,
     SourceConnection,
     SourceResult,
@@ -52,6 +55,8 @@ class PackContentsEntry(BaseModel):
     evidence: list[dict] = []
     recordings: list[dict] = []
     recording_options: list[dict] = []
+    suggested_candidate_id: str | None = None
+    suggested_recording_id: str | None = None
 
 
 class CollectionFile(BaseModel):
@@ -70,6 +75,7 @@ class CollectionPreview(BaseModel):
     warnings: list[str] = []
     artifact_id: UUID | None = None
     bibliography_count: int = 0
+    catalog_candidates: list[CollectionCandidate] = []
     excluded: list[dict] = []
     series_coverage: list[dict] = []
 
@@ -111,15 +117,6 @@ async def context(db, user, search_id, result_id):
     return search, row
 
 
-def file_matches(path, title):
-    """Whole normalized title phrase; numeric track names alone establish nothing."""
-    key = collection_contents.title_key(title)
-    parts = PurePosixPath(path).with_suffix("").parts
-    # The torrent root names the pack, not every book underneath it.
-    path_key = collection_contents.title_key("/".join(parts[1:] if len(parts) > 1 else parts))
-    return bool(key and (" " + key + " ") in (" " + path_key + " "))
-
-
 async def preview(db, user, search_id, result_id, artifact_id=None):
     search, row = await context(db, user, search_id, result_id)
     owner_id = user.id
@@ -140,6 +137,31 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
         )
         .limit(1)
     )
+    if not metadata_id and not await db.scalar(
+        select(WorkMetadataSource.id)
+        .where(
+            WorkMetadataSource.work_id.in_(family_ids(UUID(work["id"]))),
+            WorkMetadataSource.provider == "hardcover",
+            WorkMetadataSource.accepted.is_(False),
+        )
+        .limit(1)
+    ):
+        # Series browsing creates provisional works, not accepted metadata links.
+        # Their owner-scoped observations can seed discovery without accepting a match.
+        observed = await db.scalar(
+            select(SeriesMembership.snapshot)
+            .join(CatalogSeries)
+            .where(
+                SeriesMembership.work_id.in_(family_ids(UUID(work["id"]))),
+                SeriesMembership.present.is_(True),
+                CatalogSeries.owner_id == owner_id,
+                CatalogSeries.provider == "hardcover",
+            )
+            .order_by(CatalogSeries.fetched_at.desc())
+            .limit(1)
+        )
+        if observed:
+            metadata_id = observed.get("book", {}).get("external_id")
     bibliography = {"books": [], "truncated": False}
     if metadata_id:
         from app.api.metadata import provider_call
@@ -177,6 +199,35 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
         if work["authors"]
         else []
     )
+    observations = {}
+    for membership, series in (
+        await db.execute(
+            select(SeriesMembership, CatalogSeries)
+            .join(CatalogSeries)
+            .where(
+                SeriesMembership.work_id.in_([book.id for book in local[:1000]]),
+                SeriesMembership.present.is_(True),
+                CatalogSeries.owner_id == owner_id,
+                CatalogSeries.provider == "hardcover",
+            )
+            .order_by(CatalogSeries.fetched_at.desc(), SeriesMembership.external_id)
+        )
+    ).all():
+        snapshot = membership.snapshot
+        observations.setdefault(
+            membership.work_id,
+            {
+                "cover_url": snapshot.get("book", {}).get("cover_url"),
+                "external_id": snapshot.get("book", {}).get("external_id"),
+                "series": [
+                    {
+                        "external_id": series.external_id,
+                        "name": series.name,
+                        "position": snapshot.get("position"),
+                    }
+                ],
+            },
+        )
     candidates, documents = [], {}
     for book in bibliography["books"]:
         key = "hardcover:" + book["external_id"]
@@ -211,14 +262,15 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
                     id=key,
                     title=book.title,
                     authors=book.authors,
-                    cover_url=book.cover_url,
+                    cover_url=book.cover_url or observations.get(book.id, {}).get("cover_url"),
                     work_id=book.id,
+                    external_id=observations.get(book.id, {}).get("external_id"),
+                    series=observations.get(book.id, {}).get("series", []),
                 ),
                 [book.title],
             )
         )
         documents[key] = {"work_id": str(book.id)}
-    from app.db.models import CatalogSeries, SeriesMembership
     from app.domain.availability import availability_for
     from app.domain.series_projection import project
     from app.domain.work_graph import canonical_map
@@ -266,13 +318,59 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
             raise HTTPException(422, "Collection file selection requires a torrent")
         files = [CollectionFile(**f) for f in artifact.descriptor["files"]]
     labels = {t for _, names in candidates for t in names} | {i["title"] for i in parsed["items"]}
-    file_labels = {f.path: {t for t in labels if file_matches(f.path, t)} for f in files}
+
+    prefixes = sorted(
+        {
+            collection_contents.title_key(value)
+            for value in [*release.authors, *work["authors"], *(s.name for s in release.series)]
+            if value
+        },
+        key=len,
+        reverse=True,
+    )
+
+    def title_in_part(part, key):
+        normalized = " " + collection_contents.title_key(part) + " "
+        offset = normalized.find(" " + key + " ")
+        if offset < 0:
+            return False
+        prefix = normalized[:offset]
+        for value in prefixes:
+            prefix = prefix.replace(" " + value + " ", " ")
+            if prefix.strip() == value:
+                prefix = ""
+        prefix = re.sub(r"\b(?:book|volume|vol|part|disc|cd|track|the|\d+)\b", "", prefix)
+        # An incidental mention in another title/subtitle isn't a file identity.
+        return not prefix.strip()
+
+    def file_title_score(path, title):
+        parts = PurePosixPath(path).with_suffix("").parts
+        parts = parts[1:] if len(parts) > 1 else parts
+        key = collection_contents.title_key(title)
+        # Uploaders commonly omit a leading article. A long, specific title still
+        # outranks a short title mentioned in its subtitle (e.g. "An Eclipse Novella").
+        if key.startswith("the ") and len(key.split()) >= 3:
+            key = key.removeprefix("the ")
+        return max(
+            ((i, len(key)) for i, part in enumerate(parts) if key and title_in_part(part, key)),
+            default=(-1, 0),
+        )
+
+    # A book filename or its immediate folder takes precedence over a series folder.
+    file_labels, file_depths = {}, {}
+    for file in files:
+        scores = {t: file_title_score(file.path, t) for t in labels}
+        best = max(scores.values(), default=(-1, 0))
+        file_depths[file.path] = best[0]
+        file_labels[file.path] = {
+            t for t, score in scores.items() if best[0] >= 0 and score == best
+        }
+
+    def content_title_key(title):
+        return re.sub(r"\s+an?\s+.*\b(?:novella|novel)$", "", collection_contents.title_key(title))
 
     def matches_file(path, title):
-        matches = file_labels[path]
-        # "The Stand" must not claim files labelled "The Stand Companion".
-        longest = max((len(collection_contents.title_key(t)) for t in matches), default=0)
-        return title in matches and len(collection_contents.title_key(title)) == longest
+        return any(content_title_key(title) == content_title_key(t) for t in file_labels[path])
 
     entries = []
     for item in parsed["items"]:
@@ -306,11 +404,6 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
                     and PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
                 ],
             )
-        )
-    if not entries:
-        warnings.append(
-            "No explicit title list was found. Review the torrent files; "
-            "file counts are not book counts."
         )
     excluded_keys = {collection_contents.title_key(e["title"]) for e in parsed["excluded"]}
 
@@ -356,10 +449,84 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
             if PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
         ):
             propose(candidate, labels, {"basis": "torrent filenames"})
+    if artifact_id:
+        # A range proposes catalog candidates, not an inventory of physical books.
+        # Keep explicit description claims for correction, but don't present every
+        # unmatched catalog edition as another book in the inspected pack.
+        entries = [
+            e
+            for e in entries
+            if e.files or any(v.get("basis") == "description" for v in e.evidence)
+        ]
+    # Different English editions and omnibus aliases can propose the same files.
+    # Present one physical book group, retaining alternatives for a manual correction.
+    grouped = {}
     for entry in entries:
+        group = tuple(sorted(entry.files)) if entry.files else (entry.id,)
+        if group not in grouped:
+            grouped[group] = entry
+            continue
+        previous = grouped[group]
+        previous.candidates = list(
+            {c.id: c for c in [*previous.candidates, *entry.candidates]}.values()
+        )
+        for attr in ("evidence", "recordings"):
+            values = getattr(previous, attr)
+            values.extend(value for value in getattr(entry, attr) if value not in values)
+    entries = list(grouped.values())
+    popularity = {
+        "hardcover:" + b["external_id"]: b.get("users_count", 0) for b in bibliography["books"]
+    }
+    for entry in entries:
+        direct = [
+            c
+            for c in entry.candidates
+            if entry.files
+            and all(
+                file_title_score(p, c.title)[0] == file_depths[p] and file_depths[p] >= 0
+                for p in entry.files
+            )
+        ]
+        # Prefer explicit file titles to loosely attached edition aliases. Equivalent
+        # title/author records get one stable display representative, never an identity merge.
+        pool = direct or entry.candidates
+        identities = {
+            (
+                content_title_key(c.title),
+                tuple(sorted(collection_contents.title_key(a) for a in c.authors)),
+            )
+            for c in pool
+        }
+        if entry.files and len(identities) == 1:
+            candidate = min(
+                pool,
+                key=lambda c: (
+                    not bool(c.work_id),
+                    -popularity.get(c.id, 0),
+                    not bool(c.cover_url),
+                    c.id,
+                ),
+            )
+            entry.suggested_candidate_id = candidate.id
+            entry.title = candidate.title
+            entry.match = "exact"
         entry.recording_options = collection_signals.recording_options(
             entry.recordings, entry.files
         )
+        mapped = [r for r in entry.recording_options if r["files"]]
+        if len(mapped) == 1:
+            entry.suggested_recording_id = mapped[0]["id"]
+        elif len(mapped) > 1:
+            # Prefer the uploader's primary version when files distinguish it from
+            # explicitly labelled alternates. Otherwise leave the recording unresolved.
+            primary_recordings = [r for r in mapped if not r["claims"].get("alternate")]
+            if len(primary_recordings) == 1:
+                entry.suggested_recording_id = primary_recordings[0]["id"]
+    # Overlapping groups are ambiguous even when each title looks plausible alone.
+    for entry in entries:
+        if any(set(entry.files) & set(other.files) for other in entries if other is not entry):
+            entry.suggested_candidate_id = None
+            entry.match = "review"
     primary = [
         f.path for f in files if PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
     ]
@@ -389,9 +556,8 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
     matched = {
         c.external_id
         for entry in entries
-        if len(entry.candidates) == 1
         for c in entry.candidates
-        if c.external_id
+        if c.external_id and (c.id == entry.suggested_candidate_id or len(entry.candidates) == 1)
     }
     rows = list(
         await db.scalars(
@@ -475,6 +641,7 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
         warnings=warnings,
         artifact_id=artifact_id,
         bibliography_count=len(bibliography["books"]),
+        catalog_candidates=[c for c, _ in candidates],
         excluded=parsed["excluded"],
         series_coverage=coverage,
     )
@@ -527,8 +694,8 @@ async def download(db, user, review_id, body, key):
     selected_paths, works, selections = set(), set(), []
     for choice in body.choices:
         entry = entries.get(choice.entry_id)
-        if not entry or choice.candidate_id not in {c["id"] for c in entry["candidates"]}:
-            raise HTTPException(422, "Choose a catalog candidate from this review")
+        if not entry or choice.candidate_id not in evidence["documents"]:
+            raise HTTPException(422, "Choose a catalog book from this review")
         paths = set(choice.paths)
         if len(paths) != len(choice.paths) or not paths <= known_paths or paths & selected_paths:
             raise HTTPException(422, "Choose distinct inspected files for each book")
@@ -614,7 +781,8 @@ async def download(db, user, review_id, body, key):
                     "review_id": str(review.id),
                     "revision": body.revision,
                     "paths": sorted(choice.paths),
-                    "title": entries[choice.entry_id]["title"],
+                    "title": work.title,
+                    "source_title": entries[choice.entry_id]["title"],
                     "recording": next(
                         (
                             r["claims"]

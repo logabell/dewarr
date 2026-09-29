@@ -16,6 +16,9 @@ def test_live_collection_lists_preserve_recording_variants_and_partial_author_sc
     assert len(king["items"]) == 63
     assert sum(len(x["recordings"]) for x in king["items"]) == 82
     assert len(next(x for x in king["items"] if x["title"] == "The Stand")["recordings"]) == 3
+    shining = next(x for x in king["items"] if x["title"] == "The Gunslinger")
+    assert not shining["recordings"][0].get("alternate")
+    assert all(r["alternate"] for r in shining["recordings"][1:])
 
 
 def test_html_contents_and_anthology_do_not_invent_novels():
