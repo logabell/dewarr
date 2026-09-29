@@ -1,6 +1,6 @@
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "../components/InfiniteScroll";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, result, type Auth } from "../api/client";
@@ -32,15 +32,27 @@ export default function SeriesRequests({
   generation,
   selected,
   mainBookReview,
+  scopeReview,
 }: {
   externalId: string;
   generation: number;
   selected: string[];
   mainBookReview?: MainBookReview;
+  scopeReview?: ReactNode;
 }) {
   const cache = useQueryClient();
-  const [params] = useSearchParams();
-  const [id, setId] = useState<string | null>(() => params.get("request"));
+  const [params, setParams] = useSearchParams();
+  const id = params.get("request");
+  const setId = (value: string | null) =>
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (value) next.set("request", value);
+        else next.delete("request");
+        return next;
+      },
+      { replace: true },
+    );
   const [scope, setScope] = useState<"selected" | "complete_series">(
     "selected",
   );
@@ -219,6 +231,7 @@ export default function SeriesRequests({
       key.current = randomUUID();
       lastDraft.current = draft;
       preview.reset();
+      if (saved.data?.status === "preview") setId(null);
     }
   }, [draft]);
   const value = saved.data;
@@ -230,19 +243,18 @@ export default function SeriesRequests({
     ["queued", "running"].includes(value?.status || "");
   return (
     <section
-      className="panel editor"
+      className="panel editor series-request-composer"
       aria-label="Series requests"
       tabIndex={-1}
       ref={panel}
     >
-      <h2>Request books from this series</h2>
-      <p>
-        Choose books above, review what is missing, then save your requests.
-        Future additions to the series are not included.{" "}
-        {canDownloadSeries
-          ? "You can choose releases yourself or automatically acquire the missing media in this reviewed set."
-          : "Requests wait for approval before a download can start."}
-      </p>
+      <div className="series-composer-heading">
+        <h2>{id ? "Review request" : "Your request"}</h2>
+        <span className="muted">
+          {id && saved.data ? saved.data.records.length : selected.length} books
+          selected
+        </span>
+      </div>
       <Notice
         error={
           preview.error ||
@@ -261,73 +273,40 @@ export default function SeriesRequests({
           }}
         >
           <fieldset className="editor" disabled={preview.isPending}>
-            <legend>{selected.length} books selected · maximum 100</legend>
-            <label>
-              Series request scope
-              <select
-                value={scope}
-                onChange={(e) => {
-                  setScope(e.target.value as typeof scope);
-                  setConfirmed(false);
-                }}
-              >
-                <option value="selected">Selected books</option>
-                <option value="complete_series">
-                  Complete reviewed main-book set
-                </option>
-              </select>
-            </label>
-            {scope === "complete_series" && (
-              <>
-                {matchingReview && (
-                  <label className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={useMainBookReview}
-                      onChange={(event) => {
-                        setUseMainBookReview(event.target.checked);
-                        setConfirmed(false);
-                      }}
-                    />
-                    Use saved main-book review (revision{" "}
-                    {mainBookReview?.revision})
-                  </label>
-                )}
-                {!scopeReviewId && (
-                  <label className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={confirmed}
-                      onChange={(e) => setConfirmed(e.target.checked)}
-                    />
-                    I reviewed the selection and it contains the main books I
-                    want to complete.
-                  </label>
-                )}
-              </>
-            )}
-            <label>
-              Series requested media
-              <select
-                value={spec.mode || "inherit"}
-                onChange={(e) =>
-                  setSpec({
-                    ...spec,
-                    mode:
-                      e.target.value === "inherit"
-                        ? undefined
-                        : (e.target.value as Spec["mode"]),
-                    preferred_medium: undefined,
-                  })
-                }
-              >
-                <option value="inherit">Use my defaults</option>
-                {requestEbook && <option value="ebook">Ebook</option>}
-                {requestAudio && <option value="audio">Audiobook</option>}
-                {requestBoth && <option value="both">Both</option>}
-                {requestBoth && <option value="either">Either medium</option>}
-              </select>
-            </label>
+            <legend className="sr-only">Request format and options</legend>
+            <div
+              className="series-format-choices"
+              role="group"
+              aria-label="Series requested media"
+            >
+              {[
+                ["inherit", "My defaults", true],
+                ["audio", "Audiobook", requestAudio],
+                ["ebook", "Ebook", requestEbook],
+                ["both", "Both", requestBoth],
+                ["either", "Either", requestBoth],
+              ]
+                .filter(([, , allowed]) => allowed)
+                .map(([mode, label]) => (
+                  <button
+                    key={String(mode)}
+                    type="button"
+                    aria-pressed={(spec.mode || "inherit") === mode}
+                    onClick={() =>
+                      setSpec({
+                        ...spec,
+                        mode:
+                          mode === "inherit"
+                            ? undefined
+                            : (mode as Spec["mode"]),
+                        preferred_medium: undefined,
+                      })
+                    }
+                  >
+                    {String(label)}
+                  </button>
+                ))}
+            </div>
             {spec.mode === "either" && (
               <label>
                 Series first medium
@@ -349,7 +328,7 @@ export default function SeriesRequests({
                 </select>
               </label>
             )}
-            <RequestPreferences value={preferences} onChange={setPreferences} />
+
             <label className="check-label">
               <input
                 type="checkbox"
@@ -359,7 +338,65 @@ export default function SeriesRequests({
               Automatically acquire missing books after review
             </label>
             {automatic && <SeriesAutomaticRoutes selection={routes} />}
+            <p className="muted series-request-hint">
+              {automatic
+                ? "Verified packs can serve multiple selected books in one download. Uncertain contents stay in review."
+                : "Save your requests, then review sources. Collection sources open a book and file selection dialog."}
+            </p>
+            <details className="series-request-options">
+              <summary>Request options</summary>
+              <label>
+                Series request scope
+                <select
+                  value={scope}
+                  onChange={(e) => {
+                    setScope(e.target.value as typeof scope);
+                    setConfirmed(false);
+                  }}
+                >
+                  <option value="selected">Selected books</option>
+                  <option value="complete_series">
+                    Complete reviewed main-book set
+                  </option>
+                </select>
+              </label>
+              {scope === "complete_series" && (
+                <>
+                  {matchingReview && (
+                    <label className="check-label">
+                      <input
+                        type="checkbox"
+                        checked={useMainBookReview}
+                        onChange={(event) => {
+                          setUseMainBookReview(event.target.checked);
+                          setConfirmed(false);
+                        }}
+                      />
+                      Use saved main-book review (revision{" "}
+                      {mainBookReview?.revision})
+                    </label>
+                  )}
+                  {!scopeReviewId && (
+                    <label className="check-label">
+                      <input
+                        type="checkbox"
+                        checked={confirmed}
+                        onChange={(e) => setConfirmed(e.target.checked)}
+                      />
+                      I reviewed the selection and it contains the main books I
+                      want to complete.
+                    </label>
+                  )}
+                </>
+              )}
+              <RequestPreferences
+                value={preferences}
+                onChange={setPreferences}
+              />
+              {scopeReview}
+            </details>
             <button
+              className="primary series-review-button"
               disabled={
                 !selected.length ||
                 selected.length > 100 ||
@@ -367,7 +404,9 @@ export default function SeriesRequests({
                 (scope === "complete_series" && !confirmed && !scopeReviewId)
               }
             >
-              Preview series requests
+              {preview.isPending
+                ? "Preparing review…"
+                : `Review ${selected.length} selected book${selected.length === 1 ? "" : "s"}`}
             </button>
           </fieldset>
         </form>
@@ -396,9 +435,8 @@ export default function SeriesRequests({
                 "After you accept, missing requested media will be acquired through the approved routes."}
             </p>
           )}
-          <p>
-            {value.records.length} selected books · {value.counts.satisfied}{" "}
-            available media targets · {value.counts.wanted} missing ·{" "}
+          <p className="series-request-totals">
+            {value.counts.wanted} missing · {value.counts.satisfied} available ·{" "}
             {value.counts.pending} already requested
             {value.counts.cancelled > 0 &&
               ` · ${value.counts.cancelled} cancelled`}
@@ -411,17 +449,23 @@ export default function SeriesRequests({
                 ` Reused main-book review ${value.scope_review_revision}.`}
             </p>
           )}
-          <EffectiveScope
-            specification={value.specification}
-            origins={value.release_policy.scope_origins}
-          />
-          <EffectivePreferences
-            preferences={value.release_policy.preferences}
-            origins={value.release_policy.origins || {}}
-          />
-          <div className="edition-grid">
+          <details className="series-request-options">
+            <summary>Saved request options</summary>
+            <EffectiveScope
+              specification={value.specification}
+              origins={value.release_policy.scope_origins}
+            />
+            <EffectivePreferences
+              preferences={value.release_policy.preferences}
+              origins={value.release_policy.origins || {}}
+            />
+          </details>
+          <div className="series-request-results">
             {value.records.map((book, index) => (
-              <article className="panel" key={`${book.work_id}:${index}`}>
+              <article
+                className="series-request-result"
+                key={`${book.work_id}:${index}`}
+              >
                 <h3>
                   <Link to={`/books/${book.work_id}`}>
                     {book.position != null && `${book.position} · `}
@@ -453,8 +497,8 @@ export default function SeriesRequests({
                 {value.receipt?.find(
                   (receipt) => receipt.work_id === book.work_id,
                 ) && (
-                  <Link to={`/books/${book.work_id}`}>
-                    Open book and source options
+                  <Link to={`/books/${book.work_id}?tab=sources`}>
+                    Review sources
                   </Link>
                 )}
               </article>
@@ -512,10 +556,6 @@ export default function SeriesRequests({
               New selection
             </button>
           </div>
-          <p className="muted">
-            Cancellation removes only this series request’s reasons. Other
-            requests, existing files and shared downloads remain intact.
-          </p>
         </>
       ) : (
         <p role="status">Loading saved series request…</p>

@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
-VERSION = 1
+VERSION = 2
 
 
 def number(snapshot):
@@ -19,7 +19,18 @@ def number(snapshot):
         return None
 
 
+def incomplete(snapshot):
+    title = snapshot.get("book", {}).get("title", "").strip().casefold()
+    return bool(snapshot.get("metadata_issues")) or (
+        title in {"untitled", "tbd", "tba"}
+        and not snapshot.get("release_date")
+        and not snapshot.get("book", {}).get("publication_year")
+    )
+
+
 def category(snapshot, language="en"):
+    if incomplete(snapshot):
+        return "other"
     if snapshot.get("canonical_id") or snapshot.get("partial"):
         return "other"
     if language and "languages" in snapshot and language not in snapshot["languages"]:
@@ -65,6 +76,8 @@ def project(entries, language="en"):
 
 def full_book(snapshot):
     """Full-book eligibility shared by reviewed series requests and coverage."""
+    if incomplete(snapshot):
+        return False
     if "languages" not in snapshot:
         return not any(snapshot.get(k) for k in ("compilation", "partial", "canonical_id"))
     return category(snapshot) in {"main", "supplement"}

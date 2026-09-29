@@ -89,7 +89,7 @@ async def page(query, external_id, cursor=0):
             "description": description,
             "count": count,
             "primary_books_count": row.get("primary_books_count"),
-            "projection_version": 1,
+            "projection_version": 2,
         }
         members = row["book_series"]
         if not isinstance(members, list) or len(members) > PAGE_SIZE:
@@ -101,10 +101,14 @@ async def page(query, external_id, cursor=0):
                 raise invalid()
             cursor = key
             raw = member["book"]
+            title = raw["title"]
+            if not isinstance(title, str):
+                raise invalid()
+            missing_title = not title.strip()
             book = BookData(
                 provider="hardcover",
                 external_id=identifier("hardcover", str(raw["id"])),
-                title=raw["title"],
+                title=title if not missing_title else "Untitled",
                 authors=contributors(raw.get("cached_contributors"), "Author"),
                 publication_year=year(raw.get("release_year")),
                 cover_url=cover_url((raw.get("cached_image") or {}).get("url")),
@@ -124,6 +128,7 @@ async def page(query, external_id, cursor=0):
             items.append(
                 {
                     "entry_id": str(key),
+                    "metadata_issues": ["missing-title"] if missing_title else [],
                     "book": book.model_dump(mode="json"),
                     "position": position(member["position"]),
                     "details": details,

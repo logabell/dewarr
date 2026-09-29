@@ -351,3 +351,21 @@ async def test_catalog_refresh_cannot_expand_an_accepted_series_set(
         assert row.payload["scope_revision"] == revision
         assert set(row.payload["books"]) == set(map(str, ready["works"]))
         assert {book["state"] for book in row.payload["books"].values()} == {"searching"}
+
+
+async def test_selected_series_books_share_one_eligible_mam_pack_transfer(client, database, ready):
+    identifier, selections = await prepared(client, database, ready)
+    for selection in selections:
+        await automatic_selection.run(selection)
+    await automatic_packs.run(selections[0])
+    async with database() as db:
+        attempt = await db.scalar(select(DownloadAttempt))
+        assert attempt is not None
+        assert await db.scalar(select(func.count()).select_from(DownloadMembership)) == 2
+    await download_attempts.run(attempt.id)
+    await download_attempts.run(attempt.id)
+    await series_acquisition.run(identifier)
+    async with database() as db:
+        assert (await db.get(DownloadAttempt, attempt.id)).external_may_exist
+        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 1
+    assert ready["qbit"].calls.count("submit") == 1

@@ -406,10 +406,11 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
         members = [
             item for item in members if str(item.id) in row.evidence["authorized_selection_ids"]
         ]
-    works, wanted = set(), {}
+    works, wanted, work_members = set(), {}, {}
     for item in members:
         work_id = (await canonical_work(db, UUID(item.frozen["origin_work_id"]))).id
         works.add(work_id)
+        work_members.setdefault(work_id, []).append(item)
         try:
             owner, intent, _ = await download_reviews.requester_authority(db, item)
         except HTTPException:
@@ -446,6 +447,9 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
         reason = content_reason(
             group, files, selection.frozen["release"], omitted_audio_paths=omitted_audio_paths
         )
+        from app.importing.collection_recordings import conflict as recording_conflict
+
+        reason = reason or recording_conflict(members, group, match.evidence)
         if reason and ("partial content" in reason or "incomplete" in reason):
             release_rejection = True
         if not reason:
@@ -482,6 +486,13 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
             if linked:
                 work = await canonical_work(db, linked.work_id)
                 candidate = candidate_evidence(match.evidence, linked, work, work, False)
+        if candidate and not reason:
+            reason = recording_conflict(
+                members,
+                group,
+                match.evidence,
+                allowed_members=work_members.get(candidate.work_id, []),
+            )
         if (match.status != "matched" and not linked) or not candidate:
             reason = reason or match.message
         elif candidate.work_id not in works:

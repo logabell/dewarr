@@ -21370,6 +21370,17 @@
             "type": "string",
             "title": "Candidate Id"
           },
+          "recording_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Id"
+          },
           "paths": {
             "items": {
               "type": "string"
@@ -32016,6 +32027,15 @@
             "type": "array",
             "title": "Recordings",
             "default": []
+          },
+          "recording_options": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Recording Options",
+            "default": []
           }
         },
         "type": "object",
@@ -38320,6 +38340,11 @@
             "title": "Category",
             "default": "other"
           },
+          "metadata_incomplete": {
+            "type": "boolean",
+            "title": "Metadata Incomplete",
+            "default": false
+          },
           "work": {
             "$ref": "#/components/schemas/WorkView"
           }
@@ -39107,6 +39132,19 @@
           "projection_version": {
             "type": "integer",
             "title": "Projection Version",
+            "default": 0
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors",
+            "default": []
+          },
+          "incomplete_entries": {
+            "type": "integer",
+            "title": "Incomplete Entries",
             "default": 0
           }
         },

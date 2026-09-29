@@ -10,7 +10,7 @@ from app.adapters.mam import plain
 
 MAX_TEXT = 100000
 MAX_ROWS = 100
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 
 def title_key(value):
@@ -60,7 +60,12 @@ def extract(description):
         dated_end = re.fullmatch(r"(?:(\d+(?:\.\d+)?)\.\s*)?(.+?)\s*\((\d{4})\)", line)
         dated_start = re.fullmatch(r"((?:19|20)\d{2})\s*[-–]\s*(.+)", line)
         credit = re.fullmatch(r"(.+?) - (.+?) - ((?:un)?abridged)(?:\s*\(.*\))?", line)
-        facts = {"evidence_line": line_number, "raw": raw, "content_kind_hint": kind}
+        facts = {
+            "basis": "description",
+            "evidence_line": line_number,
+            "raw": raw,
+            "content_kind_hint": kind,
+        }
         if dated_end:
             title = dated_end[2]
             facts.update(year_claim=int(dated_end[3]), source_order=dated_end[1])
@@ -75,6 +80,10 @@ def extract(description):
             ):
                 title = title[: annotation.start()].strip()
                 facts["recording_notes"] = annotation[1]
+                series_hint = re.search(r"\bDT(\d+(?:\.\d+)?)\b", annotation[1], re.I)
+                if series_hint:
+                    facts["series_position_hint"] = series_hint[1]
+                    facts["series_label_hint"] = "DT"
                 narrator = re.search(r"read by (.+)", annotation[1], re.I)
                 if narrator:
                     facts["narrator_claim"] = narrator[1]
@@ -102,7 +111,7 @@ def extract(description):
             recording = {
                 k: v
                 for k, v in facts.items()
-                if k not in {"evidence_line", "raw", "source_order", "content_kind_hint"}
+                if k not in {"basis", "evidence_line", "raw", "source_order", "content_kind_hint"}
             }
             if recording not in entry["recordings"]:
                 entry["recordings"].append(recording)

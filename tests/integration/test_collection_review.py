@@ -100,3 +100,126 @@ async def test_collection_review_candidates_files_and_frozen_dispatch(
         json=body,
     )
     assert missing.status_code == 404
+
+
+async def test_alternate_recording_requires_explicit_choice_and_freezes_evidence(
+    client, database, admin, catalog, selection_route, monkeypatch
+):
+    url, _ = await setup_review(client, database, admin, catalog, selection_route)
+    async with database() as db, db.begin():
+        row = await db.scalar(
+            select(SourceResult).where(SourceResult.operation_id == UUID(url.split("/")[3]))
+        )
+        book = await db.get(Work, catalog["work"])
+        row.release_snapshot = {
+            **row.release_snapshot,
+            "description": (
+                f"1980 - {book.title} (read by First Reader)\nAlternate versions:\n"
+                f"1980 - {book.title} (read by Second Reader)"
+            ),
+        }
+    review = (await client.get(url, params={"artifact_id": selection_route["artifact_id"]})).json()
+    entry = review["entries"][0]
+    assert len(entry["recording_options"]) == 2
+    body = {
+        "revision": review["revision"],
+        "choices": [
+            {
+                "entry_id": entry["id"],
+                "candidate_id": entry["candidates"][0]["id"],
+                "paths": [review["files"][0]["path"]],
+            }
+        ],
+    }
+    endpoint = f"/api/collection-reviews/{review['review_id']}/download"
+    rejected = await client.post(
+        endpoint, json=body, headers={"Idempotency-Key": "missing-recording"}
+    )
+    assert rejected.status_code == 422 and "which recording" in rejected.text
+    body["choices"][0]["recording_id"] = "0"
+    monkeypatch.setattr(get_settings(), "download_dispatch_enabled", True)
+    accepted = await client.post(
+        endpoint, json=body, headers={"Idempotency-Key": "chosen-recording"}
+    )
+    assert accepted.status_code == 202, accepted.text
+    async with database() as db:
+        selection = await db.scalar(select(AcquisitionSelection))
+        assert (
+            selection.frozen["collection_review"]["recording"]["narrator_claim"] == "First Reader"
+        )
+
+
+async def test_range_and_files_supplement_partial_description_without_reviving_exclusions(
+    client, database, admin, catalog, selection_route, monkeypatch
+):
+    from app.api import metadata
+
+    async def bibliography(*args):
+        return (
+            {
+                "books": [
+                    {
+                        "provider": "hardcover",
+                        "external_id": "42",
+                        "title": "Harbor",
+                        "authors": ["Writer"],
+                        "aliases": [],
+                        "series": [{"name": "Harbor Saga", "position": "1"}],
+                    },
+                    {
+                        "provider": "hardcover",
+                        "external_id": "43",
+                        "title": "Next Harbor",
+                        "authors": ["Writer"],
+                        "aliases": [],
+                        "series": [{"name": "Harbor Saga", "position": "2"}],
+                    },
+                    {
+                        "provider": "hardcover",
+                        "external_id": "44",
+                        "title": "Absent book",
+                        "authors": ["Writer"],
+                        "aliases": [],
+                        "series": [{"name": "Harbor Saga", "position": "3"}],
+                    },
+                    {
+                        "provider": "hardcover",
+                        "external_id": "45",
+                        "title": "Bonus Harbor",
+                        "authors": ["Writer"],
+                        "aliases": [],
+                        "series": [],
+                    },
+                ],
+                "truncated": False,
+            },
+            False,
+            None,
+        )
+
+    monkeypatch.setattr(metadata, "provider_call", bibliography)
+    url, _ = await setup_review(client, database, admin, catalog, selection_route)
+    async with database() as db, db.begin():
+        row = await db.scalar(
+            select(SourceResult).where(SourceResult.operation_id == UUID(url.split("/")[3]))
+        )
+        row.release_snapshot = {
+            **row.release_snapshot,
+            "series": [{"source_id": "9", "name": "Harbor", "position": "1-3"}],
+        }
+        artifact = await db.get(SourceArtifact, UUID(selection_route["artifact_id"]))
+        artifact.descriptor = {
+            **artifact.descriptor,
+            "files": [
+                {"path": "Pack/Harbor.epub", "size_bytes": 100},
+                {"path": "Pack/Bonus Harbor.epub", "size_bytes": 100},
+                {"path": "Pack/Absent book.epub", "size_bytes": 100},
+            ],
+        }
+    review = (await client.get(url, params={"artifact_id": selection_route["artifact_id"]})).json()
+    entries = {e["title"]: e for e in review["entries"]}
+    assert set(entries) == {"Harbor", "Next Harbor", "Bonus Harbor"}
+    assert any(e["basis"] == "MAM series range" for e in entries["Next Harbor"]["evidence"])
+    assert entries["Harbor"]["files"] == ["Pack/Harbor.epub"]
+    assert entries["Bonus Harbor"]["files"] == ["Pack/Bonus Harbor.epub"]
+    assert entries["Bonus Harbor"]["match"] == "review"

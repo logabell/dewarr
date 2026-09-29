@@ -153,3 +153,21 @@ def test_verification_refreshes_popularity_without_rejecting_unchanged_membershi
     original, _ = advance(None, SeriesPage(info, rows, 2))
     with pytest.raises(AdapterError):
         advance(original, SeriesPage(info, [{**rows[0], "position": "3", "users_count": 101}], 1))
+
+
+async def test_blank_title_is_preserved_as_incomplete_without_losing_membership():
+    row = header()
+    row["book_series"][1]["book"]["title"] = "  "
+
+    async def query(*args):
+        return {"series": [row]}
+
+    observed = await page(query, "9")
+    assert len(observed.items) == 2
+    assert observed.items[1]["book"]["title"] == "Untitled"
+    assert observed.items[1]["metadata_issues"] == ["missing-title"]
+    stage, done = advance(None, observed)
+    assert not done and advance(stage, observed)[1]
+    row["book_series"][1]["book"]["title"] = "Recovered title"
+    with pytest.raises(AdapterError):
+        advance(stage, await page(query, "9"))

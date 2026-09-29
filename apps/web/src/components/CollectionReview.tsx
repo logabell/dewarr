@@ -29,6 +29,7 @@ export default function CollectionReview({
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState("source");
   const key = useRef(randomUUID());
+  const [recordings, setRecordings] = useState<Record<string, string>>({});
   const [artifactId, setArtifactId] = useState<string>();
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [catalogChoices, setCatalogChoices] = useState<Record<string, string>>(
@@ -73,14 +74,24 @@ export default function CollectionReview({
             const candidate =
               catalogChoices[entry.id] ||
               (entry.candidates.length === 1 ? entry.candidates[0].id : "");
+            const options = entry.recording_options || [];
+            const recordingId =
+              recordings[entry.id] ||
+              (options.length === 1 ? String(options[0].id) : undefined);
+            const recording = options.find((r) => r.id === recordingId);
+            const recordingPaths = recording
+              ? (recording.files as string[])
+              : entry.files;
             return candidate &&
+              (options.length <= 1 || recordingId !== undefined) &&
               !entry.candidates.find((c) => c.id === candidate)?.owned &&
-              entry.files.length
+              recordingPaths.length
               ? [
                   {
                     entry_id: entry.id,
                     candidate_id: candidate,
-                    paths: entry.files,
+                    recording_id: recordingId,
+                    paths: recordingPaths,
                   },
                 ]
               : [];
@@ -113,6 +124,8 @@ export default function CollectionReview({
     const entry = data.entries.find(
       (e) =>
         e.candidates.length === 1 &&
+        e.match === "exact" &&
+        (e.recording_options || []).length <= 1 &&
         !e.candidates[0].owned &&
         e.files.length > 0 &&
         (titleKey(e.title) === titleKey(data.requested_title) ||
@@ -123,6 +136,10 @@ export default function CollectionReview({
         [entry.id]: {
           entry_id: entry.id,
           candidate_id: entry.candidates[0].id,
+          recording_id:
+            entry.recording_options?.length === 1
+              ? String(entry.recording_options[0].id)
+              : undefined,
           paths: entry.files,
         },
       });
@@ -246,6 +263,14 @@ export default function CollectionReview({
                       (c) => c.id === candidateId,
                     );
                     const choice = choices[entry.id];
+                    const options = entry.recording_options || [];
+                    const recordingId =
+                      recordings[entry.id] ||
+                      (options.length === 1 ? String(options[0].id) : "");
+                    const recording = options.find((r) => r.id === recordingId);
+                    const suggestedFiles = recording
+                      ? (recording.files as string[])
+                      : entry.files;
                     const requested =
                       titleKey(entry.title) ===
                         titleKey(data.requested_title) ||
@@ -319,6 +344,51 @@ export default function CollectionReview({
                                 : "Confirm the catalog match; the source title is ambiguous."}
                             </p>
                           )}
+                          <p className="muted">
+                            {[
+                              ...new Set(
+                                entry.evidence.map((e) =>
+                                  String(e.basis || "description"),
+                                ),
+                              ),
+                            ].join(" · ") || "Contents need review"}
+                            {" · "}
+                            {entry.files.length
+                              ? `${entry.files.length} filename matches`
+                              : "Files not yet matched"}
+                            {" · Metadata confirmation after download"}
+                          </p>
+                          {options.length > 0 && (
+                            <label>
+                              Recording
+                              <select
+                                aria-label={`Recording for ${entry.title}`}
+                                value={recordingId}
+                                disabled={busy}
+                                onChange={(e) => {
+                                  setRecordings({
+                                    ...recordings,
+                                    [entry.id]: e.target.value,
+                                  });
+                                  const next = { ...choices };
+                                  delete next[entry.id];
+                                  change(next);
+                                }}
+                              >
+                                <option value="">Choose a recording</option>
+                                {options.map((r) => (
+                                  <option
+                                    key={String(r.id)}
+                                    value={String(r.id)}
+                                  >
+                                    {Object.values(
+                                      r.claims as Record<string, unknown>,
+                                    ).join(" · ")}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
                           {entry.recordings.length > 0 && (
                             <details>
                               <summary>Recording and source evidence</summary>
@@ -338,7 +408,10 @@ export default function CollectionReview({
                                   type="checkbox"
                                   checked={!!choice}
                                   disabled={
-                                    busy || !candidateId || candidate?.owned
+                                    busy ||
+                                    !candidateId ||
+                                    candidate?.owned ||
+                                    (options.length > 1 && !recordingId)
                                   }
                                   onChange={(e) => {
                                     const next = { ...choices };
@@ -346,7 +419,8 @@ export default function CollectionReview({
                                       next[entry.id] = {
                                         entry_id: entry.id,
                                         candidate_id: candidateId,
-                                        paths: entry.files,
+                                        recording_id: recordingId || undefined,
+                                        paths: suggestedFiles,
                                       };
                                     else delete next[entry.id];
                                     change(next);
@@ -355,12 +429,12 @@ export default function CollectionReview({
                                 {candidate?.owned
                                   ? "Already in your library"
                                   : "Select this book"}
-                                {entry.files.length
-                                  ? ` · ${entry.files.length} suggested files`
+                                {suggestedFiles.length
+                                  ? ` · ${suggestedFiles.length} suggested files`
                                   : " · choose files below"}
                               </label>
                               {choice && (
-                                <details open={!entry.files.length}>
+                                <details open={!suggestedFiles.length}>
                                   <summary>
                                     Review files ({choice.paths.length})
                                   </summary>
@@ -431,9 +505,9 @@ export default function CollectionReview({
                     </p>
                     <p className="muted">
                       Unselected files are skipped. Download all also includes
-                      unmatched files; those need review before import.
-                      Alternate recordings of the same title require a separate
-                      review.
+                      unmatched files; those need review before import. Choose
+                      one recording per book. Other downloaded versions remain
+                      in import review.
                     </p>
                     <div className="button-row">
                       <button
@@ -452,9 +526,21 @@ export default function CollectionReview({
                       <button
                         disabled={
                           busy ||
-                          !data.entries.some(
-                            (e) =>
-                              e.candidates.length === 1 && e.files.length > 0,
+                          Object.values(choices).some((c) => !c.paths.length) ||
+                          !(
+                            Object.keys(choices).length ||
+                            data.entries.some(
+                              (e) =>
+                                e.candidates.length === 1 &&
+                                !e.candidates[0].owned &&
+                                e.files.length > 0 &&
+                                ((e.recording_options || []).length <= 1 ||
+                                  (e.recording_options || []).some(
+                                    (r) =>
+                                      r.id === recordings[e.id] &&
+                                      (r.files as string[]).length > 0,
+                                  )),
+                            )
                           )
                         }
                         onClick={() => {

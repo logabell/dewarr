@@ -130,3 +130,23 @@ def test_live_series_main_reading_order_against_author_publisher_reference(serie
         assert any(
             classes[e.id] == "supplement" and e.snapshot["position"] == "4.5" for e, _ in rows
         )
+
+
+def test_incomplete_and_undated_placeholder_records_do_not_become_main_books():
+    from app.domain.series_projection import category, full_book
+
+    for snapshot in [
+        {"book": {"title": "Untitled"}, "position": "6"},
+        {
+            "book": {"title": "Untitled"},
+            "position": "4",
+            "release_date": "2000-01-01",
+            "metadata_issues": ["missing-title"],
+        },
+    ]:
+        assert category(snapshot) == "other"
+        assert not full_book(snapshot)
+    assert (
+        category({"book": {"title": "Untitled"}, "position": "6", "release_date": "2020-01-01"})
+        == "main"
+    )

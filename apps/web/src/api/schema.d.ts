@@ -6891,6 +6891,8 @@ export interface components {
       entry_id: string;
       /** Candidate Id */
       candidate_id: string;
+      /** Recording Id */
+      recording_id?: string | null;
       /** Paths */
       paths: string[];
     };
@@ -10902,6 +10904,13 @@ export interface components {
       recordings: {
         [key: string]: unknown;
       }[];
+      /**
+       * Recording Options
+       * @default []
+       */
+      recording_options: {
+        [key: string]: unknown;
+      }[];
     };
     /** PackCoverage */
     PackCoverage: {
@@ -13256,6 +13265,11 @@ export interface components {
        * @default other
        */
       category: string;
+      /**
+       * Metadata Incomplete
+       * @default false
+       */
+      metadata_incomplete: boolean;
       work: components["schemas"]["WorkView"];
     };
     /** SeriesGap */
@@ -13577,6 +13591,16 @@ export interface components {
        * @default 0
        */
       projection_version: number;
+      /**
+       * Authors
+       * @default []
+       */
+      authors: string[];
+      /**
+       * Incomplete Entries
+       * @default 0
+       */
+      incomplete_entries: number;
     };
     /** SettingsView */
     SettingsView: {

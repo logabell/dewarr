@@ -119,7 +119,7 @@ async def test_complete_series_requires_reviewed_published_main_set(
     assert plan["main_membership"] == "user-confirmed" and len(plan["omitted"]) == 1
     service.items = [record(release_date=None), record(2, 43, compilation=True)]
     await finish(database, await observe(client, "changed-publication"))
-    latest = await catalog_detail(client)
+    latest = await catalog_detail(client, section="all")
     response = await client.post(
         BASE + "/preview",
         json=body(latest, scope="complete_series", confirm_main_membership=True),
@@ -140,7 +140,7 @@ async def test_preview_sorts_decimal_positions_and_preserves_duplicate_warnings(
         record(4, 45, position=None),
     ]
     await finish(database, await observe(client, "position-evidence"))
-    latest = await catalog_detail(client)
+    latest = await catalog_detail(client, section="all")
     plan = await preview(client, latest)
     assert [r["position"] for r in plan["records"]] == ["2.5", "2.5", "10", None]
     assert all(

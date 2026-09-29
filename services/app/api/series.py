@@ -62,6 +62,7 @@ class SeriesEntryView(BaseModel):
     publication: str
     followed: bool = False
     category: str = "other"
+    metadata_incomplete: bool = False
     work: WorkView
 
 
@@ -87,6 +88,8 @@ class SeriesView(BaseModel):
     supplements: int = 0
     planned: int = 0
     projection_version: int = 0
+    authors: list[str] = []
+    incomplete_entries: int = 0
 
 
 def series_work_view(work, availability, snapshot):
@@ -182,6 +185,10 @@ async def detail(
     raw_total = len(entries)
     main, classes = series_projection.project(entries, language)
     supplemental = [pair for pair in entries if classes[pair[0].id] == "supplement"]
+    authors = sorted(
+        {name for e, _ in main for name in e.snapshot.get("book", {}).get("authors", [])}
+    )
+    incomplete_entries = sum(series_projection.incomplete(e.snapshot) for e, _ in entries)
     counted = {work.id for _, work in main}
     planned = sum(
         bool(
@@ -230,6 +237,7 @@ async def detail(
             SeriesEntryView(
                 membership_id=entry.id,
                 category=classes[entry.id],
+                metadata_incomplete=series_projection.incomplete(data),
                 external_id=data["book"]["external_id"],
                 position=data["position"],
                 details=data["details"],
@@ -271,6 +279,8 @@ async def detail(
         ebook=sum(available[key].ebook for key in counted),
         audio=sum(available[key].audio for key in counted),
         raw_total=raw_total,
+        authors=authors,
+        incomplete_entries=incomplete_entries,
         supplements=len(supplemental),
         planned=planned,
         projection_version=row.snapshot.get("projection_version", 0),

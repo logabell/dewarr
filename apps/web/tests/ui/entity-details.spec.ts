@@ -85,6 +85,11 @@ async function fixtures(page: Page, role = "viewer") {
         message: "",
         fetched_at: "2026-09-19T12:00:00Z",
         generation: 1,
+        projection_version: 2,
+        authors: [author.name],
+        supplements: 0,
+        raw_total: 3,
+        planned: 0,
         books: 3,
         owned: 1,
         ebook: 1,
@@ -204,9 +209,9 @@ test("series uses reading order and library counts with accessible tabs", async 
   await expect(page.locator(".series-book-row").first()).toContainText(
     "In library",
   );
-  await expect(page.getByRole("tab", { name: "Lists & requests" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("tab", { name: "Requests", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.locator(".series-row-copy").first().getByRole("link"),
   ).toHaveAttribute("href", "/books/work-0");
@@ -214,7 +219,7 @@ test("series uses reading order and library counts with accessible tabs", async 
     path: testInfo.outputPath("series-desktop.png"),
     fullPage: true,
   });
-  await page.getByRole("tab", { name: "About the series" }).click();
+  await page.getByRole("tab", { name: "About", exact: true }).click();
   await expect(page.getByRole("tabpanel")).toContainText("An archipelago");
   await page.goBack();
   await expect(
@@ -256,23 +261,40 @@ test("series selections survive browsing tabs and requests are separate", async 
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/series/hardcover/7");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
-  await page.getByRole("tab", { name: "Lists & requests" }).click();
+  await page.getByRole("tab", { name: "Requests", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Curate series" })).toHaveCount(
+    0,
+  );
   await page.getByLabel("Select A Wizard of Earthsea", { exact: true }).check();
   await expect(
     page.getByRole("region", { name: "Series requests", exact: true }),
   ).toContainText("1 books selected");
-  await page.getByRole("tab", { name: "About the series" }).click();
-  await page.getByRole("tab", { name: "Lists & requests" }).click();
+  await page.getByRole("tab", { name: "About", exact: true }).click();
+  await page.getByRole("tab", { name: "Requests", exact: true }).click();
   await expect(
     page.getByLabel("Select A Wizard of Earthsea", { exact: true }),
   ).toBeChecked();
+  await page.getByRole("tab", { name: "Lists", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Series requests", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Curate series" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Requests", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
   await page.reload();
   await expect(
-    page.getByRole("tab", { name: "Lists & requests" }),
+    page.getByRole("tab", { name: "Requests", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.goto("/series/hardcover/7?request=saved-request");
   await expect(
-    page.getByRole("tab", { name: "Lists & requests" }),
+    page.getByRole("tab", { name: "Requests", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   expect(errors).toEqual([]);
 });
@@ -317,4 +339,82 @@ test("global search opens book details and legacy source menus return to search"
     await expect(search).toHaveValue("Earthsea");
   }
   expect(writes).toEqual([]);
+});
+
+test("series with no synopsis still shows authors, language and a separate request flow", async ({
+  page,
+}, testInfo) => {
+  await fixtures(page, "admin");
+  await page.route("**/api/catalog/series/hardcover/7?*", async (route) => {
+    await route.fulfill({
+      json: {
+        external_id: "7",
+        name: "Earthsea",
+        description: null,
+        authors: [author.name],
+        incomplete_entries: 1,
+        status: "completed",
+        message: "Verified 4 series entries",
+        fetched_at: "2026-09-28T00:00:00Z",
+        generation: 1,
+        projection_version: 2,
+        books: 3,
+        owned: 1,
+        ebook: 1,
+        audio: 0,
+        total: 3,
+        raw_total: 4,
+        supplements: 0,
+        planned: 0,
+        items: works.map((work, i) => ({
+          membership_id: `member-${i}`,
+          work,
+          position: String(i + 1),
+          publication: "published",
+          category: "main",
+          compilation: false,
+          partial: false,
+          merged_record: false,
+          ambiguous_position: false,
+        })),
+      },
+    });
+  });
+  await page.goto("/series/hardcover/7?tab=about");
+  await expect(page.getByRole("tabpanel")).toContainText("Ursula K. Le Guin");
+  await expect(page.getByRole("tabpanel")).toContainText("Catalog language");
+  await expect(page.getByRole("tabpanel")).toContainText(
+    "Hardcover has not provided a series synopsis",
+  );
+  await page
+    .getByRole("button", { name: "Request missing books", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Select A Wizard of Earthsea", { exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByLabel("Select The Tombs of Atuan", { exact: true }),
+  ).toBeChecked();
+  await page.getByRole("button", { name: "Audiobook", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Audiobook", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "Review 2 selected books", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("region", { name: "Series requests", exact: true }),
+  ).toHaveCount(1);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({
+      path: testInfo.outputPath(`series-requests-${width}.png`),
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  }
 });

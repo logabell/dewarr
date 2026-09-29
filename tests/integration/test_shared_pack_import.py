@@ -63,6 +63,7 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
     manual_prepare=False,
     selected_files=False,
     reviewed_tags=False,
+    swapped_review=False,
 ):
     route = ready_route
     # Exercise the finite acquisition/import graph, not wall-clock cron ticks.
@@ -216,12 +217,13 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
         )
         assert response.status_code == 201, response.text
         selections.append(response.json())
-    if reviewed_tags:
+    if reviewed_tags or swapped_review:
         # Freeze the per-book mapping produced by collection confirmation. The
         # files have title/author tags but no ISBN, so the import must exercise
         # that mapping and independently corroborate each book's embedded tags.
         async with database() as db, db.begin():
-            for selected, name in zip(selections, ["book.epub", "second.epub"], strict=True):
+            paths = ["second.epub", "book.epub"] if swapped_review else ["book.epub", "second.epub"]
+            for selected, name in zip(selections, paths, strict=True):
                 saved = await db.get(AcquisitionSelection, UUID(selected["id"]))
                 saved.frozen = {
                     **saved.frozen,
@@ -310,6 +312,14 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
     )
     async with database() as db:
         automatic = await db.scalar(select(AutomaticImport))
+        if swapped_review:
+            assert automatic and automatic.state == "held"
+            reasons = [item["reason"] for item in automatic.evidence["held_groups"]]
+            assert sum("different reviewed book" in reason for reason in reasons) == 2
+            assert not await db.scalar(select(ImportEntry.id))
+            assert not await db.scalar(select(DownloadFulfillment.id))
+            assert not list(route["target"].rglob("*.epub"))
+            return
         assert automatic and automatic.state == "importing", (
             automatic.message if automatic else "no import"
         )
@@ -467,4 +477,20 @@ async def test_reviewed_pack_without_isbns_imports_each_corroborated_book_end_to
         False,
         selected_files=True,
         reviewed_tags=True,
+    )
+
+
+async def test_existing_catalog_matches_cannot_bypass_reviewed_book_file_mapping(
+    client, admin, database, ready_route, monkeypatch
+):
+    await test_reviewed_pack_imports_books_independently_and_preserves_seeded_files(
+        client,
+        admin,
+        database,
+        ready_route,
+        monkeypatch,
+        False,
+        False,
+        False,
+        swapped_review=True,
     )

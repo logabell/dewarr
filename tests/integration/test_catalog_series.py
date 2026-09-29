@@ -439,3 +439,29 @@ async def test_refresh_clicks_with_different_keys_reuse_active_observation(
     assert await start(client, "second-refresh-click") == first
     assert await finish(database, first) == "completed"
     assert len(service.calls) == 4
+
+
+async def test_incomplete_metadata_keeps_valid_series_books_and_about_facts(
+    client, database, service
+):
+    from app.adapters.hardcover_series import page
+    from tests.unit.test_hardcover_series import header, member
+
+    first = member(1, 42, position="1", details="1")
+    first["book"]["release_year"] = 1999
+    broken = member(2, 43, position="2", details="2")
+    broken["book"]["title"] = ""
+
+    async def query(*args):
+        return {"series": [header([first, broken])]}
+
+    service.items = (await page(query, "9")).items
+    assert await finish(database, await start(client)) == "completed"
+    main = await detail(client)
+    assert main["books"] == main["total"] == 1
+    assert main["raw_total"] == 2 and main["incomplete_entries"] == 1
+    assert main["authors"] == ["Writer"]
+    assert not main["description"]
+    all_entries = await detail(client, section="all")
+    assert all_entries["items"][1]["metadata_incomplete"]
+    assert all_entries["items"][1]["work"]["title"] == "Untitled"

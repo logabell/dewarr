@@ -20,7 +20,7 @@ from app.db.models import (
     Work,
     WorkMetadataSource,
 )
-from app.domain import book_sources, collection_contents
+from app.domain import book_sources, collection_contents, collection_signals
 from app.domain.automatic_eligibility import AUDIO, EBOOKS, collection_candidate
 from app.domain.catalog_metadata import import_book
 from app.domain.operations import transaction_lock
@@ -51,6 +51,7 @@ class PackContentsEntry(BaseModel):
     files: list[str] = []
     evidence: list[dict] = []
     recordings: list[dict] = []
+    recording_options: list[dict] = []
 
 
 class CollectionFile(BaseModel):
@@ -77,6 +78,7 @@ class CollectionChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     entry_id: str
     candidate_id: str
+    recording_id: str | None = None
     paths: list[str] = Field(min_length=1, max_length=10000)
 
 
@@ -112,7 +114,9 @@ async def context(db, user, search_id, result_id):
 def file_matches(path, title):
     """Whole normalized title phrase; numeric track names alone establish nothing."""
     key = collection_contents.title_key(title)
-    path_key = collection_contents.title_key(str(PurePosixPath(path).with_suffix("")))
+    parts = PurePosixPath(path).with_suffix("").parts
+    # The torrent root names the pack, not every book underneath it.
+    path_key = collection_contents.title_key("/".join(parts[1:] if len(parts) > 1 else parts))
     return bool(key and (" " + key + " ") in (" " + path_key + " "))
 
 
@@ -261,6 +265,15 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
         if artifact.descriptor.get("protocol") == "nzb":
             raise HTTPException(422, "Collection file selection requires a torrent")
         files = [CollectionFile(**f) for f in artifact.descriptor["files"]]
+    labels = {t for _, names in candidates for t in names} | {i["title"] for i in parsed["items"]}
+    file_labels = {f.path: {t for t in labels if file_matches(f.path, t)} for f in files}
+
+    def matches_file(path, title):
+        matches = file_labels[path]
+        # "The Stand" must not claim files labelled "The Stand Companion".
+        longest = max((len(collection_contents.title_key(t)) for t in matches), default=0)
+        return title in matches and len(collection_contents.title_key(title)) == longest
+
     entries = []
     for item in parsed["items"]:
         key = collection_contents.title_key(item["title"])
@@ -289,7 +302,7 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
                 files=[
                     f.path
                     for f in files
-                    if file_matches(f.path, item["title"])
+                    if matches_file(f.path, item["title"])
                     and PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
                 ],
             )
@@ -299,25 +312,54 @@ async def preview(db, user, search_id, result_id, artifact_id=None):
             "No explicit title list was found. Review the torrent files; "
             "file counts are not book counts."
         )
-        # File names may propose titles only after explicit torrent inspection.
-        if files:
-            for candidate, labels in candidates:
-                paths = [
-                    f.path
-                    for f in files
-                    if any(file_matches(f.path, t) for t in labels)
-                    and PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
-                ]
-                if paths:
-                    entries.append(
-                        PackContentsEntry(
-                            id=fingerprint({"candidate": candidate.id}),
-                            title=candidate.title,
-                            candidates=[candidate],
-                            match="review",
-                            files=paths,
-                        )
-                    )
+    excluded_keys = {collection_contents.title_key(e["title"]) for e in parsed["excluded"]}
+
+    def propose(candidate, labels, evidence):
+        if any(collection_contents.title_key(t) in excluded_keys for t in labels):
+            return
+        paths = [
+            f.path
+            for f in files
+            if any(matches_file(f.path, t) for t in labels)
+            and PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
+        ]
+        existing = next(
+            (e for e in entries if any(c.id == candidate.id for c in e.candidates)), None
+        )
+        if existing:
+            if evidence not in existing.evidence:
+                existing.evidence.append(evidence)
+            existing.files = sorted(set(existing.files) | set(paths))
+            return
+        entries.append(
+            PackContentsEntry(
+                id=fingerprint({"candidate": candidate.id}),
+                title=candidate.title,
+                candidates=[candidate],
+                match="review",
+                files=paths,
+                evidence=[evidence],
+            )
+        )
+
+    for candidate, evidence in [
+        *collection_signals.range_claims(release, candidates),
+        *collection_signals.tagged_claims(release, candidates),
+    ]:
+        propose(candidate, [candidate.title], evidence)
+    # File evidence supplements partial descriptions too, without reviving exclusions.
+    for candidate, labels in candidates:
+        if any(
+            matches_file(f.path, t)
+            for f in files
+            for t in labels
+            if PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
+        ):
+            propose(candidate, labels, {"basis": "torrent filenames"})
+    for entry in entries:
+        entry.recording_options = collection_signals.recording_options(
+            entry.recordings, entry.files
+        )
     primary = [
         f.path for f in files if PurePosixPath(f.path).suffix.lower().lstrip(".") in AUDIO | EBOOKS
     ]
@@ -490,6 +532,16 @@ async def download(db, user, review_id, body, key):
         paths = set(choice.paths)
         if len(paths) != len(choice.paths) or not paths <= known_paths or paths & selected_paths:
             raise HTTPException(422, "Choose distinct inspected files for each book")
+        options = entry.get("recording_options", [])
+        recording = next((r for r in options if r["id"] == choice.recording_id), None)
+        if choice.recording_id is not None and recording is None:
+            raise HTTPException(422, "Choose a recording from this review")
+        if len(options) > 1 and recording is None:
+            raise HTTPException(422, "Choose which recording of this book to download")
+        if recording:
+            other = {p for r in options if r["id"] != recording["id"] for p in r["files"]}
+            if paths & (other - set(recording["files"])):
+                raise HTTPException(422, "Selected files belong to another recording; review them")
         selected_paths.update(paths)
     if body.download_all_files:
         selected_paths = known_paths
@@ -563,6 +615,17 @@ async def download(db, user, review_id, body, key):
                     "revision": body.revision,
                     "paths": sorted(choice.paths),
                     "title": entries[choice.entry_id]["title"],
+                    "recording": next(
+                        (
+                            r["claims"]
+                            for r in entries[choice.entry_id].get("recording_options", [])
+                            if r["id"] == choice.recording_id
+                        ),
+                        entries[choice.entry_id]["recordings"][0]
+                        if len(entries[choice.entry_id]["recordings"]) == 1
+                        else None,
+                    ),
+                    "evidence": entries[choice.entry_id]["evidence"],
                 },
             }
             selections.append(selected)

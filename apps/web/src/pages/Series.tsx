@@ -23,6 +23,8 @@ function missingWorkIds(
     merged_record: boolean;
     ambiguous_position: boolean;
     publication: string;
+    metadata_incomplete?: boolean;
+    category?: string;
     work: {
       id: string;
       availability: { owned: boolean; ebook: boolean; audio: boolean };
@@ -35,6 +37,8 @@ function missingWorkIds(
       items
         .filter(
           (entry) =>
+            !entry.metadata_incomplete &&
+            entry.category !== "collection" &&
             !entry.partial &&
             !entry.merged_record &&
             !entry.ambiguous_position &&
@@ -67,12 +71,13 @@ function SeriesContent({
   const tabs = canEdit
     ? ([
         ["books", "Reading order"],
-        ["about", "About the series"],
-        ["requests", "Lists & requests"],
+        ["about", "About"],
+        ["requests", "Requests"],
+        ["lists", "Lists"],
       ] as const)
     : ([
         ["books", "Reading order"],
-        ["about", "About the series"],
+        ["about", "About"],
       ] as const);
   const tab = tabs.some(([key]) => key === params.get("tab"))
     ? params.get("tab")!
@@ -155,7 +160,7 @@ function SeriesContent({
       canEdit &&
       (catalog.data?.status === "not-loaded" ||
         (catalog.data?.fetched_at &&
-          !catalog.data?.projection_version &&
+          (catalog.data?.projection_version || 0) < 2 &&
           !["queued", "running", "retrying"].includes(
             catalog.data?.status || "",
           ))) &&
@@ -264,7 +269,8 @@ function SeriesContent({
   const published = data.items
     .filter(
       (e) =>
-        !e.compilation &&
+        (section === "main" || !e.compilation) &&
+        !e.metadata_incomplete &&
         !e.partial &&
         !e.merged_record &&
         !e.ambiguous_position &&
@@ -272,7 +278,7 @@ function SeriesContent({
     )
     .map((e) => e.work.id);
   return (
-    <article className="reader-page catalog-reader entity-detail">
+    <article className="reader-page catalog-reader entity-detail series-detail">
       <div className="book-topbar">
         <Link to="/" className="back-link">
           <ArrowLeft size={16} /> Back to catalog
@@ -305,50 +311,57 @@ function SeriesContent({
               name={data.name}
             />
           )}
-          <p className="entity-intro">Find your place in the story.</p>
-          {data.fetched_at && (
-            <>
-              <dl className="reader-facts">
-                <div>
-                  <dt>Books</dt>
-                  <dd>{data.books}</dd>
-                </div>
-                <div>
-                  <dt>In your library</dt>
-                  <dd>{data.owned}</dd>
-                </div>
-                <div>
-                  <dt>Ebooks</dt>
-                  <dd>{data.ebook}</dd>
-                </div>
-                <div>
-                  <dt>Audiobooks</dt>
-                  <dd>{data.audio}</dd>
-                </div>
-              </dl>
-              {data.books > 0 && (
-                <div className="series-ownership">
-                  <div
-                    className="series-ownership-track"
-                    role="meter"
-                    aria-label="Series books in your library"
-                    aria-valuemin={0}
-                    aria-valuemax={data.books}
-                    aria-valuenow={Math.min(data.owned, data.books)}
-                  >
-                    <span
-                      style={{
-                        width: `${Math.min(100, (data.owned / data.books) * 100)}%`,
-                      }}
-                    />
+          <p className="entity-intro">
+            {data.authors?.join(", ") || "Books in reading order"}
+          </p>
+          {data.fetched_at &&
+            (tab === "requests" || tab === "lists" ? (
+              <p className="series-compact-summary">
+                {data.books} main books · {data.owned} in your library
+              </p>
+            ) : (
+              <>
+                <dl className="reader-facts">
+                  <div>
+                    <dt>Books</dt>
+                    <dd>{data.books}</dd>
                   </div>
-                  <span>
-                    {data.owned} of {data.books} books in your library
-                  </span>
-                </div>
-              )}
-            </>
-          )}
+                  <div>
+                    <dt>In your library</dt>
+                    <dd>{data.owned}</dd>
+                  </div>
+                  <div>
+                    <dt>Ebooks</dt>
+                    <dd>{data.ebook}</dd>
+                  </div>
+                  <div>
+                    <dt>Audiobooks</dt>
+                    <dd>{data.audio}</dd>
+                  </div>
+                </dl>
+                {data.books > 0 && (
+                  <div className="series-ownership">
+                    <div
+                      className="series-ownership-track"
+                      role="meter"
+                      aria-label="Series books in your library"
+                      aria-valuemin={0}
+                      aria-valuemax={data.books}
+                      aria-valuenow={Math.min(data.owned, data.books)}
+                    >
+                      <span
+                        style={{
+                          width: `${Math.min(100, (data.owned / data.books) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span>
+                      {data.owned} of {data.books} books in your library
+                    </span>
+                  </div>
+                )}
+              </>
+            ))}
           <div className="reader-outbound">
             <a
               href={`https://hardcover.app/series/${encodeURIComponent(externalId)}`}
@@ -360,11 +373,12 @@ function SeriesContent({
           </div>
         </div>
       </header>
-      {data.message && (
-        <p className="muted" role="status">
-          {data.message}
-        </p>
-      )}
+      {data.message &&
+        (loading || !data.fetched_at || data.status === "failed") && (
+          <p className="muted" role="status">
+            {data.message}
+          </p>
+        )}
       <Notice
         error={
           catalog.error ||
@@ -414,16 +428,54 @@ function SeriesContent({
           <section className="reader-section">
             <p className="eyebrow">THE BIGGER STORY</p>
             <h2>About {data.name}</h2>
-            <p className="reader-prose reader-synopsis">
-              {data.description ||
-                "No description is available for this series yet."}
-            </p>
+            {data.description ? (
+              <p className="reader-prose reader-synopsis">{data.description}</p>
+            ) : (
+              <p className="reader-prose">
+                {data.authors?.length
+                  ? `${data.name} is a series by ${data.authors.join(", ")}. `
+                  : ""}
+                {data.books} main books are listed in the English reading order
+                {data.supplements
+                  ? `, with ${data.supplements} supplementary works available separately`
+                  : ""}
+                .
+              </p>
+            )}
+            <dl className="series-about-facts">
+              <div>
+                <dt>Author{(data.authors?.length || 0) > 1 ? "s" : ""}</dt>
+                <dd>{data.authors?.join(", ") || "Not provided"}</dd>
+              </div>
+              <div>
+                <dt>Catalog language</dt>
+                <dd>English</dd>
+              </div>
+              <div>
+                <dt>Reading order</dt>
+                <dd>
+                  {data.books} main · {data.supplements} supplementary
+                </dd>
+              </div>
+            </dl>
+            {!data.description && (
+              <p className="muted">
+                Hardcover has not provided a series synopsis.
+              </p>
+            )}
+            {!!data.incomplete_entries && (
+              <p className="muted">
+                {data.incomplete_entries} incomplete catalog{" "}
+                {data.incomplete_entries === 1 ? "record is" : "records are"}{" "}
+                available under All catalog entries.
+              </p>
+            )}
             <details className="editor">
               <summary>About this series catalog</summary>
               {data.fetched_at && (
                 <p className="muted">
                   Last verified {new Date(data.fetched_at).toLocaleString()} ·{" "}
-                  {data.total} entries.
+                  {data.raw_total} catalog entries.
                 </p>
               )}
               <p className="muted">
@@ -439,7 +491,11 @@ function SeriesContent({
           <section className="book-tab-section">
             <div className="book-tab-heading">
               <h2>
-                {tab === "requests" ? "Build your collection" : "Reading order"}
+                {tab === "requests"
+                  ? "Request books"
+                  : tab === "lists"
+                    ? "Add books to a list"
+                    : "Reading order"}
               </h2>
               <span className="muted">
                 {data.books} main books
@@ -449,191 +505,238 @@ function SeriesContent({
             </div>
             <p className="muted">
               {tab === "requests"
-                ? "Choose books to add to a reading list or request missing formats."
-                : "Follow the series sequence. Compilations and uncertain positions are marked below."}
+                ? "Select books, choose a format, then review your request."
+                : tab === "lists"
+                  ? "Choose books for your reading list."
+                  : "Explore the main books or switch to supplementary reading."}
             </p>
-            {tab === "requests" && canEdit && data.items.length > 0 && (
-              <section className="panel editor" aria-label="Curate series">
-                <ListChoice
-                  value={listId}
-                  label="Destination list"
-                  disabled={add.isPending}
-                  onChange={(id) => {
-                    setListId(id);
-                    setAdded(0);
+            <div className="series-selection-toolbar">
+              <label className="field series-filter">
+                Show
+                <select
+                  value={section}
+                  onChange={(event) => {
+                    const next = new URLSearchParams(params);
+                    next.set("section", event.target.value);
+                    setParams(next);
+                    setSelected([]);
                   }}
-                />
-                {listId && policy.isSuccess && (
-                  <p role="status">
-                    {policy.data?.active &&
-                    policy.data.configuration.mode === "automatic"
-                      ? "This list automatically requests missing media for new additions."
-                      : "This list has no active automatic acquisition policy."}
-                  </p>
-                )}
-                <button
-                  disabled={
-                    add.isPending ||
-                    loading ||
-                    new Set([...selected, ...published]).size > 100
-                  }
-                  onClick={() =>
-                    setSelected((previous) => [
-                      ...new Set([...previous, ...published]),
-                    ])
-                  }
                 >
-                  Select published books on this page
-                </button>
-                <button
-                  disabled={
-                    !listId ||
-                    !selected.length ||
-                    add.isPending ||
-                    loading ||
-                    !policy.isSuccess
-                  }
-                  onClick={() => add.mutate()}
-                >
-                  Add selected books to list ({selected.length})
-                </button>
-                {added > 0 && (
-                  <p role="status">Added {added} books to the list.</p>
-                )}
-              </section>
-            )}
-            <label className="field">
-              Show
-              <select
-                value={section}
-                onChange={(event) => {
-                  const next = new URLSearchParams(params);
-                  next.set("section", event.target.value);
-                  setParams(next);
-                  setSelected([]);
-                }}
-              >
-                <option value="main">Main books · English</option>
-                <option value="supplements">
-                  Supplementary reading · English
-                </option>
-                <option value="all">
-                  All catalog entries ({data.raw_total})
-                </option>
-              </select>
-            </label>
-            <div className="series-book-list">
-              {data.items.map((entry) => (
-                <article className="series-book-row" key={entry.membership_id}>
-                  <div className="series-position">
-                    <span>{entry.position ?? "—"}</span>
-                    <small>
-                      {entry.category === "collection" ? "collection" : "book"}
-                    </small>
-                  </div>
-                  <BookLink
-                    aria-label={`View ${entry.work.title}`}
-                    className="series-row-cover"
-                    to={`/books/${entry.work.id}`}
+                  <option value="main">Main books · English</option>
+                  <option value="supplements">
+                    Supplementary reading · English
+                  </option>
+                  <option value="all">
+                    All catalog entries ({data.raw_total})
+                  </option>
+                </select>
+              </label>
+              {(tab === "requests" || tab === "lists") && canEdit && (
+                <div className="button-row series-selection-actions">
+                  <button
+                    disabled={loading || add.isPending}
+                    onClick={() =>
+                      setSelected(
+                        missingWorkIds(data.items, gapMedium).slice(0, 100),
+                      )
+                    }
                   >
-                    <BookCover title={entry.work.title} work={entry.work} />
-                  </BookLink>
-                  <div className="series-row-copy">
-                    {tab === "requests" && canEdit && (
-                      <label className="check-label">
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(entry.work.id)}
-                          disabled={
-                            add.isPending ||
-                            loading ||
-                            entry.publication === "unreleased" ||
-                            (!selected.includes(entry.work.id) &&
-                              selected.length >= 100)
-                          }
-                          onChange={(e) =>
-                            setSelected((previous) =>
-                              e.target.checked
-                                ? [...new Set([...previous, entry.work.id])]
-                                : previous.filter((id) => id !== entry.work.id),
-                            )
-                          }
-                        />
-                        Select {entry.work.title}
-                      </label>
-                    )}
-                    <h2>
-                      <Link to={`/books/${entry.work.id}`}>
-                        {entry.work.title}
-                      </Link>
-                    </h2>
-                    <p>{entry.work.authors.join(", ") || "Author unknown"}</p>
-                    <p>
-                      {entry.work.availability.owned
-                        ? "✓ In library"
-                        : "Not in your library"}
-                      {entry.work.availability.ebook && " · Ebook"}
-                      {entry.work.availability.audio && " · Audiobook"}
-                      {entry.work.availability.stale &&
-                        " · Inventory needs refresh"}
-                    </p>
-                    <p className="muted">
-                      {[
-                        entry.category === "collection" && "Compilation",
-                        entry.partial && "Partial book",
-                        entry.merged_record && "Merged provider record",
-                        entry.ambiguous_position &&
-                          "Multiple works at this position",
-                        entry.publication === "unreleased" &&
-                          `Unreleased · ${entry.release_date || "date unknown"}`,
-                        entry.publication === "unknown" &&
-                          "Publication date unknown",
-                        entry.details !== entry.position && entry.details,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                    {entry.publication === "unreleased" && (
-                      <FollowRelease
-                        canEdit={canEdit}
-                        following={entry.followed}
-                        workId={entry.work.id}
-                        body={{
-                          work_id: entry.work.id,
-                          title: entry.work.title,
-                          authors: entry.work.authors,
-                          release_date: entry.release_date,
-                          basis: "work",
-                        }}
-                      />
-                    )}
-                  </div>
-                </article>
-              ))}
+                    Select missing
+                  </button>
+                  <button
+                    disabled={loading || add.isPending}
+                    onClick={() =>
+                      setSelected([...new Set(published)].slice(0, 100))
+                    }
+                  >
+                    Select published
+                  </button>
+                  {selected.length > 0 && (
+                    <button
+                      disabled={add.isPending}
+                      onClick={() => setSelected([])}
+                    >
+                      Clear ({selected.length})
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            {data.fetched_at && !data.total && (
-              <p>No accessible books were returned for this series.</p>
-            )}
-            <InfiniteScroll query={catalog} />
-            {tab === "requests" && canEdit && data.fetched_at && (
-              <>
-                {mainBooks.data && !loading && (
-                  <SeriesScopeReview
+            <div
+              className={
+                tab === "requests" || tab === "lists" ? "series-workspace" : ""
+              }
+            >
+              <div className="series-selection-books">
+                <div className="series-book-list">
+                  {data.items.map((entry) => (
+                    <article
+                      className="series-book-row"
+                      key={entry.membership_id}
+                    >
+                      <div className="series-position">
+                        <span>{entry.position ?? "—"}</span>
+                        <small>
+                          {entry.category === "collection"
+                            ? "collection"
+                            : "book"}
+                        </small>
+                      </div>
+                      <BookLink
+                        aria-label={`View ${entry.work.title}`}
+                        className="series-row-cover"
+                        to={`/books/${entry.work.id}`}
+                      >
+                        <BookCover title={entry.work.title} work={entry.work} />
+                      </BookLink>
+                      <div className="series-row-copy">
+                        {(tab === "requests" || tab === "lists") && canEdit && (
+                          <label className="check-label">
+                            <input
+                              type="checkbox"
+                              checked={selected.includes(entry.work.id)}
+                              disabled={
+                                add.isPending ||
+                                loading ||
+                                entry.publication === "unreleased" ||
+                                entry.metadata_incomplete ||
+                                (!selected.includes(entry.work.id) &&
+                                  selected.length >= 100)
+                              }
+                              onChange={(e) =>
+                                setSelected((previous) =>
+                                  e.target.checked
+                                    ? [...new Set([...previous, entry.work.id])]
+                                    : previous.filter(
+                                        (id) => id !== entry.work.id,
+                                      ),
+                                )
+                              }
+                            />
+                            <span className="sr-only">
+                              Select {entry.work.title}
+                            </span>
+                          </label>
+                        )}
+                        <h2>
+                          <Link to={`/books/${entry.work.id}`}>
+                            {entry.work.title}
+                          </Link>
+                        </h2>
+                        <p>
+                          {entry.work.authors.join(", ") || "Author unknown"}
+                        </p>
+                        <p>
+                          {entry.work.availability.owned
+                            ? "✓ In library"
+                            : "Not in your library"}
+                          {entry.work.availability.ebook && " · Ebook"}
+                          {entry.work.availability.audio && " · Audiobook"}
+                          {entry.work.availability.stale &&
+                            " · Inventory needs refresh"}
+                        </p>
+                        <p className="muted">
+                          {[
+                            entry.metadata_incomplete &&
+                              "Incomplete Hardcover record",
+                            entry.category === "collection" && "Compilation",
+                            entry.partial && "Partial book",
+                            entry.merged_record && "Merged provider record",
+                            entry.ambiguous_position &&
+                              "Multiple works at this position",
+                            entry.publication === "unreleased" &&
+                              `Unreleased · ${entry.release_date || "date unknown"}`,
+                            entry.publication === "unknown" &&
+                              "Publication date unknown",
+                            entry.details !== entry.position && entry.details,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                        {entry.publication === "unreleased" && (
+                          <FollowRelease
+                            canEdit={canEdit}
+                            following={entry.followed}
+                            workId={entry.work.id}
+                            body={{
+                              work_id: entry.work.id,
+                              title: entry.work.title,
+                              authors: entry.work.authors,
+                              release_date: entry.release_date,
+                              basis: "work",
+                            }}
+                          />
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                {data.fetched_at && !data.total && (
+                  <p>No accessible books were returned for this series.</p>
+                )}
+                <InfiniteScroll query={catalog} />
+              </div>
+              <aside className="series-actions-column">
+                {tab === "lists" && canEdit && data.items.length > 0 && (
+                  <section
+                    className="panel editor series-list-editor"
+                    aria-label="Curate series"
+                  >
+                    <ListChoice
+                      value={listId}
+                      label="Destination list"
+                      disabled={add.isPending}
+                      onChange={(id) => {
+                        setListId(id);
+                        setAdded(0);
+                      }}
+                    />
+                    {listId && policy.isSuccess && (
+                      <p role="status">
+                        {policy.data?.active &&
+                        policy.data.configuration.mode === "automatic"
+                          ? "This list automatically requests missing media for new additions."
+                          : "This list has no active automatic acquisition policy."}
+                      </p>
+                    )}
+                    <button
+                      disabled={
+                        !listId ||
+                        !selected.length ||
+                        add.isPending ||
+                        loading ||
+                        !policy.isSuccess
+                      }
+                      onClick={() => add.mutate()}
+                    >
+                      Add selected books to list ({selected.length})
+                    </button>
+                    {added > 0 && (
+                      <p role="status">Added {added} books to the list.</p>
+                    )}
+                  </section>
+                )}
+                {tab === "requests" && canEdit && data.fetched_at && (
+                  <SeriesRequests
                     externalId={externalId}
                     generation={data.generation}
                     selected={selected}
-                    review={mainBooks.data}
-                    onSelect={setSelected}
+                    mainBookReview={mainBooks.data}
+                    scopeReview={
+                      mainBooks.data && !loading ? (
+                        <SeriesScopeReview
+                          externalId={externalId}
+                          generation={data.generation}
+                          selected={selected}
+                          review={mainBooks.data}
+                          onSelect={setSelected}
+                        />
+                      ) : undefined
+                    }
                   />
                 )}
-                <SeriesRequests
-                  externalId={externalId}
-                  generation={data.generation}
-                  selected={selected}
-                  mainBookReview={mainBooks.data}
-                />
-              </>
-            )}
+              </aside>
+            </div>
           </section>
         )}
       </div>
