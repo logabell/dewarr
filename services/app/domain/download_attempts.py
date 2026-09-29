@@ -3,6 +3,7 @@
 import asyncio
 import re
 from datetime import UTC, datetime, timedelta
+from pathlib import PurePosixPath
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -14,7 +15,7 @@ from app.adapters.nzbget import NzbClient
 from app.adapters.nzbget import verify_association as verify_nzb
 from app.adapters.qbittorrent import QbitClient, absolute_path, verify_association
 from app.adapters.sabnzbd import SabClient
-from app.adapters.sabnzbd import verify_association as verify_sab
+from app.adapters.sabnzbd import reconcile_association as verify_sab
 from app.adapters.torrent_descriptor import TorrentDescriptor
 from app.adapters.transmission import TransmissionClient
 from app.config import get_settings
@@ -495,6 +496,26 @@ def transfer_stage(selection, state):
         )
     if state.state == "failed":
         return "held", "Soulseek stopped this folder before every file finished"
+    if selection.frozen.get("selected_paths"):
+        expected = {f["path"]: f["size_bytes"] for f in selection.frozen["descriptor"]["files"]}
+        chosen = set(selection.frozen["selected_paths"])
+        actual = {f.relative_path: f.size_bytes for f in state.files}
+        if (
+            actual != expected
+            or {f.relative_path for f in state.files if f.priority != 0} != chosen
+        ):
+            return "held", "Collection files or priorities changed; review the selected files"
+        if all(f.complete for f in state.files if f.relative_path in chosen) and state.state in {
+            "uploading",
+            "stalledUP",
+            "queuedUP",
+            "stoppedUP",
+            "forcedUP",
+        }:
+            return "complete", "Selected collection files complete; verifying each book for import"
+        if state.state in {"stoppedDL", "stoppedUP", "error", "missingFiles"}:
+            return "held", "Selected collection transfer is stopped; review it in qBittorrent"
+        return "downloading", "Downloading the selected collection files"
     if not state.completed and not state.reported_complete:
         return "downloading", "Transfer associated; waiting for complete files"
     expected = {
@@ -623,6 +644,16 @@ async def create_inspection(db, attempt, selection, user, *, key=None):
         owner_id=user.id,
         kind="organization.inspect",
         idempotency_key=key or "download-inspection:" + str(attempt.id),
+        payload={
+            "selected_paths": [
+                str(PurePosixPath(p).relative_to(selection.frozen["descriptor"]["name"]))
+                if p.startswith(selection.frozen["descriptor"]["name"] + "/")
+                else p
+                for p in selection.frozen["selected_paths"]
+            ]
+        }
+        if selection.frozen.get("selected_paths")
+        else {},
     )
     db.add(operation)
     await db.flush()
@@ -856,6 +887,7 @@ async def run(identifier):
                     attempt_tag=tag,
                     save_path=frozen["downloader"]["save_path"],
                     category=frozen["downloader"]["category"],
+                    **({"stopped": True} if frozen.get("selected_paths") else {}),
                 )
                 async with session_factory()() as db, db.begin():
                     attempt, _ = await locked(db, identifier)
@@ -864,7 +896,8 @@ async def run(identifier):
                     attempt.receipt = receipt.model_dump(mode="json")
                 states = await find(client, selection, tag)
             if kind == "sabnzbd":
-                observed = verify_sab(
+                observed = await verify_sab(
+                    client,
                     states,
                     tag=tag,
                     save_path=frozen["downloader"]["save_path"],
@@ -888,6 +921,37 @@ async def run(identifier):
                     save_path=frozen["downloader"]["save_path"],
                     category=frozen["downloader"]["category"],
                 )
+            if observed and frozen.get("selected_paths"):
+                if kind != "qbittorrent":
+                    raise AdapterError(
+                        FailureKind.UNSUPPORTED, "Selected files require qBittorrent"
+                    )
+                async with session_factory()() as db, db.begin():
+                    attempt, current = await locked(db, identifier)
+                    if attempt.run_token != token:
+                        return
+                    started = (attempt.receipt or {}).get("file_selection_start_attempted", False)
+                if not started:
+                    expected = {f["path"]: f["size_bytes"] for f in frozen["descriptor"]["files"]}
+                    await client.select_files(observed, expected, frozen["selected_paths"])
+                    async with session_factory()() as db, db.begin():
+                        attempt, current = await locked(db, identifier)
+                        if attempt.run_token != token:
+                            return
+                        await authority(db, current, wanted=True)
+                        attempt.receipt = {
+                            **(attempt.receipt or {}),
+                            "file_selection_start_attempted": True,
+                            "selected_paths": frozen["selected_paths"],
+                        }
+                    await client.start_transfer(observed.external_id)
+                    observed = verify_association(
+                        await find(client, selection, tag),
+                        tag=tag,
+                        hashes=hashes(selection),
+                        save_path=frozen["downloader"]["save_path"],
+                        category=frozen["downloader"]["category"],
+                    )
             async with session_factory()() as db, db.begin():
                 attempt, current = await locked(db, identifier)
                 if attempt.run_token != token:

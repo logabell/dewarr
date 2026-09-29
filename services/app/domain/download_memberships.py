@@ -69,6 +69,7 @@ def require_same_transfer(selections):
         "downloader",
         "mapping",
         "destination",
+        "selected_paths",
     )
     for item in selections:
         if item.owner_id != first.owner_id or item.artifact_id != first.artifact_id:

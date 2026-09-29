@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -23,6 +23,7 @@ import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import InfiniteScroll from "../components/InfiniteScroll";
+import BookDialog from "../components/BookDialog";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import { randomUUID } from "../randomUUID";
 import DownloadConstraints from "./DownloadConstraints";
@@ -81,6 +82,7 @@ function targetNotes(label: string, target: Target) {
     label,
     "Request declined",
     "Waiting for approval",
+    "Acquisition pending; check download activity",
   ]);
   const parts = [
     target.message,
@@ -450,24 +452,40 @@ function targetActions(
   return actions;
 }
 
-function ActionButton({ action, busy }: { action: RowAction; busy: boolean }) {
+function ActionButton({
+  action,
+  busy,
+  compact = false,
+}: {
+  action: RowAction;
+  busy: boolean;
+  compact?: boolean;
+}) {
   const Icon = action.icon;
   if (action.href)
     return (
-      <Link className="control-action" to={action.href}>
+      <Link
+        className={compact ? "request-icon-action" : "control-action"}
+        to={action.href}
+        aria-label={action.label}
+        title={action.label}
+      >
         <Icon size={14} aria-hidden />
-        {action.label}
+        {!compact && action.label}
       </Link>
     );
   return (
     <button
       type="button"
       disabled={busy}
+      className={compact ? "request-icon-action" : undefined}
+      aria-label={action.label}
+      title={action.label}
       data-danger={action.danger || undefined}
       onClick={action.onSelect}
     >
       <Icon size={14} aria-hidden />
-      {action.label}
+      {!compact && action.label}
     </button>
   );
 }
@@ -497,9 +515,10 @@ function RequestCard({
   ]
     .filter(Boolean)
     .join(" · ");
-  const secondaryActions: RowAction[] = [];
+  const [withdrawReason, setWithdrawReason] = useState<string | null>(null);
+  const requestActions: RowAction[] = [];
   if (request.can_decide)
-    secondaryActions.push({
+    requestActions.push({
       key: "decline",
       label: "Decline",
       icon: X,
@@ -511,11 +530,11 @@ function RequestCard({
     request.targets.some((target) => target.state !== "satisfied")
   )
     for (const reason of request.reasons.filter((item) => item.active))
-      secondaryActions.push({
+      requestActions.push({
         key: `withdraw-${reason.id}`,
         label: `Withdraw ${reason.label.toLowerCase()}`,
         icon: Undo2,
-        onSelect: () => onWithdraw(reason.id),
+        onSelect: () => setWithdrawReason(reason.id),
       });
   const rows = request.targets.map((target) => {
     const actions = targetActions(
@@ -525,17 +544,19 @@ function RequestCard({
       onTransfer,
       onClaim,
     );
-    const primary = actions[0];
-    if (actions.length > 1) secondaryActions.push(...actions.slice(1));
-    return { target, primary };
+    const primary = actions.find((action) => !action.danger);
+    const secondary = actions.filter((action) => action !== primary);
+    return { target, primary, secondary };
   });
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
   return (
     <tbody
       id={`request-${request.id}`}
       aria-label={`${request.work_title} request`}
     >
-      {rows.map(({ target, primary }, index) => {
+      {rows.map(({ target, primary, secondary }, index) => {
+        const isExpanded = expanded === target.slot;
+        const detailsId = `request-details-${request.id}-${target.slot}`;
         const label = statusLabel(request, target);
         const active = label === "Downloading";
         const spinning = [
@@ -549,179 +570,272 @@ function RequestCard({
             : null;
         const notes = targetNotes(label, target);
         return (
-          <tr key={target.slot} className="request-ledger-row">
-            <td>
-              <div className="request-book-cell">
-                <RequestCover
-                  key={request.cover_url}
-                  title={request.work_title}
-                  url={request.cover_url}
-                />
-                <div className="request-row-identity">
-                  <h2>
-                    {request.can_open_book ? (
-                      <Link to={`/books/${request.work_id}`}>
-                        {request.work_title}
-                      </Link>
-                    ) : (
-                      request.work_title
-                    )}
-                  </h2>
-                  <p className="request-row-meta">{byline}</p>
-                </div>
-              </div>
-            </td>
-            <td>
-              <span className="request-medium">
-                {target.slot === "audio" ? (
-                  <Headphones size={14} aria-hidden />
-                ) : (
-                  <BookOpen size={14} aria-hidden />
-                )}
-                {mediumLabel(target.slot)}
-              </span>
-            </td>
-            <td>
-              <button
-                type="button"
-                className="request-status"
-                data-state={chipState(label)}
-                title={["View request details", ...notes].join(". ")}
-                aria-label={`${label}: ${request.work_title} ${mediumLabel(target.slot).toLowerCase()} request details`}
-                aria-expanded={expanded}
-                aria-controls={`request-details-${request.id}`}
-                onClick={() => setExpanded(!expanded)}
-              >
-                {spinning ? (
-                  <LoaderCircle
-                    size={14}
-                    className="source-download-spinner"
-                    aria-hidden
+          <Fragment key={target.slot}>
+            <tr
+              className="request-ledger-row"
+              data-expanded={isExpanded || undefined}
+            >
+              <td>
+                <div className="request-book-cell">
+                  <RequestCover
+                    key={request.cover_url}
+                    title={request.work_title}
+                    url={request.cover_url}
                   />
-                ) : label === "In library" ? (
-                  <CircleCheck size={14} aria-hidden />
-                ) : label === "Needs review" ||
-                  label === "Download needs attention" ||
-                  label === "Download not started" ? (
-                  <CircleAlert size={14} aria-hidden />
-                ) : null}
-                {label}
-              </button>
-              {label === "Needs review" && (
-                <p className="request-status-hint">
-                  {target.inspection_id || target.can_claim
-                    ? "Choose Review files to continue"
-                    : "Administrator review required"}
-                </p>
-              )}
-              {label === "Queued" && target.attempt_message && (
-                <p className="request-status-hint">{target.attempt_message}</p>
-              )}
-            </td>
-            <td>
-              <div className="request-transfer-progress">
-                {progress !== null ? (
-                  <>
-                    <span className="request-percent">
-                      {Math.round(progress * 100)}%
-                    </span>
-                    <progress
-                      max={1}
-                      value={progress}
-                      aria-label={`${request.work_title} ${mediumLabel(target.slot).toLowerCase()} download progress`}
+                  <div className="request-row-identity">
+                    <h2>
+                      {request.can_open_book ? (
+                        <Link to={`/books/${request.work_id}`}>
+                          {request.work_title}
+                        </Link>
+                      ) : (
+                        request.work_title
+                      )}
+                    </h2>
+                    <p className="request-row-meta">{byline}</p>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <span className="request-medium">
+                  {target.slot === "audio" ? (
+                    <Headphones size={14} aria-hidden />
+                  ) : (
+                    <BookOpen size={14} aria-hidden />
+                  )}
+                  {mediumLabel(target.slot)}
+                </span>
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className="request-status"
+                  data-state={chipState(label)}
+                  title={["View request details", ...notes].join(". ")}
+                  aria-label={`${label}: ${request.work_title} ${mediumLabel(target.slot).toLowerCase()} request details`}
+                  aria-expanded={isExpanded}
+                  aria-controls={detailsId}
+                  onClick={() => setExpanded(isExpanded ? null : target.slot)}
+                >
+                  {spinning ? (
+                    <LoaderCircle
+                      size={14}
+                      className="source-download-spinner"
+                      aria-hidden
                     />
-                  </>
-                ) : active ? (
-                  <span className="muted">Connecting…</span>
-                ) : (
-                  <span className="muted">—</span>
+                  ) : label === "In library" ? (
+                    <CircleCheck size={14} aria-hidden />
+                  ) : label === "Needs review" ||
+                    label === "Download needs attention" ||
+                    label === "Download not started" ? (
+                    <CircleAlert size={14} aria-hidden />
+                  ) : null}
+                  {label}
+                </button>
+                {label === "Needs review" && (
+                  <p className="request-status-hint">
+                    {target.selection_status === "held" ? "Choose a release to review its books and files" : target.inspection_id || target.can_claim
+                      ? "Choose Review files to continue"
+                      : "Administrator review required"}
+                  </p>
                 )}
-              </div>
-            </td>
-            <td className="request-metric">
-              {active ? transferSpeed(target.download_speed) : "—"}
-            </td>
-            <td className="request-metric">
-              {active ? transferTime(target.eta_seconds) : "—"}
-            </td>
-            <td>
-              <div className="request-row-tools">
-                {index === 0 && request.can_decide && (
+                {label === "Queued" && target.attempt_message && (
+                  <p className="request-status-hint">
+                    {target.attempt_message}
+                  </p>
+                )}
+              </td>
+              <td>
+                <div className="request-transfer-progress">
+                  {progress !== null ? (
+                    <>
+                      <span className="request-percent">
+                        {Math.round(progress * 100)}%
+                      </span>
+                      <progress
+                        max={1}
+                        value={progress}
+                        aria-label={`${request.work_title} ${mediumLabel(target.slot).toLowerCase()} download progress`}
+                      />
+                    </>
+                  ) : active ? (
+                    <span className="muted">Connecting…</span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </div>
+              </td>
+              <td className="request-metric">
+                {active ? transferSpeed(target.download_speed) : "—"}
+              </td>
+              <td className="request-metric">
+                {active ? transferTime(target.eta_seconds) : "—"}
+              </td>
+              <td>
+                <div className="request-row-tools">
+                  {index === 0 && request.can_decide && (
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      onClick={() => onDecide("approved", false)}
+                    >
+                      <Check size={14} aria-hidden />
+                      Approve
+                    </button>
+                  )}
+                  {index === 0 && request.can_start_download && (
+                    <button
+                      disabled={busy}
+                      onClick={() => onDecide("approved", true)}
+                    >
+                      <Download size={14} aria-hidden />
+                      Download
+                    </button>
+                  )}
+                  {primary && <ActionButton action={primary} busy={busy} />}
+                  {target.state !== "satisfied" &&
+                    requestActions.map((action) => (
+                      <ActionButton
+                        key={action.key}
+                        action={action}
+                        busy={busy}
+                        compact
+                      />
+                    ))}
+                  {secondary
+                    .filter((action) => action.danger)
+                    .map((action) => (
+                      <ActionButton
+                        key={action.key}
+                        action={action}
+                        busy={busy}
+                        compact
+                      />
+                    ))}
                   <button
-                    className="primary"
-                    disabled={busy}
-                    onClick={() => onDecide("approved", false)}
+                    type="button"
+                    className="request-icon-action"
+                    aria-label={`Details for ${request.work_title} ${mediumLabel(target.slot).toLowerCase()}`}
+                    title="Request details"
+                    aria-expanded={isExpanded}
+                    aria-controls={detailsId}
+                    onClick={() => setExpanded(isExpanded ? null : target.slot)}
                   >
-                    <Check size={14} aria-hidden />
-                    Approve
+                    <ChevronRight
+                      size={16}
+                      className="request-details-chevron"
+                      aria-hidden
+                    />
                   </button>
-                )}
-                {index === 0 && request.can_start_download && (
-                  <button
-                    disabled={busy}
-                    onClick={() => onDecide("approved", true)}
-                  >
-                    <Download size={14} aria-hidden />
-                    Download
-                  </button>
-                )}
-                {primary && <ActionButton action={primary} busy={busy} />}
-              </div>
-            </td>
-          </tr>
+                </div>
+              </td>
+            </tr>
+            {isExpanded && (
+              <tr id={detailsId} className="request-detail-row">
+                <td colSpan={7}>
+                  <div className="request-detail-content">
+                    <div className="request-detail-heading">
+                      <span className="request-medium">
+                        {target.slot === "audio" ? (
+                          <Headphones size={16} aria-hidden />
+                        ) : (
+                          <BookOpen size={16} aria-hidden />
+                        )}
+                        {mediumLabel(target.slot)} details
+                      </span>
+                      <span className="muted">{label}</span>
+                    </div>
+                    <div className="request-detail-summary">
+                      {targetNotes(label, target).map((note) => (
+                        <p className="request-target-note" key={note}>
+                          {note}
+                        </p>
+                      ))}
+                      {!!target.shared_books?.length && (
+                        <p className="request-target-note">
+                          Shared with {target.shared_books.join(", ")}
+                        </p>
+                      )}
+                      {target.can_repair && target.attempt_id && (
+                        <DownloadRepair attemptId={target.attempt_id} />
+                      )}
+                    </div>
+                    <div className="request-detail-sections">
+                      {target.attempt_id &&
+                        target.can_view_download_history && (
+                          <DownloadRecoveryDetails
+                            attemptId={target.attempt_id}
+                            workId={request.work_id}
+                          />
+                        )}
+                      <RequestDetails request={request} />
+                    </div>
+                    <ul className="request-reasons">
+                      {request.reasons.map((reason) => (
+                        <li key={reason.id}>
+                          {reason.label}
+                          {reason.active ? "" : " · Withdrawn"}
+                          {reason.decision_note && (
+                            <p>{reason.decision_note}</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {!!secondary.filter((action) => !action.danger).length && (
+                      <div className="actions" aria-label="Request actions">
+                        {secondary
+                          .filter((action) => !action.danger)
+                          .map((action) => (
+                            <ActionButton
+                              key={action.key}
+                              action={action}
+                              busy={busy}
+                            />
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )}
+          </Fragment>
         );
       })}
-      {expanded && (
-        <tr id={`request-details-${request.id}`} className="request-detail-row">
-          <td colSpan={7}>
-            <div className="request-detail-content">
-              {request.targets.map((target) => (
-                <div key={target.slot}>
-                  {targetNotes(statusLabel(request, target), target).map(
-                    (note) => (
-                      <p className="request-target-note" key={note}>
-                        {note}
-                      </p>
-                    ),
-                  )}
-                  {!!target.shared_books?.length && (
-                    <p className="request-target-note">
-                      Shared with {target.shared_books.join(", ")}
-                    </p>
-                  )}
-                  {target.can_repair && target.attempt_id && (
-                    <DownloadRepair attemptId={target.attempt_id} />
-                  )}
-                  {target.attempt_id && target.can_view_download_history && (
-                    <DownloadRecoveryDetails
-                      attemptId={target.attempt_id}
-                      workId={request.work_id}
-                    />
-                  )}
-                </div>
-              ))}
-              <ul className="request-reasons">
-                {request.reasons.map((reason) => (
-                  <li key={reason.id}>
-                    {reason.label}
-                    {reason.active ? "" : " · Withdrawn"}
-                    {reason.decision_note && <p>{reason.decision_note}</p>}
-                  </li>
-                ))}
-              </ul>
-              <RequestDetails request={request} />
-              {!!secondaryActions.length && (
-                <div className="actions" aria-label="Request actions">
-                  {secondaryActions.map((action) => (
-                    <ActionButton
-                      key={action.key}
-                      action={action}
-                      busy={busy}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+      {withdrawReason && (
+        <tr>
+          <td colSpan={7} className="request-dialog-cell">
+            <BookDialog
+              title="Withdraw request"
+              close={() => setWithdrawReason(null)}
+            >
+              <p>
+                Stop requesting <strong>{request.work_title}</strong>?
+              </p>
+              <p className="muted">
+                This withdraws your request for{" "}
+                {request.targets
+                  .filter((target) => target.state !== "satisfied")
+                  .map((target) => mediumLabel(target.slot).toLowerCase())
+                  .join(" and ")}
+                . Books already in your library stay there. Downloads needed by
+                other requests continue.
+              </p>
+              <div className="actions">
+                <button onClick={() => setWithdrawReason(null)}>
+                  Keep request
+                </button>
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => {
+                    onWithdraw(withdrawReason);
+                    setWithdrawReason(null);
+                  }}
+                >
+                  Withdraw request
+                </button>
+              </div>
+            </BookDialog>
           </td>
         </tr>
       )}
@@ -747,7 +861,7 @@ function RequestDetails({ request }: { request: Request }) {
   const [open, setOpen] = useState(false);
   return (
     <details
-      className="request-preferences"
+      className="request-preferences request-disclosure"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
@@ -756,7 +870,7 @@ function RequestDetails({ request }: { request: Request }) {
           aria-hidden
           className="request-details-chevron"
         />
-        Details
+        Request preferences
       </summary>
       {open && (
         <div className="request-preferences-body">

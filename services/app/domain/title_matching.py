@@ -8,13 +8,24 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
-from app.domain.catalog_titles import distinct_work_subtitle, stripped_title
+from app.domain.catalog_titles import display_title, distinct_work_subtitle, stripped_title
 
-TITLE_MATCH_VERSION = 2
+TITLE_MATCH_VERSION = 3
+
+
+def title_search_variants(value):
+    """Bounded connector spellings for candidate discovery, never work identity.
+
+    Keep catalog display keys/indexes unchanged. Candidates still need author,
+    edition and ambiguity checks; embedded initials such as AT&T stay literal.
+    """
+    value = display_title(value)
+    return {value, value.replace(" & ", " and "), value.replace(" and ", " & ")}
 
 
 def words(value):
     text = unicodedata.normalize("NFKD", value.casefold())
+    text = re.sub(r"(?<=\s)&(?=\s)", "and", text)
     return re.findall(r"[^\W_]+", "".join(c for c in text if not unicodedata.combining(c)))
 
 

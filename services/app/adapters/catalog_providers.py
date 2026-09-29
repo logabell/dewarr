@@ -78,6 +78,11 @@ class Hardcover:
     def __init__(self, request):
         self.request = request
 
+    async def collection_bibliography(self, external_id):
+        from app.adapters.hardcover_bibliography import bibliography
+
+        return await bibliography(self.query, external_id)
+
     async def author_details(self, external_id, page):
         from app.adapters.hardcover_authors import detail
 

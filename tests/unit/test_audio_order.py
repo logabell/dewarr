@@ -46,3 +46,17 @@ async def test_old_untagged_inspection_gains_order_and_a_new_review_revision(mon
     revision, content = await grouping.current_grouping(None, inspection)
     assert revision == "reviewed"
     assert [file.track for file in content.groups[0].files] == [1, 2]
+
+
+def test_named_track_totals_require_one_complete_recording():
+    from app.importing.audio_order import numbered_sequence
+
+    assert numbered_sequence(["Writer - Book 02 of 02.mp3", "Writer - Book 01 of 02.mp3"]) == [2, 1]
+    for paths in [
+        ["Book 01 of 03.mp3", "Book 02 of 03.mp3"],
+        ["Book 01 of 02.mp3", "Other 02 of 02.mp3"],
+        ["Book 01 of 02.mp3", "Book 01 of 02.mp3"],
+        ["Book 01 of 02.mp3", "Book 02 of 03.mp3"],
+        ["Disc 1/Book 01 of 02.mp3", "Disc 2/Book 02 of 02.mp3"],
+    ]:
+        assert numbered_sequence(paths) == []

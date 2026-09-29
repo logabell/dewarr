@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChevronRight, History } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, result } from "../api/client";
 import { Loading, Notice } from "../components";
@@ -44,10 +45,21 @@ export default function DownloadRecoveryDetails({
     },
   });
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>Download history and recovery</summary>
+    <details
+      className="request-disclosure download-history"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <ChevronRight
+          size={14}
+          className="request-details-chevron"
+          aria-hidden
+        />
+        <History size={16} aria-hidden />
+        Download history and recovery
+      </summary>
       {open && (
-        <div>
+        <div className="request-disclosure-body">
           <Notice error={query.error || approve.error} />
           {query.isPending && <Loading />}
           {query.error && (
@@ -57,11 +69,22 @@ export default function DownloadRecoveryDetails({
           )}
           {query.data && (
             <>
-              <ol aria-label="Download attempt chain">
+              <ol
+                className="download-attempt-timeline"
+                aria-label="Download attempt chain"
+              >
                 {query.data.attempt_chain?.map((step, index) => (
                   <li key={step.attempt_id}>
-                    Attempt {index + 1}: {step.release_title} · {step.state}
-                    <p>{step.reason}</p>
+                    <div className="download-attempt-heading">
+                      <span>Attempt {index + 1}</span>
+                      <span className="download-attempt-state">
+                        {step.state}
+                      </span>
+                    </div>
+                    <p className="download-attempt-title">
+                      {step.release_title}
+                    </p>
+                    <p className="muted">{step.reason}</p>
                   </li>
                 ))}
               </ol>

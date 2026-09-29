@@ -51,8 +51,8 @@ export function statusLabel(request: StatusRequest, target: StatusTarget) {
     target.attempt_state !== "cancelled"
   )
     return "Downloading";
-  if (["held", "failed"].includes(target.selection_status || ""))
-    return "Download not started";
+  if (target.selection_status === "held") return "Needs review";
+  if (target.selection_status === "failed") return "Download not started";
   if (["queued", "running"].includes(target.selection_status || ""))
     return "Preparing download";
   if (target.state === "wanted") return "Wanted";

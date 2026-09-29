@@ -300,3 +300,48 @@ async def test_linked_review_retries_automatic_matching_without_new_inspection(
     assert not response.json()["download"]["can_retry"]
     assert (await client.post(endpoint + "/retry")).status_code == 409
     assert downloader.calls.count("submit") == 1
+
+
+async def test_retry_reinspects_unreadable_book_without_redownloading(
+    client, database, automatic_job, downloader
+):
+    from app.importing.workflow import run_inspection
+
+    await automatic.run(automatic_job)
+    async with database() as db:
+        row = await db.get(AutomaticImport, automatic_job)
+        inspection_id = row.inspection_id
+        inspection = await db.get(DownloadInspection, inspection_id)
+        operation_id = inspection.operation_id
+        from pathlib import Path
+
+        from tests.media_fixtures import epub
+
+        epub(Path(inspection.source_path) / inspection.relative_path / "book.epub")
+    await run_inspection(operation_id)
+    async with database() as db, db.begin():
+        row = await db.get(AutomaticImport, automatic_job)
+        inspection = await db.get(DownloadInspection, inspection_id)
+        original = inspection.snapshot
+        assert original["groups"]
+        inspection.snapshot = {
+            **original,
+            "groups": [],
+            "files": [
+                {**file, "state": "held", "reason": "Invalid media metadata"}
+                for file in original["files"]
+            ],
+        }
+        row.state, row.message = "held", "No matching book files; review download"
+    response = await client.post(f"/api/organization/inspections/{inspection_id}/retry")
+    assert response.status_code == 202, response.text
+    assert response.json()["state"] == "queued"
+    assert (
+        await client.post(f"/api/organization/inspections/{inspection_id}/retry")
+    ).status_code == 409
+    await run_inspection(operation_id)
+    async with database() as db:
+        inspection = await db.get(DownloadInspection, inspection_id)
+        assert inspection.state == "ready"
+        assert inspection.snapshot["groups"] == original["groups"]
+    assert downloader.calls.count("submit") == 1

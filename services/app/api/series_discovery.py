@@ -23,6 +23,7 @@ from app.domain.series_gap_watch import (
     owned_series_refs,
     unseen_index,
 )
+from app.domain.series_projection import full_book, project
 from app.domain.visibility import visible_work
 from app.domain.work_graph import canonical_map
 
@@ -73,7 +74,6 @@ class SeenInput(BaseModel):
 def normal_entry():
     data = SeriesMembership.snapshot
     return (
-        data["compilation"].as_boolean().is_(False),
         data["partial"].as_boolean().is_(False),
         data["canonical_id"].as_string().is_(None),
     )
@@ -95,9 +95,11 @@ def present(availability, medium):
 def gap_candidates(pairs, available, medium, now):
     grouped = {}
     positions = {}
+    if pairs and all("languages" in entry.snapshot for entry, _ in pairs):
+        pairs, _ = project(pairs)
     for entry, work in pairs:
         data = entry.snapshot
-        if data["compilation"] or data["partial"] or data["canonical_id"]:
+        if not full_book(data):
             continue
         grouped.setdefault(work.id, (work, []))[1].append(data)
         if data["position"] is not None:

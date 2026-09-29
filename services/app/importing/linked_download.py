@@ -127,3 +127,51 @@ async def linked_version(db, approver, selection, inspection, group, grouping_re
         db, approver, inspection.id, work.id, group.key, grouping_revision
     )
     return version
+
+
+async def linked_collection_version(
+    db, approver, members, inspection, group, grouping_revision, match
+):
+    """Per-book file evidence must corroborate a reviewed collection mapping."""
+    from pathlib import PurePosixPath
+
+    group_paths = {f.path for f in group.files}
+    eligible = []
+    for member in members:
+        review = member.frozen.get("collection_review")
+        if not review:
+            continue
+        root = member.frozen["descriptor"]["name"]
+        paths = {
+            str(PurePosixPath(p).relative_to(root)) if p.startswith(root + "/") else p
+            for p in review["paths"]
+        }
+        if paths == group_paths:
+            eligible.append(member)
+    if len(eligible) != 1:
+        return None
+    member = eligible[0]
+    if (
+        member.frozen["requirements"].get("version_id")
+        or member.frozen["requirements"]["medium"] != group.medium
+    ):
+        return None
+    work = await canonical_work(db, UUID(member.frozen["origin_work_id"]))
+    facts = group_evidence(inspection.snapshot, group)
+    # A filename or uploader claim cannot supply missing embedded identity here.
+    if (
+        not facts.titles
+        or not facts.authors
+        or work.metadata_fields.get("identity_rejected")
+        or request_file_conflicts(work, member.frozen["release"], facts)
+    ):
+        return None
+    identified = [c for c in match.candidates if c.identifier_match]
+    if identified:
+        if len(identified) != 1 or identified[0].work_id != work.id or identified[0].conflicts:
+            return None
+        return await db.get(Version, identified[0].version_id)
+    version, _ = await attach_file_edition(
+        db, approver, inspection.id, work.id, group.key, grouping_revision
+    )
+    return version

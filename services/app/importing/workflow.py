@@ -57,8 +57,11 @@ async def run_inspection(operation_id: UUID):
         row.run_token, row.state, operation.status = token, "running", "running"
         row.message = operation.message = "Inspecting file contents without modifying downloads"
         path, relative = Path(row.source_path), row.relative_path
+        selected_paths = operation.payload.get("selected_paths")
     try:
-        snapshot = await asyncio.to_thread(inspect_download, path, relative)
+        snapshot = await asyncio.to_thread(
+            inspect_download, path, relative, selected_paths=selected_paths
+        )
         message = "Files inspected; match groups to catalog versions before planning an import"
     except (OSError, ValueError) as error:
         snapshot = None

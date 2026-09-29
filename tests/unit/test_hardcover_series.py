@@ -49,7 +49,8 @@ async def test_keyset_preserves_duplicate_positions_and_full_member_evidence():
     assert "featured" not in observed.items[0]  # This is not primary membership.
     assert calls[0][1] == {"id": 9, "after": 10, "limit": 100}
     assert "book_series_aggregate" in calls[0][0]
-    assert "distinct_on" not in calls[0][0]
+    assert "book_series(where: {id: {_gt: $after}}" in calls[0][0]
+    assert "editions(distinct_on: language_id" in calls[0][0]
 
 
 @pytest.mark.parametrize(
@@ -136,3 +137,19 @@ def test_small_series_uses_two_requests_without_empty_terminators():
     stage, complete = advance(None, observed)
     assert not complete and stage["cursor"] == 0
     assert advance(stage, observed)[1]
+
+
+def test_verification_refreshes_popularity_without_rejecting_unchanged_membership():
+    rows = [
+        {"entry_id": "1", "position": "1", "users_count": 100},
+        {"entry_id": "2", "position": "2", "users_count": 50},
+    ]
+    info = {"count": 2}
+    stage, _ = advance(None, SeriesPage(info, rows, 2))
+    stage, done = advance(stage, SeriesPage(info, [{**rows[0], "users_count": 101}], 1))
+    assert not done
+    stage, done = advance(stage, SeriesPage(info, [{**rows[1], "users_count": 51}], 2))
+    assert done and [r["users_count"] for r in stage["items"]] == [101, 51]
+    original, _ = advance(None, SeriesPage(info, rows, 2))
+    with pytest.raises(AdapterError):
+        advance(original, SeriesPage(info, [{**rows[0], "position": "3", "users_count": 101}], 1))

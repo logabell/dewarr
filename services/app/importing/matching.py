@@ -14,9 +14,9 @@ from app.db.models import (
     Work,
     WorkMetadataSource,
 )
-from app.domain.catalog_titles import display_title, display_title_sql
+from app.domain.catalog_titles import display_title_sql
 from app.domain.identity import normalized
-from app.domain.title_matching import compatible_title
+from app.domain.title_matching import compatible_title, title_search_variants
 from app.domain.work_graph import canonical_work
 from app.importing.file_editions import FILE_EDITION_PROVIDER
 from app.importing.match_evidence import (
@@ -30,7 +30,7 @@ from app.importing.match_evidence import (
 from app.importing.naming import StrictModel, fingerprint
 from app.importing.versioning import version_revision
 
-MATCHER_VERSION = 4
+MATCHER_VERSION = 5
 MAX_CANDIDATES = 50
 
 
@@ -220,7 +220,9 @@ async def match_group(db, snapshot, grouping_revision, group):
     # display limit must not hide an edition or manufacture uniqueness.
     identifier_condition = or_(*conditions) if conditions else false()
     identifier_order = [identifier_condition.desc().nulls_last()] if conditions else []
-    stripped = sorted({display_title(title) for title in facts.titles if display_title(title)})
+    stripped = sorted(
+        {variant for title in facts.titles for variant in title_search_variants(title) if variant}
+    )
     if stripped:
         conditions.extend(
             [

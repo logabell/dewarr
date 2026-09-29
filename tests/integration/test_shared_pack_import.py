@@ -22,6 +22,7 @@ from app.db.models import (
     Integration,
     SourceArtifact,
     SourceConnection,
+    Version,
 )
 from app.domain import download_attempts as downloads
 from app.importing import execution
@@ -60,6 +61,8 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
     delayed_scan,
     ambiguous_first,
     manual_prepare=False,
+    selected_files=False,
+    reviewed_tags=False,
 ):
     route = ready_route
     # Exercise the finite acquisition/import graph, not wall-clock cron ticks.
@@ -76,11 +79,14 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
         # Replace the setup probe's generic filename with the catalog title.
         # Leaving both creates an unidentifiable extra primary file in the torrent.
         (pack / "book.epub").rename(pack / "First Harbor.epub")
-    epub(pack / ("First Harbor.epub" if manual_prepare else "book.epub"), isbn="9781234567897")
+    epub(
+        pack / ("First Harbor.epub" if manual_prepare else "book.epub"),
+        isbn=None if reviewed_tags else "9781234567897",
+    )
     epub(
         pack / ("Second Harbor.epub" if manual_prepare else "second.epub"),
         title="Second Harbor",
-        isbn="9780140328721",
+        isbn=None if reviewed_tags else "9780140328721",
     )
     if ambiguous_first:
         epub(pack / "alternative.epub", isbn="9781234567897")
@@ -200,11 +206,27 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
                 "destination_id": route["destination"]["id"],
                 "destination_revision": route["destination"]["revision"],
                 "confirmed_work_id": str(book["work"]),
+                **(
+                    {"selected_paths": ["pack/book.epub", "pack/second.epub"]}
+                    if selected_files
+                    else {}
+                ),
             },
             key=f"pack-selection-{index}",
         )
         assert response.status_code == 201, response.text
         selections.append(response.json())
+    if reviewed_tags:
+        # Freeze the per-book mapping produced by collection confirmation. The
+        # files have title/author tags but no ISBN, so the import must exercise
+        # that mapping and independently corroborate each book's embedded tags.
+        async with database() as db, db.begin():
+            for selected, name in zip(selections, ["book.epub", "second.epub"], strict=True):
+                saved = await db.get(AcquisitionSelection, UUID(selected["id"]))
+                saved.frozen = {
+                    **saved.frozen,
+                    "collection_review": {"paths": [f"pack/{name}"]},
+                }
     if manual_prepare:
         url = f"/api/acquisition/selections/{selections[0]['id']}"
         response = await client.get(url + "/pack-preview")
@@ -232,7 +254,34 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
     )
     assert approval.status_code == 200 and approval.json()["ready"], approval.text
     monkeypatch.setattr(get_settings(), "download_dispatch_enabled", True)
-    qbit = Client(database, descriptor.model_dump(mode="json"))
+
+    class SelectedClient(Client):
+        async def submit(self, content, *, stopped=False, **kwargs):
+            assert stopped
+            receipt = await super().submit(content, **kwargs)
+            self.states[0].state = "stoppedDL"
+            for index, file in enumerate(self.states[0].files):
+                file.index, file.priority = index, 1
+            return receipt
+
+        async def select_files(self, state, expected, paths):
+            assert state.association_verified and state.state == "stoppedDL"
+            assert {f.relative_path: f.size_bytes for f in state.files} == expected
+            for file in self.states[0].files:
+                file.priority = int(file.relative_path in paths)
+                file.complete = bool(file.priority)
+            self.calls.append("selected-files")
+
+        async def start_transfer(self, key):
+            async with database() as db:
+                attempt = await db.scalar(select(DownloadAttempt))
+                assert attempt.receipt["file_selection_start_attempted"]
+            self.states[0].state = "uploading"
+            self.calls.append("started-selected")
+
+    qbit = (SelectedClient if selected_files else Client)(
+        database, descriptor.model_dump(mode="json")
+    )
     qbit.complete = True
     monkeypatch.setattr(downloads, "QbitClient", lambda *args: qbit)
     started = await grouped(client, *selections)
@@ -266,6 +315,16 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
         )
         entries = list(await db.scalars(select(ImportEntry)))
         assert len(entries) == (1 if already_owned or ambiguous_first else 2), automatic.evidence
+        if reviewed_tags:
+            imported_versions = list(
+                await db.scalars(
+                    select(Version).where(Version.id.in_([e.version_id for e in entries]))
+                )
+            )
+            by_work = {v.work_id: v.id for v in imported_versions}
+            assert set(by_work) == {first["work"], second["work"]}
+            assert all(not v.identifiers for v in imported_versions)
+            first["version"], second["version"] = by_work[first["work"]], by_work[second["work"]]
         expected_versions = (
             {second["version"]}
             if already_owned or ambiguous_first
@@ -273,7 +332,7 @@ async def test_reviewed_pack_imports_books_independently_and_preserves_seeded_fi
         )
         assert {entry.version_id for entry in entries} == expected_versions
         assert bool(automatic.evidence["skipped_groups"]) is already_owned
-        assert any(group["reason"] for group in automatic.evidence["held_groups"])
+        assert bool(automatic.evidence["held_groups"]) is not selected_files
         states = {entry.version_id: entry.state for entry in entries}
         assert states[second["version"]] == ("awaiting-library" if delayed_scan else "confirmed"), (
             states
@@ -383,4 +442,29 @@ async def test_manual_pack_preview_creates_missing_requests_and_confirms_shared_
         delayed_scan=delayed_scan,
         ambiguous_first=False,
         manual_prepare=True,
+    )
+
+
+async def test_selected_pack_files_skip_existing_unrequested_bytes_end_to_end(
+    client, admin, database, ready_route, monkeypatch
+):
+    await test_reviewed_pack_imports_books_independently_and_preserves_seeded_files(
+        client, admin, database, ready_route, monkeypatch, False, False, False, selected_files=True
+    )
+
+
+async def test_reviewed_pack_without_isbns_imports_each_corroborated_book_end_to_end(
+    client, admin, database, ready_route, monkeypatch
+):
+    await test_reviewed_pack_imports_books_independently_and_preserves_seeded_files(
+        client,
+        admin,
+        database,
+        ready_route,
+        monkeypatch,
+        False,
+        False,
+        False,
+        selected_files=True,
+        reviewed_tags=True,
     )

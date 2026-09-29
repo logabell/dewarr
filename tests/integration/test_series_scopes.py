@@ -9,7 +9,7 @@ from sqlalchemy import func, select, text
 from app.db.models import AcquisitionIntent, CatalogSeries, Operation, User, Work
 from app.domain import series_requests, series_scopes
 from tests.integration.test_acquisition import catalog
-from tests.integration.test_catalog_series import detail as catalog_detail
+from tests.integration.test_catalog_series import detail as series_detail
 from tests.integration.test_catalog_series import finish, record, service
 from tests.integration.test_catalog_series import start as observe
 from tests.integration.test_series_requests import BASE as REQUESTS
@@ -18,6 +18,12 @@ from tests.integration.test_series_requests import body as request_body
 
 pytestmark = pytest.mark.integration
 BASE = "/api/catalog/series/hardcover/9/main-books"
+
+
+async def catalog_detail(client):
+    # Explicit scope review can inspect every observation, including entries
+    # deliberately excluded from the default English main reading order.
+    return await series_detail(client, section="all")
 
 
 def body(observed, **updates):

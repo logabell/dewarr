@@ -278,3 +278,39 @@ def test_file_scoped_inspection_detects_replacement_but_allows_sibling_activity(
     else:
         with pytest.raises(InspectionError, match="changed"):
             inspect_download(root, "batch/book.epub")
+
+
+@pytest.mark.parametrize("href", ["../chapter.xhtml", ".././chapter.xhtml", "%2e%2e/chapter.xhtml"])
+def test_epub_content_can_reference_parent_inside_archive(tmp_path, href):
+    path = tmp_path / "book.epub"
+    epub(path)
+    with zipfile.ZipFile(path) as book:
+        entries = {name: book.read(name) for name in book.namelist()}
+    entries["META-INF/container.xml"] = entries["META-INF/container.xml"].replace(
+        b"OEBPS/book.opf", b"OEBPS/metadata/book.opf"
+    )
+    entries["OEBPS/metadata/book.opf"] = entries.pop("OEBPS/book.opf").replace(
+        b'href="chapter.xhtml"', f'href="{href}"'.encode()
+    )
+    with zipfile.ZipFile(path, "w") as book:
+        for name, content in entries.items():
+            book.writestr(name, content)
+    result = inspect_download(tmp_path, "book.epub")
+    assert result["files"][0]["state"] == "inspected"
+    assert result["groups"][0]["title"] == "First Harbor"
+    assert result["files"][0]["metadata"]["spine_entries"] == 1
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "../../outside.xhtml",
+        "%2e%2e/%2e%2e/outside.xhtml",
+        "/chapter.xhtml",
+        "..\\chapter.xhtml",
+        "%00chapter.xhtml",
+    ],
+)
+def test_epub_internal_paths_cannot_escape_archive(href):
+    with pytest.raises(InspectionError):
+        inspection.epub_resource_path("OEBPS/book.opf", href)

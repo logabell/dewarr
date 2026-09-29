@@ -639,3 +639,50 @@ async def test_download_history_is_filtered_by_book_and_account(client, selected
     assert (await client.get("/api/acquisition/downloads", params={"work_id": work_id})).json()[
         "total"
     ] == 0
+
+
+@pytest.mark.parametrize("change", ["withdraw", "disable-dispatch"])
+async def test_selected_transfer_rechecks_authority_before_start(
+    client, database, selected, monkeypatch, change
+):
+    async with database() as db, db.begin():
+        selection = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        descriptor = selection.frozen["descriptor"]
+        paths = [f["path"] for f in descriptor["files"]]
+        selection.frozen = {**selection.frozen, "selected_paths": paths}
+        intent_id = selection.intent_id
+
+    class StoppedClient(Client):
+        async def submit(self, content, *, stopped=False, **kwargs):
+            assert stopped
+            receipt = await super().submit(content, **kwargs)
+            self.states[0].state = "stoppedDL"
+            for i, file in enumerate(self.states[0].files):
+                file.index, file.priority = i, 1
+            return receipt
+
+        async def select_files(self, state, expected, paths):
+            assert state.state == "stoppedDL"
+            if change == "withdraw":
+                async with database() as db, db.begin():
+                    for reason in await db.scalars(
+                        select(AcquisitionReason).where(AcquisitionReason.intent_id == intent_id)
+                    ):
+                        reason.active = False
+            else:
+                monkeypatch.setattr(get_settings(), "download_dispatch_enabled", False)
+
+        async def start_transfer(self, key):
+            self.calls.append("started-after-revocation")
+            self.states[0].state = "downloading"
+
+    downloader = StoppedClient(database, descriptor)
+    monkeypatch.setattr(downloads, "QbitClient", lambda *args: downloader)
+    response = await start(client, selected)
+    assert response.status_code == 202, response.text
+    await downloads.run(UUID(response.json()["id"]))
+    assert "started-after-revocation" not in downloader.calls
+    assert downloader.states[0].state == "stoppedDL"
+    saved = await row(database, response.json()["id"])
+    assert saved.state == "held"
+    assert not (saved.receipt or {}).get("file_selection_start_attempted")

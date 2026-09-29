@@ -162,12 +162,18 @@ export default function DownloadImportReview({
               <li key={file.path}>
                 <span>{file.path.split("/").pop()}</span>
                 <small>
-                  {file.medium
+                  {file.medium ||
+                  /\.(epub|pdf|cbz|m4b|m4a|mp3|flac|ogg|opus|aac|wav|wma)$/i.test(
+                    file.path,
+                  )
                     ? file.state === "inspected"
                       ? "Ready"
                       : "Needs attention"
                     : "Extra file"}
                 </small>
+                {file.state === "held" && file.reason && (
+                  <p className="download-file-reason">{file.reason}</p>
+                )}
               </li>
             ))}
           </ul>

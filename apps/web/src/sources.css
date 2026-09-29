@@ -848,3 +848,57 @@
 .source-table .release-format + small {
   white-space: nowrap;
 }
+
+.collection-dialog {
+  max-width: 900px;
+}
+.collection-book-list {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+.collection-book {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.collection-cover {
+  width: 64px;
+}
+.collection-book h3 {
+  margin: 0 0 0.5rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.collection-book-copy {
+  min-width: 0;
+}
+.collection-book-copy select {
+  display: block;
+  width: 100%;
+  margin: 0.4rem 0 0.8rem;
+}
+.collection-book-copy details {
+  margin: 0.65rem 0;
+}
+.collection-files {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+.collection-files .check-label {
+  align-items: flex-start;
+  padding: 0.35rem 0;
+  overflow-wrap: anywhere;
+}
+.collection-actions {
+  border-top: 1px solid var(--line);
+  padding: 1rem 0;
+}

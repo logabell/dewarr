@@ -173,9 +173,7 @@ def inspect_epub(fd):
             href = urlsplit(item.attrib.get("href", ""))
             if href.scheme or href.netloc:
                 raise InspectionError("EPUB spine references external content")
-            relative = unquote(href.path)
-            relative_parts(relative)
-            path = str(PurePosixPath(package_path).parent / relative)
+            path = epub_resource_path(package_path, href.path)
             if path not in names or archive.getinfo(path).file_size == 0:
                 raise InspectionError("EPUB spine content is missing or empty")
             if archive.getinfo(path).flag_bits & 1:
@@ -206,15 +204,43 @@ def inspect_epub(fd):
         }
 
 
+def epub_resource_path(package_path, href):
+    """Resolve OPF-relative URLs inside the ZIP, never against the filesystem."""
+    relative = unquote(href)
+    if (
+        not relative
+        or relative.startswith("/")
+        or "\\" in relative
+        or any(ord(character) < 32 or ord(character) == 127 for character in relative)
+    ):
+        raise InspectionError("EPUB contains an invalid content path")
+    parts = list(PurePosixPath(package_path).parent.parts)
+    for part in relative.split("/"):
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not parts:
+                raise InspectionError("EPUB content path escapes its container")
+            parts.pop()
+        else:
+            parts.append(part)
+    path = "/".join(parts)
+    relative_parts(path)
+    return path
+
+
 def inspect_file(fd, path, deadline):
     extension = PurePosixPath(path).suffix.lower().lstrip(".")
     result = {"path": path, "extension": extension, "state": "held", "medium": None}
     try:
         if extension in DEMUXERS:
-            result.update(medium="audio", technical=probe_audio(fd, extension, deadline))
+            result["medium"] = "audio"
+            result["technical"] = probe_audio(fd, extension, deadline)
         elif extension == "epub":
-            result.update(medium="ebook", metadata=inspect_epub(fd))
+            result["medium"] = "ebook"
+            result["metadata"] = inspect_epub(fd)
         elif extension in {"pdf", "cbz"}:
+            result["medium"] = "ebook"
             output = probe_output(
                 [sys.executable, "-m", "app.importing.ebook_probe", str(fd), extension],
                 fd,
@@ -347,7 +373,9 @@ def suggest_groups(files):
     return list(groups.values())
 
 
-def inspect_download(root: Path, relative: str, *, max_bytes=200 * 1024**3, timeout=300):
+def inspect_download(
+    root: Path, relative: str, *, max_bytes=200 * 1024**3, timeout=300, selected_paths=None
+):
     deadline = time.monotonic() + timeout
     with ExitStack() as scopes:
         mount = scopes.enter_context(directory(root))
@@ -364,7 +392,13 @@ def inspect_download(root: Path, relative: str, *, max_bytes=200 * 1024**3, time
 
         def listing_now():
             if kind == "directory":
-                return enumerate_files(folder)
+                listing = enumerate_files(folder)
+                if selected_paths is not None:
+                    wanted = set(selected_paths)
+                    listing = [(p, value) for p, value in listing if p in wanted]
+                    if {p for p, _ in listing} != wanted:
+                        raise InspectionError("Selected collection files are missing")
+                return listing
             with beneath(folder, leaf) as fd:
                 return [(leaf, identity(os.fstat(fd)))]
 
@@ -400,6 +434,7 @@ def inspect_download(root: Path, relative: str, *, max_bytes=200 * 1024**3, time
                         raise InspectionError("Selected download file changed during inspection")
         snapshot = {
             "schema_version": 1,
+            **({"selected_paths": sorted(selected_paths)} if selected_paths is not None else {}),
             "source_path": str(root),
             "relative_path": relative,
             "directory_identity": root_identity,

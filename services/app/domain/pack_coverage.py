@@ -8,12 +8,13 @@ from sqlalchemy import select
 
 from app.db.models import CatalogSeries, SeriesMembership, Work
 from app.domain.release_profiles import normalized
+from app.domain.series_projection import full_book
 from app.domain.visibility import visible_work
 from app.domain.work_graph import canonical_map, family_ids
 
 CATALOG_FRESH_FOR = timedelta(hours=24)
 MAX_ADDITIONAL_BOOKS = 20
-MAX_CATALOG_MEMBERS = 200
+MAX_CATALOG_MEMBERS = 1000
 PRIMARY = {
     "ebook": {"epub", "pdf", "cbz"},
     "audio": {"m4b", "mp3", "flac", "aac", "ogg", "opus"},
@@ -61,12 +62,13 @@ async def catalog(db, user, work):
             continue
         positions = {}
         for entry, member in entries:
-            positions.setdefault(entry.snapshot.get("position"), set()).add(member.id)
+            if full_book(entry.snapshot):
+                positions.setdefault(entry.snapshot.get("position"), set()).add(member.id)
         members = {}
         for entry, member in entries:
             facts = entry.snapshot
             if (
-                any(facts.get(k) for k in ("compilation", "partial", "canonical_id"))
+                not full_book(facts)
                 or not facts.get("release_date")
                 or facts["release_date"] > today
                 or facts.get("position") is None

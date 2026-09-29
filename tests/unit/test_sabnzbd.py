@@ -480,3 +480,55 @@ def test_verify_requires_one_named_job_inside_the_download_root():
             [unrelated], tag="book-search:attempt", save_path="/downloads/books", category="books"
         )
     assert caught.value.kind == FailureKind.UNCERTAIN
+
+
+@pytest.mark.parametrize(
+    "actual_path,expected_category,accepted",
+    [
+        ("/downloads/books", "", True),
+        ("/downloads/other", "", False),
+        ("/downloads/books/subfolder", "", False),
+        ("/downloads/books", "books", False),
+    ],
+)
+async def test_legacy_auto_category_only_reconciles_the_same_saved_route(
+    actual_path, expected_category, accepted
+):
+    from app.adapters.sabnzbd import parse_job, reconcile_association
+
+    class Client:
+        async def download_location(self, category):
+            assert category == "audio"
+            return actual_path
+
+    state = parse_job({**completed(), "category": "audio"}, completed=True)
+
+    async def reconcile():
+        return await reconcile_association(
+            Client(),
+            [state],
+            tag="book-search:attempt",
+            save_path="/downloads/books",
+            category=expected_category,
+        )
+
+    if accepted:
+        assert (await reconcile()).association_verified
+    else:
+        with pytest.raises(AdapterError):
+            await reconcile()
+
+
+async def test_blank_category_explicitly_submits_to_default():
+    def handler(request):
+        if form_value(request, "mode") == "version":
+            return httpx.Response(200, json={"version": "5.1.3"})
+        assert form_value(request, "cat") == "*"
+        return httpx.Response(200, json={"status": True, "nzo_ids": ["job"]})
+
+    async with SabClient(
+        "http://sab.test", "private-sab-key", transport=httpx.MockTransport(handler)
+    ) as client:
+        await client.submit(
+            nzb_bytes(), attempt_tag="book-search:attempt", save_path="/downloads", category=""
+        )

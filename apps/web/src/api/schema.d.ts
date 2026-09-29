@@ -4682,6 +4682,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/source-searches/{search_id}/results/{result_id}/contents": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Collection Preview */
+    get: operations["collection_preview_api_source_searches__search_id__results__result_id__contents_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/collection-reviews/{review_id}/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Collection Download */
+    post: operations["collection_download_api_collection_reviews__review_id__download_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/acquisition/profiles": {
     parameters: {
       query?: never;
@@ -6773,6 +6807,33 @@ export interface components {
       /** Checked At */
       checked_at?: string | null;
     };
+    /** CollectionCandidate */
+    CollectionCandidate: {
+      /** Id */
+      id: string;
+      /** Title */
+      title: string;
+      /** Authors */
+      authors: string[];
+      /** Cover Url */
+      cover_url?: string | null;
+      /** External Id */
+      external_id?: string | null;
+      /** Work Id */
+      work_id?: string | null;
+      /**
+       * Series
+       * @default []
+       */
+      series: {
+        [key: string]: unknown;
+      }[];
+      /**
+       * Owned
+       * @default false
+       */
+      owned: boolean;
+    };
     /** CollectionCard */
     CollectionCard: {
       /** Id */
@@ -6824,6 +6885,15 @@ export interface components {
       /** Warning */
       warning?: string | null;
     };
+    /** CollectionChoice */
+    CollectionChoice: {
+      /** Entry Id */
+      entry_id: string;
+      /** Candidate Id */
+      candidate_id: string;
+      /** Paths */
+      paths: string[];
+    };
     /** CollectionDetail */
     CollectionDetail: {
       collection: components["schemas"]["CollectionCard"];
@@ -6835,6 +6905,18 @@ export interface components {
       page: number;
       /** Has More */
       has_more: boolean;
+    };
+    /** CollectionDownload */
+    CollectionDownload: {
+      /** Revision */
+      revision: string;
+      /** Choices */
+      choices: components["schemas"]["CollectionChoice"][];
+      /**
+       * Download All Files
+       * @default false
+       */
+      download_all_files: boolean;
     };
     /** CollectionEntry */
     CollectionEntry: {
@@ -6863,6 +6945,13 @@ export interface components {
       winner: boolean;
       work?: components["schemas"]["WorkView"] | null;
     };
+    /** CollectionFile */
+    CollectionFile: {
+      /** Path */
+      path: string;
+      /** Size Bytes */
+      size_bytes: number;
+    };
     /** CollectionFollowInput */
     CollectionFollowInput: {
       /**
@@ -6890,6 +6979,65 @@ export interface components {
       categories: string[];
       /** Archive Gaps */
       archive_gaps: number[];
+    };
+    /** CollectionPreview */
+    CollectionPreview: {
+      /**
+       * Review Id
+       * Format: uuid
+       */
+      review_id: string;
+      /** Revision */
+      revision: string;
+      /** Title */
+      title: string;
+      /** Possible Collection */
+      possible_collection: boolean;
+      /** Requested Title */
+      requested_title: string;
+      /** Entries */
+      entries: components["schemas"]["PackContentsEntry"][];
+      /**
+       * Files
+       * @default []
+       */
+      files: components["schemas"]["CollectionFile"][];
+      /**
+       * Warnings
+       * @default []
+       */
+      warnings: string[];
+      /** Artifact Id */
+      artifact_id?: string | null;
+      /**
+       * Bibliography Count
+       * @default 0
+       */
+      bibliography_count: number;
+      /**
+       * Excluded
+       * @default []
+       */
+      excluded: {
+        [key: string]: unknown;
+      }[];
+      /**
+       * Series Coverage
+       * @default []
+       */
+      series_coverage: {
+        [key: string]: unknown;
+      }[];
+    };
+    /** CollectionReceipt */
+    CollectionReceipt: {
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /** Message */
+      message: string;
     };
     /** CollectionURL */
     CollectionURL: {
@@ -9904,7 +10052,7 @@ export interface components {
       limit: number;
       /**
        * Matcher Version
-       * @default 4
+       * @default 5
        */
       matcher_version: number;
     };
@@ -10721,6 +10869,39 @@ export interface components {
       message: string;
       /** Selection Id */
       selection_id?: string | null;
+    };
+    /** PackContentsEntry */
+    PackContentsEntry: {
+      /** Id */
+      id: string;
+      /** Title */
+      title: string;
+      /**
+       * Candidates
+       * @default []
+       */
+      candidates: components["schemas"]["CollectionCandidate"][];
+      /** Match */
+      match: string;
+      /**
+       * Files
+       * @default []
+       */
+      files: string[];
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: {
+        [key: string]: unknown;
+      }[];
+      /**
+       * Recordings
+       * @default []
+       */
+      recordings: {
+        [key: string]: unknown;
+      }[];
     };
     /** PackCoverage */
     PackCoverage: {
@@ -11603,6 +11784,11 @@ export interface components {
       expires_at: string;
       /** Current Connection */
       current_connection: boolean;
+      /**
+       * Possible Collection
+       * @default false
+       */
+      possible_collection: boolean;
       /** Query Keys */
       query_keys?: string[];
       download?: components["schemas"]["ReleaseDownloadStatus"] | null;
@@ -12942,6 +13128,8 @@ export interface components {
        * Format: uuid
        */
       confirmed_work_id: string;
+      /** Selected Paths */
+      selected_paths?: string[] | null;
       /** Search Id */
       search_id?: string | null;
       /** Profile Id */
@@ -13063,6 +13251,11 @@ export interface components {
        * @default false
        */
       followed: boolean;
+      /**
+       * Category
+       * @default other
+       */
+      category: string;
       work: components["schemas"]["WorkView"];
     };
     /** SeriesGap */
@@ -13364,6 +13557,26 @@ export interface components {
        * @default 0
        */
       audio: number;
+      /**
+       * Raw Total
+       * @default 0
+       */
+      raw_total: number;
+      /**
+       * Supplements
+       * @default 0
+       */
+      supplements: number;
+      /**
+       * Planned
+       * @default 0
+       */
+      planned: number;
+      /**
+       * Projection Version
+       * @default 0
+       */
+      projection_version: number;
     };
     /** SettingsView */
     SettingsView: {
@@ -18038,6 +18251,8 @@ export interface operations {
       query?: {
         offset?: number;
         limit?: number;
+        section?: string;
+        language?: string;
       };
       header?: never;
       path: {
@@ -24369,6 +24584,77 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["OperationView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  collection_preview_api_source_searches__search_id__results__result_id__contents_get: {
+    parameters: {
+      query?: {
+        artifact_id?: string | null;
+      };
+      header?: never;
+      path: {
+        search_id: string;
+        result_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CollectionPreview"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  collection_download_api_collection_reviews__review_id__download_post: {
+    parameters: {
+      query?: never;
+      header: {
+        "idempotency-key": string;
+      };
+      path: {
+        review_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CollectionDownload"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CollectionReceipt"];
         };
       };
       /** @description Validation Error */

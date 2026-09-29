@@ -58,7 +58,11 @@ def selection_feedback(operation):
     )
     message = operation.message
     if pinned and operation.status in {"held", "failed"} and reasons:
-        message = "This release could not be downloaded. " + "; ".join(reasons)
+        message = (
+            "Review this release before downloading. "
+            if operation.status == "held"
+            else "This release could not be downloaded. "
+        ) + "; ".join(reasons)
     return message, reasons
 
 
@@ -106,7 +110,7 @@ async def for_releases(db, owner_id, work_id, releases):
         state = {
             "queued": "preparing",
             "running": "preparing",
-            "held": "failed",
+            "held": "needs-review",
             "failed": "failed",
             "cancelled": "cancelled",
             "completed": "selected",

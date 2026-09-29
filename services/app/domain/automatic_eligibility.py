@@ -15,7 +15,9 @@ SIDECARS = {"jpg", "jpeg", "png", "webp", "opf", "nfo", "txt", "cue", "m3u"}
 PARTIAL = re.compile(r"\b(sample|excerpt|preview|incomplete|truncated)\b", re.I)
 DISC_FOLDER = re.compile(r"(?:^|[\s_(\[])(?:cd|disc|disk|part)\s*\d+\b", re.I)
 PACK = re.compile(
-    r"\b(omnibus|box[ -]?set|anthology|complete series|books?\s+\d+\s*[-–]\s*\d+)\b", re.I
+    r"\b(collection|pack|omnibus|box[ -]?set|anthology|complete series|"
+    r"books?\s+\d+\s*[-–]\s*\d+)\b",
+    re.I,
 )
 
 
@@ -25,6 +27,7 @@ def collection_candidate(release, work, catalog=None):
     )
     return bool(
         PACK.search(text)
+        or len((release.details.get("collection_contents") or {}).get("items", [])) > 1
         or len(release.coverage) > 1
         or any(
             re.search(r"\d\s*[-–,/]\s*\d", s.position or "") for s in getattr(release, "series", [])

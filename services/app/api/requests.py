@@ -357,6 +357,43 @@ def _attempt_exists(*extra, wanted_target: bool = False):
     return or_(member, direct)
 
 
+def _selection_review():
+    """Latest held selection for an unfulfilled slot belongs in Requests → Review."""
+    latest = (
+        select(Operation.status)
+        .where(
+            Operation.kind == "acquisition.auto-select",
+            Operation.owner_id == AcquisitionIntent.owner_id,
+            Operation.payload["command"]["intent_id"].astext == cast(AcquisitionIntent.id, String),
+            Operation.payload["command"]["slot"].astext == AcquisitionTarget.slot,
+        )
+        .order_by(Operation.created_at.desc(), Operation.id.desc())
+        .limit(1)
+        .correlate(AcquisitionIntent, AcquisitionTarget)
+        .scalar_subquery()
+    )
+    prepared = (
+        select(AcquisitionSelection.id)
+        .where(
+            AcquisitionSelection.target_id == AcquisitionTarget.id,
+            AcquisitionSelection.state.in_(["prepared", "committed"]),
+        )
+        .correlate(AcquisitionTarget)
+        .exists()
+    )
+    return (
+        select(AcquisitionTarget.id)
+        .where(
+            AcquisitionTarget.intent_id == AcquisitionIntent.id,
+            AcquisitionTarget.state == "wanted",
+            latest == "held",
+            ~prepared,
+        )
+        .correlate(AcquisitionIntent)
+        .exists()
+    )
+
+
 def _status_filters(status: RequestStatus):
     if status == "pending":
         return [exists(_active_reasons(AcquisitionReason.approval_status == "pending"))]
@@ -378,7 +415,7 @@ def _status_filters(status: RequestStatus):
                 _committed_selection(),
             )
         ]
-    return [_attempt_exists(_review_clause())]
+    return [or_(_attempt_exists(_review_clause()), _selection_review())]
 
 
 def _committed_selection():
@@ -471,7 +508,9 @@ def _chip(card, target) -> str:
         return "in-library"
     if target.next_action == "downloads" and target.attempt_state != "cancelled":
         return "downloading"
-    if getattr(target, "selection_status", None) in {"held", "failed"}:
+    if getattr(target, "selection_status", None) == "held":
+        return "needs-review"
+    if getattr(target, "selection_status", None) == "failed":
         return "download-not-started"
     if getattr(target, "selection_status", None) in {"queued", "running"}:
         return "preparing-download"
@@ -485,7 +524,7 @@ def _chip(card, target) -> str:
 def _matches_card(card, status: str) -> bool:
     chips = [_chip(card, target) for target in card.targets]
     if status == "review":
-        return "review" in chips
+        return "review" in chips or "needs-review" in chips
     if status == "library":
         return "in-library" in chips
     if status == "downloading":
@@ -1133,7 +1172,7 @@ class RequestCounts(BaseModel):
 async def request_counts(user: CurrentUser, db: Database):
     # Count requests once, independently of pagination, without projecting every card.
     pending = exists(_active_reasons(AcquisitionReason.approval_status == "pending"))
-    review = _attempt_exists(_review_clause())
+    review = or_(_attempt_exists(_review_clause()), _selection_review())
     downloading = and_(
         ~pending,
         or_(

@@ -384,6 +384,11 @@ def release(row, observed_at):
     if not isinstance(tags, list):
         tags = re.split(r"[,;]", row.get("tags", "")) if isinstance(row.get("tags"), str) else []
     filetype = plain(row.get("filetype"), 300)
+    from app.domain.collection_contents import extract
+
+    contents = (
+        extract(row.get("description") or "") if isinstance(row.get("description"), str) else None
+    )
     return MAMRelease(
         source_id=str(identifier),
         raw_title=row["title"][:2000],
@@ -420,7 +425,10 @@ def release(row, observed_at):
         media_info=plain(row.get("mediainfo"), 100000),
         protocol="torrent",
         observed_at=observed_at,
-        details={"size_is_estimate": size is not None and integer(row.get("size")) is None},
+        details={
+            "size_is_estimate": size is not None and integer(row.get("size")) is None,
+            **({"collection_contents": contents} if contents and contents["items"] else {}),
+        },
     )
 
 

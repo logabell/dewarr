@@ -16,6 +16,7 @@ from app.db.models import (
     AutomaticImportPolicy,
     DownloadAttempt,
     DownloadInspection,
+    FrozenImportPlan,
     ImportDestination,
     ImportEntry,
     Operation,
@@ -30,7 +31,7 @@ from app.domain.operations import transaction_lock
 from app.domain.work_graph import canonical_work
 from app.importing.destination_view import view as destination_view
 from app.importing.extra_files import is_extra
-from app.importing.grouping import current_grouping
+from app.importing.grouping import current_grouping, latest_grouping
 from app.importing.matching import match_group
 from app.importing.naming import fingerprint
 from app.importing.planning import FreezeInput, GroupSelection, freeze_plan
@@ -164,12 +165,38 @@ async def retry_held(db, attempt):
         return
     await check_policy(db, row)
     if row.inspection_id:
+        await transaction_lock(db, f"inspection-plan:{row.inspection_id}")
         inspection = await db.get(DownloadInspection, row.inspection_id)
         if inspection.state != "ready":
             return
         await download_reviews.validate_inspection(db, inspection.id)
         if await download_reviews.has_imports(db, inspection.id):
             return
+        # Re-run a failed byte inspection after a parser fix. Reusing the old
+        # empty grouping would strand a valid, already-downloaded book forever.
+        # Never replace evidence underneath a saved grouping or frozen plan.
+        snapshot = inspection.snapshot or {}
+        if (
+            not snapshot.get("groups")
+            and any(
+                file.get("state") == "held" and not is_extra(file["path"])
+                for file in snapshot.get("files", [])
+            )
+            and not await latest_grouping(db, inspection.id)
+            and not await db.scalar(
+                select(FrozenImportPlan.id)
+                .where(FrozenImportPlan.inspection_id == inspection.id)
+                .limit(1)
+            )
+        ):
+            inspection.state = "queued"
+            inspection.message = "Rechecking downloaded file contents"
+            inspection_operation = await db.get(Operation, inspection.operation_id)
+            inspection_operation.status = "queued"
+            inspection_operation.message = inspection.message
+            inspection_operation.job_id = await enqueue(
+                db, "organization.inspect", operation_id=str(inspection_operation.id)
+            )
     row.state = "inspecting" if row.inspection_id else "queued"
     row.message = "Rechecking completed files for import"
     operation = await db.get(Operation, row.operation_id)
@@ -240,6 +267,11 @@ def manifest_matches(selection, inspection):
     file_scope = inspection.snapshot.get("source_kind") == "file"
     expected = {}
     for item in descriptor["files"]:
+        if (
+            selection.frozen.get("selected_paths")
+            and item["path"] not in selection.frozen["selected_paths"]
+        ):
+            continue
         path = PurePosixPath(item["path"])
         relative = str(path if file_scope else path.relative_to(descriptor["name"]))
         expected[relative] = item["size_bytes"]
@@ -250,7 +282,45 @@ def manifest_matches(selection, inspection):
         )
 
 
-def content_reason(group, files, release):
+def selected_audio_reason(group, omitted_audio_paths):
+    """A completed selection does not establish completeness of a recording."""
+
+    def recording_folder(path):
+        parent = PurePosixPath(path).parent
+        while re.fullmatch(r"(?:cd|disc|disk)[ _-]*\d+", parent.name, re.I):
+            parent = parent.parent
+        return parent
+
+    paths = {file.path for file in group.files}
+    folders = {recording_folder(path) for path in paths}
+    omitted = {path for path in omitted_audio_paths if recording_folder(path) in folders}
+    if not omitted:
+        return None
+    # Flat author packs often contain one named M4B per book. They retain the
+    # existing whole-container heuristic; numbered files and parts do not.
+    from app.domain.title_matching import compatible_title
+
+    title = getattr(group, "title", None)
+    single = PurePosixPath(next(iter(paths))) if len(paths) == 1 else None
+    if (
+        single
+        and single.suffix.lower() == ".m4b"
+        and title
+        and compatible_title(single.stem, title)
+        and not parse_title_labels(single.stem).part
+        and all(
+            PurePosixPath(path).suffix.lower() == ".m4b"
+            and not re.fullmatch(r"(?:track[ _-]*)?\d{1,3}", PurePosixPath(path).stem, re.I)
+            and not parse_title_labels(PurePosixPath(path).stem).part
+            and not compatible_title(PurePosixPath(path).stem, title)
+            for path in omitted
+        )
+    ):
+        return None
+    return "Audio files from this recording were omitted; review completeness before importing"
+
+
+def content_reason(group, files, release, *, omitted_audio_paths=None):
     """Bounded completeness heuristic, independent of the stricter identity match.
 
     A complete associated transfer with a valid whole-book container and no partial
@@ -272,6 +342,10 @@ def content_reason(group, files, release):
         return None
     if any(file["extension"] not in {"m4b", "mp3"} for file in selected):
         return "This audio format needs completeness review"
+    if omitted_audio_paths is not None:
+        reason = selected_audio_reason(group, omitted_audio_paths)
+        if reason:
+            return reason
     if len(selected) == 1:
         tags = (selected[0].get("technical") or {}).get("tags", {})
         if str(tags.get("track", "1")) not in {"1", "1/1"} or str(tags.get("disc", "1")) not in {
@@ -349,12 +423,29 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
         ):
             wanted.setdefault(work_id, []).append(item)
     files = {file["path"]: file for file in inspection.snapshot["files"]}
+    omitted_audio_paths = None
+    if selection.frozen.get("selected_paths"):
+        descriptor = selection.frozen["descriptor"]
+        file_scope = inspection.snapshot.get("source_kind") == "file"
+        omitted_audio_paths = {
+            str(
+                PurePosixPath(item["path"])
+                if file_scope
+                else PurePosixPath(item["path"]).relative_to(descriptor["name"])
+            )
+            for item in descriptor["files"]
+            if item["path"] not in selection.frozen["selected_paths"]
+            and PurePosixPath(item["path"]).suffix.lower()
+            in {".mp3", ".m4b", ".flac", ".aac", ".ogg", ".opus"}
+        }
     choices, held, unresolved, skipped = [], [], [], []
     release_rejection = False
     covered_by_existing = set()
     for group in grouping.groups:
         match = await match_group(db, inspection.snapshot, grouping_revision, group)
-        reason = content_reason(group, files, selection.frozen["release"])
+        reason = content_reason(
+            group, files, selection.frozen["release"], omitted_audio_paths=omitted_audio_paths
+        )
         if reason and ("partial content" in reason or "incomplete" in reason):
             release_rejection = True
         if not reason:
@@ -377,6 +468,16 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
 
             linked = await linked_version(
                 db, approver, selection, inspection, group, grouping_revision, match=match
+            )
+            if linked:
+                work = await canonical_work(db, linked.work_id)
+                candidate = candidate_evidence(match.evidence, linked, work, work, False)
+        if not reason and match.status != "matched" and not linked and not match.truncated:
+            from app.importing.linked_download import linked_collection_version
+            from app.importing.matching import candidate_evidence
+
+            linked = await linked_collection_version(
+                db, approver, members, inspection, group, grouping_revision, match
             )
             if linked:
                 work = await canonical_work(db, linked.work_id)
@@ -497,9 +598,21 @@ async def plan_ready(db, row, selection, inspection, approver, destination, curr
                 "acquisition.reject-download",
                 attempt_id=str(row.attempt_id),
             )
+        file_problem = next(
+            (
+                file.get("reason")
+                for file in files.values()
+                if file["state"] != "inspected"
+                and not is_extra(file["path"])
+                and file.get("reason")
+            ),
+            None,
+        )
         row.state, row.message = (
             "held",
-            held[0]["reason"] if held else "No matching book files; review download",
+            held[0]["reason"]
+            if held
+            else file_problem or "No matching book files; review download",
         )
         return
     profile = await current_profile(db)

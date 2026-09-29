@@ -76,6 +76,7 @@ export default function SourceReleaseDetails({
         <div className="release-detail-actions">
           {canAcquire && (
             <SourceReleaseDownload
+              possibleCollection={item.possible_collection}
               searchId={searchId}
               resultId={item.id}
               title={release.title}

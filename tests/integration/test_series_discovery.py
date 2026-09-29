@@ -354,5 +354,5 @@ async def test_saved_member_metadata_and_numeric_order_are_used_without_hydratio
             assert [b["work"]["title"] for b in books] == ["Voyage 1.5", "Voyage 2", "Voyage 10"]
             assert books[0]["work"]["cover_url"] == "https://example.com/cover-1.5.jpg"
             assert books[0]["work"]["authors"] == ["Verified Writer"]
-    detail = (await client.get("/api/catalog/series/hardcover/9")).json()
+    detail = (await client.get("/api/catalog/series/hardcover/9?section=all")).json()
     assert detail["items"][1]["work"] == books[0]["work"]

@@ -19,7 +19,8 @@ QUERY = """query CatalogSeriesPage($id: Int!, $after: bigint!, $limit: Int!) {
   book_series(where: {id: {_gt: $after}}, order_by: {id: asc}, limit: $limit) {
    id position details compilation featured
    book { id canonical_id title cached_contributors cached_image
-    release_year release_date is_partial_book }
+    release_year release_date is_partial_book users_count
+    editions(distinct_on: language_id, limit: 100) { language { code2 } } }
   }
  }
 }"""
@@ -87,6 +88,8 @@ async def page(query, external_id, cursor=0):
             "name": name,
             "description": description,
             "count": count,
+            "primary_books_count": row.get("primary_books_count"),
+            "projection_version": 1,
         }
         members = row["book_series"]
         if not isinstance(members, list) or len(members) > PAGE_SIZE:
@@ -128,6 +131,20 @@ async def page(query, external_id, cursor=0):
                     "partial": partial,
                     "canonical_id": canonical,
                     "release_date": released,
+                    **(
+                        {
+                            "languages": sorted(
+                                {
+                                    e["language"]["code2"]
+                                    for e in raw["editions"]
+                                    if e.get("language") and e["language"].get("code2")
+                                }
+                            )
+                        }
+                        if "editions" in raw
+                        else {}
+                    ),
+                    "users_count": raw.get("users_count") or 0,
                 }
             )
         return SeriesPage(info, items, cursor)
@@ -153,11 +170,20 @@ def advance(stage, page):
             stage.update(phase="verify", cursor=0)
         return stage, False
     offset = stage["verified"]
-    if page.items != stage["items"][offset : offset + len(page.items)]:
+
+    # Reader counts can change between the two requests without changing book
+    # identity or membership. Retain fresh display popularity after verification.
+    def membership(item):
+        return {key: value for key, value in item.items() if key != "users_count"}
+
+    if list(map(membership, page.items)) != list(
+        map(membership, stage["items"][offset : offset + len(page.items)])
+    ):
         raise invalid()
     verified = offset + len(page.items)
     if not page.items and verified != len(stage["items"]):
         raise invalid()
+    stage = {**stage, "items": [*stage["items"][:offset], *page.items, *stage["items"][verified:]]}
     if verified == len(stage["items"]):
         return stage, True
     return {**stage, "verified": verified, "cursor": page.cursor}, False

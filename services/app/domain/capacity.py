@@ -142,13 +142,23 @@ def download_cost(frozen, observation):
     if not rename and frozen["destination"]["mode"] == "hardlink" and not same_library:
         raise CapacityWait("Hardlinks require download and library storage on the same filesystem")
     descriptor = frozen["descriptor"]
-    total = descriptor.get("torrent_bytes")
-    if total is None:
-        total = descriptor.get("content_bytes") or frozen.get("release", {}).get("size_bytes") or 0
+    files = descriptor["files"]
+    if frozen.get("selected_paths") is not None:
+        chosen = set(frozen["selected_paths"])
+        files = [file for file in files if file["path"] in chosen]
+        if not chosen or len(files) != len(chosen):
+            raise CapacityWait("Selected files changed; review the saved download scope")
+        total = sum(file["size_bytes"] for file in files)
+    else:
+        total = descriptor.get("torrent_bytes")
+        if total is None:
+            total = (
+                descriptor.get("content_bytes") or frozen.get("release", {}).get("size_bytes") or 0
+            )
     if not total:
         raise CapacityWait("Usenet release size is unknown; review it before downloading")
     # Future sidecar/cover allowance is conservative until actual import plans exist.
-    overhead = min(len(frozen["descriptor"]["files"]), 100) * 8 * MIB
+    overhead = min(len(files), 100) * 8 * MIB
     copies = frozen["destination"]["mode"] == "copy" or (rename and not same_library)
     future = overhead + (total if copies else 0)
     return {roots["download"]: total}, {roots["library"]: future}

@@ -106,6 +106,8 @@ class Release(BaseModel):
 
 
 class DownloadFile(BaseModel):
+    index: int | None = None
+    priority: int | None = None
     relative_path: str
     size_bytes: int = Field(ge=0)
     complete: bool

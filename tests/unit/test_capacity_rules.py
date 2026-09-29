@@ -79,3 +79,23 @@ def test_measure_uses_missing_directory_ancestor_and_refuses_symlinks(tmp_path):
     (root / "alias").symlink_to(root, target_is_directory=True)
     with pytest.raises(OSError):
         measure({"download": (root, "alias")})
+
+
+@pytest.mark.parametrize("mode", ["copy", "hardlink"])
+def test_selected_pack_reserves_selected_payload_and_only_selected_import_overhead(mode):
+    scope = frozen(mode)
+    scope["descriptor"] = {
+        "torrent_bytes": 100 * GIB,
+        "files": [
+            {"path": "Pack/Book.m4b", "size_bytes": GIB},
+            {"path": "Pack/Other.m4b", "size_bytes": 99 * GIB},
+        ],
+    }
+    scope["selected_paths"] = ["Pack/Book.m4b"]
+    download, future = download_cost(scope, snapshot())
+    assert download == {"a": GIB}
+    assert future == {"a": 8 * 1024**2 + (GIB if mode == "copy" else 0)}
+    verify_space(snapshot(available=15 * GIB), combine(download, future), {}, Limits())
+    scope["selected_paths"] = ["Pack/Unknown.m4b"]
+    with pytest.raises(CapacityWait):
+        download_cost(scope, snapshot())

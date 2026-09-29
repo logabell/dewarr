@@ -35,7 +35,6 @@ function missingWorkIds(
       items
         .filter(
           (entry) =>
-            !entry.compilation &&
             !entry.partial &&
             !entry.merged_record &&
             !entry.ambiguous_position &&
@@ -83,7 +82,13 @@ function SeriesContent({
   const [listId, setListId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [added, setAdded] = useState(0);
-  const queryKey = ["series", externalId];
+  const section =
+    params.get("section") === "all"
+      ? "all"
+      : params.get("section") === "supplements"
+        ? "supplements"
+        : "main";
+  const queryKey = ["series", externalId, section];
   const catalog = usePagedQuery({
     queryKey,
     queryFn: async (offset, signal) =>
@@ -92,7 +97,7 @@ function SeriesContent({
           signal,
           params: {
             path: { external_id: externalId },
-            query: { offset, limit: 50 },
+            query: { offset, limit: 50, section },
           },
         }),
       ),
@@ -144,6 +149,29 @@ function SeriesContent({
       await cache.invalidateQueries({ queryKey: ["series", externalId] });
     },
   });
+  const autoLoaded = useRef(new Set<string>());
+  useEffect(() => {
+    if (
+      canEdit &&
+      (catalog.data?.status === "not-loaded" ||
+        (catalog.data?.fetched_at &&
+          !catalog.data?.projection_version &&
+          !["queued", "running", "retrying"].includes(
+            catalog.data?.status || "",
+          ))) &&
+      !autoLoaded.current.has(externalId)
+    ) {
+      autoLoaded.current.add(externalId);
+      refresh.mutate();
+    }
+  }, [
+    canEdit,
+    externalId,
+    catalog.data?.status,
+    catalog.data?.fetched_at,
+    catalog.data?.projection_version,
+    refresh.mutate,
+  ]);
   const add = useMutation({
     mutationFn: async () => {
       // Each existing list command is idempotent. Retain failed selections so a
@@ -399,9 +427,10 @@ function SeriesContent({
                 </p>
               )}
               <p className="muted">
-                Book counts exclude compilations, partial books and merged
-                records. Uncertain entries remain visible for review. Available
-                downloads may contain a different selection of books.
+                Main books show one English catalog representative per
+                whole-number position. Supplements, editions and collections
+                remain available under All catalog entries. These suggestions do
+                not merge records or authorize downloads.
               </p>
             </details>
           </section>
@@ -412,7 +441,11 @@ function SeriesContent({
               <h2>
                 {tab === "requests" ? "Build your collection" : "Reading order"}
               </h2>
-              <span className="muted">{data.total} catalog entries</span>
+              <span className="muted">
+                {data.books} main books
+                {data.planned > 0 ? ` · ${data.planned} planned` : ""} ·{" "}
+                {data.supplements} supplements
+              </span>
             </div>
             <p className="muted">
               {tab === "requests"
@@ -469,12 +502,34 @@ function SeriesContent({
                 )}
               </section>
             )}
+            <label className="field">
+              Show
+              <select
+                value={section}
+                onChange={(event) => {
+                  const next = new URLSearchParams(params);
+                  next.set("section", event.target.value);
+                  setParams(next);
+                  setSelected([]);
+                }}
+              >
+                <option value="main">Main books · English</option>
+                <option value="supplements">
+                  Supplementary reading · English
+                </option>
+                <option value="all">
+                  All catalog entries ({data.raw_total})
+                </option>
+              </select>
+            </label>
             <div className="series-book-list">
               {data.items.map((entry) => (
                 <article className="series-book-row" key={entry.membership_id}>
                   <div className="series-position">
                     <span>{entry.position ?? "—"}</span>
-                    <small>{entry.compilation ? "collection" : "book"}</small>
+                    <small>
+                      {entry.category === "collection" ? "collection" : "book"}
+                    </small>
                   </div>
                   <BookLink
                     aria-label={`View ${entry.work.title}`}
@@ -524,7 +579,7 @@ function SeriesContent({
                     </p>
                     <p className="muted">
                       {[
-                        entry.compilation && "Compilation",
+                        entry.category === "collection" && "Compilation",
                         entry.partial && "Partial book",
                         entry.merged_record && "Merged provider record",
                         entry.ambiguous_position &&

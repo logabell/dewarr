@@ -248,7 +248,8 @@ function BookDetailContent({
                     to={`/series/hardcover/${item.external_id}`}
                   >
                     {item.name}
-                    {item.position ? ` · Book ${item.position}` : ""}
+                    {item.position ? ` · Book ${item.position}` : ""} · View
+                    series
                   </Link>
                 ) : (
                   <span key={item.external_id}>{item.name}</span>

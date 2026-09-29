@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -171,3 +173,83 @@ def test_new_credit_forms_need_independent_title_and_author_tags(facts):
         {"source": "audiobookbay", "title": "Lantern - Writer, Reader", "authors": ["Writer"]},
         facts,
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "corroborated",
+        "missing-title",
+        "missing-author",
+        "wrong-author",
+        "wrong-title",
+        "wrong-language",
+        "extra-file",
+        "overlap",
+        "rejected-identity",
+        "conflicting-isbn",
+    ],
+)
+async def test_reviewed_collection_mapping_requires_independent_file_identity(monkeypatch, case):
+    from app.importing import linked_download
+
+    work = SimpleNamespace(
+        id=uuid4(),
+        title="Angels & Demons",
+        authors=["Dan Brown"],
+        language="en",
+        metadata_fields={"identity_rejected": case == "rejected-identity"},
+    )
+    facts = MatchEvidence(
+        titles=[]
+        if case == "missing-title"
+        else ["Inferno" if case == "wrong-title" else "Angels and Demons"],
+        authors=[]
+        if case == "missing-author"
+        else [["other writer" if case == "wrong-author" else "dan brown"]],
+        languages=["fr" if case == "wrong-language" else "en"],
+    )
+    member = SimpleNamespace(
+        frozen={
+            "collection_review": {"paths": ["pack/book.epub"]},
+            "descriptor": {"name": "pack"},
+            "origin_work_id": str(work.id),
+            "requirements": {"medium": "ebook"},
+            "release": {"title": "Dan Brown collection", "authors": ["Dan Brown"]},
+        }
+    )
+    group = SimpleNamespace(
+        key="one",
+        medium="ebook",
+        files=[
+            SimpleNamespace(path=p)
+            for p in (["book.epub", "extra.epub"] if case == "extra-file" else ["book.epub"])
+        ],
+    )
+    match = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                identifier_match=True,
+                work_id=uuid4(),
+                conflicts=[],
+            )
+        ]
+        if case == "conflicting-isbn"
+        else []
+    )
+    version = SimpleNamespace(id=uuid4(), work_id=work.id)
+    attach = AsyncMock(return_value=(version, None))
+    monkeypatch.setattr(linked_download, "canonical_work", AsyncMock(return_value=work))
+    monkeypatch.setattr(linked_download, "group_evidence", lambda *args: facts)
+    monkeypatch.setattr(linked_download, "attach_file_edition", attach)
+    result = await linked_download.linked_collection_version(
+        AsyncMock(),
+        None,
+        [member, member] if case == "overlap" else [member],
+        SimpleNamespace(id=uuid4(), snapshot={}),
+        group,
+        "revision",
+        match,
+    )
+    assert result is (version if case == "corroborated" else None)
+    assert attach.await_count == (1 if case == "corroborated" else 0)

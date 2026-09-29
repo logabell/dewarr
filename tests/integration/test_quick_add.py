@@ -498,7 +498,7 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
     assert status_response.status_code == 200, status_response.text
     items = {item["id"]: item for item in status_response.json()["items"]}
     saved = items[str(authorized["result"])]["download"]
-    assert saved["state"] == ("failed" if blocked else "queued")
+    assert saved["state"] == ("needs-review" if blocked else "queued")
     assert saved["prevent_download"] is (not blocked)
     assert items[str(other.id)]["download"] is None
     request = await client.get(f"/api/requests/{saved['request_id']}")
@@ -506,9 +506,15 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
     target = next(t for t in request.json()["targets"] if t["slot"] == "audio")
     if blocked:
         assert saved["reasons"]
-        assert "This release could not be downloaded" in saved["message"]
+        assert "Review this release before downloading" in saved["message"]
         assert target["selection_status"] == "held"
         assert target["message"] == saved["message"]
+        review = await client.get("/api/requests?status=review")
+        assert review.status_code == 200, review.text
+        assert saved["request_id"] in {item["id"] for item in review.json()["items"]}
+        counts = await client.get("/api/requests/counts")
+        assert counts.status_code == 200, counts.text
+        assert counts.json()["review"] == 1
     else:
         assert target["attempt_state"] == "queued"
         async with database() as db, db.begin():
@@ -568,7 +574,7 @@ async def test_clicked_release_download_is_pinned_and_idempotent(
         assert response.status_code == 200, response.text
     fresh = (await client.get(f"/api/source-searches/{authorized['search']}")).json()
     status = next(i["download"] for i in fresh["items"] if i["id"] == str(authorized["result"]))
-    assert status["state"] == ("failed" if blocked else "downloaded")
+    assert status["state"] == ("needs-review" if blocked else "downloaded")
 
     response = await client.delete(f"/api/requests/{saved['request_id']}/reasons/{list_reason_id}")
     assert response.status_code == 200, response.text

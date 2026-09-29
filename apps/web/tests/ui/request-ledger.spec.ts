@@ -56,6 +56,31 @@ test("requests show transfer telemetry, review actions and counts in compact row
       },
     ],
   });
+  let withdrawals = 0;
+  await page.route(
+    "**/api/requests/download/reasons/download-reason",
+    (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      withdrawals += 1;
+      return route.fulfill({ json: {} });
+    },
+  );
+  await page.route("**/api/acquisition/downloads/held?*", (route) =>
+    route.fulfill({
+      json: {
+        attempt_chain: [
+          {
+            attempt_id: "held",
+            release_title: "The Martian — audiobook",
+            state: "complete",
+            reason: "Files need review",
+          },
+        ],
+        recoveries: [],
+        can_report_problem: false,
+      },
+    }),
+  );
   let progress = 0.42;
   let attemptState = "downloading";
   await page.route("**/api/requests/counts", (route) =>
@@ -87,6 +112,7 @@ test("requests show transfer telemetry, review actions and counts in compact row
         import_state: "held",
         inspection_id: "inspection",
         can_recheck: true,
+        can_view_download_history: true,
         review_message: "Files need review",
       }),
       {
@@ -104,7 +130,11 @@ test("requests show transfer telemetry, review actions and counts in compact row
       },
     ];
     items[0].can_withdraw = true;
-    items[0].targets.push({ ...items[0].targets[0], slot: "ebook" });
+    items[0].targets.push({
+      ...items[0].targets[0],
+      slot: "ebook",
+      review_message: "Ebook-only diagnostic",
+    });
     return route.fulfill({
       json: {
         items:
@@ -180,8 +210,17 @@ test("requests show transfer telemetry, review actions and counts in compact row
     0,
   );
   await expect(table.getByRole("button", { name: /^Details for/ })).toHaveCount(
-    0,
+    4,
   );
+  const undo = downloading.getByRole("button", {
+    name: "Withdraw your request",
+  });
+  await expect(undo).toHaveCount(2);
+  await undo.first().click();
+  const dialog = page.getByRole("dialog", { name: "Withdraw request" });
+  await expect(dialog).toContainText("audiobook and ebook");
+  await dialog.getByRole("button", { name: "Keep request" }).click();
+  expect(withdrawals).toBe(0);
   progress = 0.67;
   await expect(downloading).toContainText("67%", { timeout: 10000 });
   attemptState = "queued";
@@ -203,6 +242,7 @@ test("requests show transfer telemetry, review actions and counts in compact row
     })
     .click();
   await expect(downloading).toContainText("Submission is not yet visible");
+  await expect(downloading).not.toContainText("Ebook-only diagnostic");
   await downloading
     .getByRole("button", {
       name: "Download needs attention: Project Hail Mary audiobook request details",
@@ -220,6 +260,16 @@ test("requests show transfer telemetry, review actions and counts in compact row
     })
     .click();
   await expect(review).toContainText("Files need review");
+  await review
+    .getByText("Download history and recovery", { exact: true })
+    .click();
+  await expect(
+    review.getByRole("list", { name: "Download attempt chain" }),
+  ).toContainText("The Martian — audiobook");
+  await page.screenshot({
+    path: testInfo.outputPath("request-details-desktop.png"),
+    fullPage: true,
+  });
   await expect(
     review.getByRole("button", { name: "Recheck", exact: true }),
   ).toBeVisible();
@@ -229,9 +279,24 @@ test("requests show transfer telemetry, review actions and counts in compact row
     })
     .click();
   await expect(
-    downloading.getByRole("button", { name: "Withdraw your request" }),
+    downloading.getByRole("button", { name: "Withdraw your request" }).first(),
   ).toBeVisible();
+  await downloading
+    .getByRole("button", { name: "Withdraw your request" })
+    .first()
+    .click();
+  await dialog
+    .getByRole("button", { name: "Withdraw request", exact: true })
+    .click();
+  await expect.poll(() => withdrawals).toBe(1);
+  await expect(dialog).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobileUndo = await downloading
+    .getByRole("button", { name: "Withdraw your request" })
+    .first()
+    .boundingBox();
+  expect(mobileUndo!.x).toBeGreaterThanOrEqual(0);
+  expect(mobileUndo!.x + mobileUndo!.width).toBeLessThanOrEqual(390);
   const layout = await page.evaluate(() => ({
     width: innerWidth,
     doc: document.documentElement.scrollWidth,

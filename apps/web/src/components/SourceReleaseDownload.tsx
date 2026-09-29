@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, Download, LoaderCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { randomUUID } from "../randomUUID";
+
+const CollectionReview = lazy(() => import("./CollectionReview"));
 
 type SavedDownload = components["schemas"]["ReleaseDownloadStatus"];
 const labels: Record<SavedDownload["state"], string> = {
@@ -16,7 +18,7 @@ const labels: Record<SavedDownload["state"], string> = {
   failed: "Download not started",
   cancelled: "Download cancelled",
   selected: "Release prepared",
-  "needs-review": "Download needs attention",
+  "needs-review": "Review release",
 };
 
 export default function SourceReleaseDownload({
@@ -28,6 +30,7 @@ export default function SourceReleaseDownload({
   download,
   offerWedge = false,
   showLabel = false,
+  possibleCollection = false,
 }: {
   searchId: string;
   resultId: string;
@@ -37,7 +40,9 @@ export default function SourceReleaseDownload({
   download?: SavedDownload | null;
   offerWedge?: boolean;
   showLabel?: boolean;
+  possibleCollection?: boolean;
 }) {
+  const [reviewCollection, setReviewCollection] = useState(false);
   const key = useRef(randomUUID());
   const cache = useQueryClient();
   const [operationId, setOperationId] = useState<string>();
@@ -103,20 +108,25 @@ export default function SourceReleaseDownload({
         (receipt
           ? selecting
             ? "preparing"
-            : ["held", "failed"].includes(receipt.status)
-              ? "failed"
-              : receipt.status === "cancelled"
-                ? "cancelled"
-                : status.data?.download_id
-                  ? "queued"
-                  : "selected"
+            : receipt.status === "held"
+              ? "needs-review"
+              : receipt.status === "failed"
+                ? "failed"
+                : receipt.status === "cancelled"
+                  ? "cancelled"
+                  : status.data?.download_id
+                    ? "queued"
+                    : "selected"
           : undefined);
   const failed = state === "failed" || state === "needs-review";
-  const tone = failed
-    ? "error"
-    : state === "imported" || state === "downloaded" || state === "queued"
-      ? "success"
-      : "info";
+  const tone =
+    state === "needs-review"
+      ? "info"
+      : failed
+        ? "error"
+        : state === "imported" || state === "downloaded" || state === "queued"
+          ? "success"
+          : "info";
   const complete = saved
     ? saved.prevent_download
     : !!receipt && receipt.status === "completed";
@@ -175,6 +185,10 @@ export default function SourceReleaseDownload({
           }
           disabled={disabled || !!busy || complete}
           onClick={() => {
+            if (possibleCollection) {
+              setReviewCollection(true);
+              return;
+            }
             if (receipt && !busy) {
               key.current = randomUUID();
               setOperationId(undefined);
@@ -201,7 +215,16 @@ export default function SourceReleaseDownload({
                 : "Download")}
         </button>
       )}
-      {offerWedge && !complete && (
+      {reviewCollection && (
+        <Suspense fallback={<p role="status">Loading collection review…</p>}>
+          <CollectionReview
+            searchId={searchId}
+            resultId={resultId}
+            close={() => setReviewCollection(false)}
+          />
+        </Suspense>
+      )}
+      {offerWedge && !possibleCollection && !complete && (
         <label className="check-label wedge-choice">
           <input
             type="checkbox"

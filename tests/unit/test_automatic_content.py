@@ -89,3 +89,62 @@ def test_completed_manifest_numbered_audio_without_totals(names, tags, accepted)
     }
     group = SimpleNamespace(medium="audio", files=[SimpleNamespace(path=path) for path in files])
     assert (content_reason(group, files, {"title": "A whole book"}) is None) is accepted
+
+
+@pytest.mark.parametrize("count", [1, 2])
+@pytest.mark.parametrize("extension", ["mp3", "m4b"])
+def test_selected_audio_prefix_never_establishes_whole_book_content(count, extension):
+    names = [f"Book/{i:02}.{extension}" for i in range(1, 4)]
+    files = {
+        name: {
+            "path": name,
+            "state": "inspected",
+            "extension": extension,
+            "technical": {"tags": {"track": str(i)}},
+        }
+        for i, name in enumerate(names[:count], 1)
+    }
+    group = SimpleNamespace(
+        medium="audio", title="Book", files=[SimpleNamespace(path=path) for path in files]
+    )
+    assert "omitted" in content_reason(
+        group, files, {"title": "Writer collection"}, omitted_audio_paths=set(names[count:])
+    )
+    assert (
+        content_reason(group, files, {"title": "Writer collection"}, omitted_audio_paths=set())
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "omitted,held",
+    [
+        ({"Book/CD2/01.mp3"}, True),
+        ({"Other Book/CD1/01.mp3"}, False),
+    ],
+)
+def test_selected_audio_scope_includes_omitted_discs_but_not_other_books(omitted, held):
+    path = "Book/CD1/01.mp3"
+    group = SimpleNamespace(medium="audio", title="Book", files=[SimpleNamespace(path=path)])
+    files = {path: {"path": path, "state": "inspected", "extension": "mp3"}}
+    reason = content_reason(
+        group, files, {"title": "Writer collection"}, omitted_audio_paths=omitted
+    )
+    assert bool(reason) is held
+
+
+@pytest.mark.parametrize(
+    "omitted,held",
+    [
+        ({"Other Book.m4b", "1984.m4b"}, False),
+        ({"Book (Part 2 of 3).m4b"}, True),
+        ({"02.m4b"}, True),
+    ],
+)
+def test_named_whole_m4b_can_be_selected_from_flat_author_pack(omitted, held):
+    group = SimpleNamespace(medium="audio", title="Book", files=[SimpleNamespace(path="Book.m4b")])
+    files = {"Book.m4b": {"path": "Book.m4b", "state": "inspected", "extension": "m4b"}}
+    reason = content_reason(
+        group, files, {"title": "Writer collection"}, omitted_audio_paths=omitted
+    )
+    assert bool(reason) is held

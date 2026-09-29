@@ -656,7 +656,10 @@ async def run(identifier, source):
                             MAMSearch(
                                 q=query,
                                 medium=payload["medium"],
-                                language_ids=[],
+                                language_ids=[1]
+                                if payload["profile"]["preferences"].get("language")
+                                in {"en", "eng"}
+                                else [],
                                 offset=offset,
                                 limit=50,
                             ),

@@ -234,6 +234,8 @@ def parse_state(row: dict, properties: dict, files: list) -> QbitState:
             all_selected &= priority != 0
             parsed.append(
                 DownloadFile(
+                    index=index,
+                    priority=priority,
                     relative_path=name,
                     size_bytes=integer(file["size"]),
                     complete=progress(file["progress"]) == 1,
@@ -570,6 +572,59 @@ class QbitClient:
             )
         return True
 
+    async def select_files(self, state, expected, selected_paths):
+        """Configure an associated, stopped transfer; read back before start."""
+        if not state.association_verified:
+            raise AdapterError(
+                FailureKind.UNCERTAIN, "Verify transfer ownership before choosing files"
+            )
+        actual = {f.relative_path: f.size_bytes for f in state.files}
+        chosen = set(selected_paths)
+        if (
+            actual != expected
+            or not chosen
+            or not chosen <= actual.keys()
+            or any(f.index is None for f in state.files)
+        ):
+            raise AdapterError(
+                FailureKind.PARSER, "Torrent inventory changed; review file selection"
+            )
+        if state.state not in {"stoppedDL", "stoppedUP"}:
+            raise AdapterError(
+                FailureKind.UNCERTAIN,
+                "Collection transfer must be stopped before configuring files",
+            )
+        for wanted, priority in ((False, 0), (True, 1)):
+            indexes = [str(f.index) for f in state.files if (f.relative_path in chosen) == wanted]
+            if indexes and not await self._mutate(
+                "torrents/filePrio",
+                {"hash": state.external_id, "id": "|".join(indexes), "priority": str(priority)},
+            ):
+                raise AdapterError(
+                    FailureKind.UNCERTAIN,
+                    "qBittorrent refused the selected files; transfer remains stopped",
+                )
+        checked = await self.status(state.external_id)
+        if (
+            {f.relative_path: f.size_bytes for f in checked.files} != expected
+            or {f.relative_path for f in checked.files if f.priority != 0} != chosen
+            or checked.state not in {"stoppedDL", "stoppedUP"}
+            or checked.identities != state.identities
+            or checked.tags != state.tags
+            or checked.save_path != state.save_path
+            or checked.category != state.category
+        ):
+            raise AdapterError(
+                FailureKind.UNCERTAIN, "File selection was not confirmed; transfer remains stopped"
+            )
+        return checked
+
+    async def start_transfer(self, torrent_hash):
+        if not await self._mutate("torrents/start", {"hashes": hash_value(torrent_hash)}):
+            raise AdapterError(
+                FailureKind.UNCERTAIN, "qBittorrent did not confirm starting the selected files"
+            )
+
     async def cleanup_transfer(self, torrent_hash: str, *, remove: bool) -> bool:
         """Remove only the client record; deleting content is deliberately impossible."""
         return await self._mutate(
@@ -703,6 +758,7 @@ class QbitClient:
         attempt_tag: str,
         save_path: str,
         category: str = "",
+        stopped: bool = False,
     ) -> SubmissionReceipt:
         tag = validate_attempt_tag(attempt_tag)
         absolute_path(save_path)  # Observed destination is used for later reconciliation.
@@ -712,6 +768,8 @@ class QbitClient:
             "tags": tag,
             "category": category,
         }
+        if stopped:
+            fields["stopped"] = "true"
         kwargs = {"data": fields}
         if isinstance(artifact, str):
             magnet_hashes(artifact)

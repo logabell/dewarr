@@ -71,6 +71,21 @@ def verify_association(states: list[SabState], *, tag: str, save_path: str, cate
     return state.model_copy(update={"association_verified": True})
 
 
+async def reconcile_association(client, states, *, tag, save_path, category):
+    # Older submissions omitted cat for the default route. SAB can then choose
+    # a category from the NZB. Accept it only when it resolves to the very same
+    # saved folder; named routes and the final job-folder check remain strict.
+    if (
+        not category
+        and len(states) == 1
+        and tag in states[0].names
+        and not categories_match(states[0].category, category)
+        and await client.download_location(states[0].category) == absolute_path(save_path)
+    ):
+        category = states[0].category
+    return verify_association(states, tag=tag, save_path=save_path, category=category)
+
+
 def nzo_id(value):
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,120}", value)
 
@@ -365,9 +380,8 @@ class SabClient:
         if not isinstance(artifact, bytes) or not 0 < len(artifact) <= MAX_ARTIFACT:
             raise ValueError("Expected one bounded NZB artifact")
         await self.capabilities()
-        params = {"nzbname": tag.replace(":", "_")}
-        if category:
-            params["cat"] = category
+        # Explicit default prevents SAB from routing by embedded NZB category.
+        params = {"nzbname": tag.replace(":", "_"), "cat": category or "*"}
         payload = await self._request(
             "addfile",
             params=params,

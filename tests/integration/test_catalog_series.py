@@ -221,12 +221,14 @@ async def test_ambiguous_special_and_duplicate_records_do_not_inflate_book_count
     ]
     await finish(database, await start(client))
     result = await detail(client)
+    assert result["total"] == 4 and result["raw_total"] == 8
+    result = await detail(client, section="all")
     assert result["total"] == 8 and result["books"] == 4
     assert result["owned"] == 1
     assert all(r["ambiguous_position"] for r in result["items"][:3])
     assert result["items"][-2]["publication"] == "unreleased"
     assert result["items"][-1]["publication"] == "unknown"
-    paged = await detail(client, offset=3, limit=2)
+    paged = await detail(client, offset=3, limit=2, section="all")
     assert len(paged["items"]) == 2 and paged["books"] == 4 and paged["total"] == 8
 
 

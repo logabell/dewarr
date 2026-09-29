@@ -16,7 +16,8 @@ from app.api.operations import OperationView
 from app.api.prowlarr import resolve as resolve_prowlarr
 from app.api.source_artifacts import SourceArtifactView, artifact_view
 from app.db.models import AcquisitionIntent, Operation, SourceConnection, SourceResult
-from app.domain import release_download_status, series_preparation
+from app.domain import collection_review, release_download_status, series_preparation
+from app.domain.automatic_eligibility import collection_candidate
 from app.domain.book_sources import SearchInput, accessible_work, checked, refresh_search, start
 from app.domain.release_profiles import (
     ProfileSnapshot,
@@ -70,6 +71,7 @@ class RankedReleaseView(BaseModel):
     assessment: ReleaseAssessment
     expires_at: datetime
     current_connection: bool
+    possible_collection: bool = False
     query_keys: list[str] = Field(default_factory=list)
     download: release_download_status.ReleaseDownloadStatus | None = None
 
@@ -148,6 +150,7 @@ async def view(db, user, operation_id):
             RankedReleaseView(
                 id=row.id,
                 release=release,
+                possible_collection=collection_candidate(release, work),
                 download=downloads.get(release_download_status.identity(release)),
                 assessment=assessment,
                 expires_at=row.expires_at,
@@ -305,5 +308,34 @@ async def download_release(
     await db.flush()
     await db.refresh(operation)
     response = OperationView.model_validate(operation)
+    await db.commit()
+    return response
+
+
+@router.get(
+    "/source-searches/{search_id}/results/{result_id}/contents",
+    response_model=collection_review.CollectionPreview,
+)
+async def collection_preview(
+    search_id: UUID, result_id: UUID, user: Member, db: Database, artifact_id: UUID | None = None
+):
+    response = await collection_review.preview(db, user, search_id, result_id, artifact_id)
+    await db.commit()
+    return response
+
+
+@router.post(
+    "/collection-reviews/{review_id}/download",
+    response_model=collection_review.CollectionReceipt,
+    status_code=202,
+)
+async def collection_download(
+    review_id: UUID,
+    body: collection_review.CollectionDownload,
+    user: Member,
+    db: Database,
+    idempotency_key: str = Header(min_length=8, max_length=120),
+):
+    response = await collection_review.download(db, user, review_id, body, idempotency_key)
     await db.commit()
     return response

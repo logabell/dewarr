@@ -12,7 +12,7 @@ from app.api.dependencies import CurrentUser, Database, Member
 from app.api.metadata import adapter_http_error
 from app.api.operations import OperationView
 from app.db.models import CatalogSeries, MonitoredRelease, Operation, SeriesMembership, Work
-from app.domain import catalog_series, series_requests, series_scopes
+from app.domain import catalog_series, series_projection, series_requests, series_scopes
 from app.domain.availability import availability_for
 from app.domain.series_scopes import ScopeReviewInput, ScopeReviewView
 from app.domain.visibility import visible_work
@@ -61,6 +61,7 @@ class SeriesEntryView(BaseModel):
     release_date: str | None
     publication: str
     followed: bool = False
+    category: str = "other"
     work: WorkView
 
 
@@ -82,6 +83,10 @@ class SeriesView(BaseModel):
     owned: int = 0
     ebook: int = 0
     audio: int = 0
+    raw_total: int = 0
+    supplements: int = 0
+    planned: int = 0
+    projection_version: int = 0
 
 
 def series_work_view(work, availability, snapshot):
@@ -124,6 +129,8 @@ async def detail(
     db: Database,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
+    section: str = Query(default="main", pattern="^(main|supplements|all)$"),
+    language: str = Query(default="en", pattern="^[a-z]{2}$"),
 ):
     try:
         catalog_series.identifier("hardcover", external_id)
@@ -172,6 +179,24 @@ async def detail(
         )
 
     entries = sorted(entries, key=order)
+    raw_total = len(entries)
+    main, classes = series_projection.project(entries, language)
+    supplemental = [pair for pair in entries if classes[pair[0].id] == "supplement"]
+    counted = {work.id for _, work in main}
+    planned = sum(
+        bool(
+            e.snapshot.get("release_date")
+            and date.fromisoformat(e.snapshot["release_date"]) > datetime.now(UTC).date()
+        )
+        for e, _ in main
+    )
+    available = await availability_for(
+        db, user, list({work.id for _, work in entries}), identity_only=True
+    )
+    if section == "main":
+        entries = main
+    elif section == "supplements":
+        entries = supplemental
     by_position = {}
     by_work = {}
     for entry, work in entries:
@@ -183,9 +208,6 @@ async def detail(
         ):
             by_position.setdefault(Decimal(entry.snapshot["position"]), set()).add(work.id)
             by_work.setdefault(work.id, set()).add(Decimal(entry.snapshot["position"]))
-    available = await availability_for(
-        db, user, list({work.id for _, work in entries}), identity_only=True
-    )
     page = entries[offset : offset + limit]
     followed_ids = (
         set(
@@ -200,13 +222,6 @@ async def detail(
         if page
         else set()
     )
-    counted = {
-        work.id
-        for entry, work in entries
-        if not entry.snapshot["compilation"]
-        and not entry.snapshot["partial"]
-        and not entry.snapshot["canonical_id"]
-    }
     items = []
     for entry, work in page:
         data = entry.snapshot
@@ -214,6 +229,7 @@ async def detail(
         items.append(
             SeriesEntryView(
                 membership_id=entry.id,
+                category=classes[entry.id],
                 external_id=data["book"]["external_id"],
                 position=data["position"],
                 details=data["details"],
@@ -254,4 +270,8 @@ async def detail(
         owned=sum(available[key].owned for key in counted),
         ebook=sum(available[key].ebook for key in counted),
         audio=sum(available[key].audio for key in counted),
+        raw_total=raw_total,
+        supplements=len(supplemental),
+        planned=planned,
+        projection_version=row.snapshot.get("projection_version", 0),
     )

@@ -732,3 +732,225 @@
 .request-detail-content [data-danger="true"] {
   color: #ffc1c6;
 }
+
+/* Format-specific drawers and a consistent action rail. */
+.request-ledger .request-icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+.request-ledger .request-icon-action:hover {
+  background: var(--request-surface);
+  color: var(--request-text);
+  border-color: var(--request-accent);
+}
+.request-ledger .request-icon-action[data-danger="true"]:hover {
+  color: #ffc1c6;
+  border-color: currentColor;
+}
+.request-icon-action[aria-expanded="true"] .request-details-chevron,
+.request-disclosure[open] > summary .request-details-chevron {
+  transform: rotate(90deg);
+}
+.request-ledger-row[data-expanded="true"] {
+  background: var(--request-surface);
+}
+.request-detail-content {
+  max-width: 880px;
+  padding: 8px 0 12px 44px;
+  gap: 16px;
+}
+.request-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.request-detail-summary {
+  display: grid;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--request-accent);
+}
+.request-detail-summary:empty {
+  display: none;
+}
+.request-detail-sections {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.request-detail-sections .request-disclosure + .request-disclosure {
+  border-top: 1px solid var(--line);
+}
+.request-disclosure > summary,
+.request-detail-content .request-preferences > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 14px;
+  color: var(--request-text, var(--text));
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+.request-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.request-disclosure > summary:hover {
+  background: color-mix(in srgb, var(--line) 30%, transparent);
+}
+.request-disclosure-body,
+.request-detail-content .request-preferences-body {
+  padding: 4px 16px 16px;
+}
+.download-attempt-timeline {
+  display: grid;
+  gap: 18px;
+  margin: 10px 0 18px;
+  padding: 0;
+  list-style: none;
+}
+.download-attempt-timeline > li {
+  border-left: 2px solid var(--line);
+  padding-left: 14px;
+}
+.download-attempt-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.download-attempt-state {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--line);
+}
+.download-attempt-timeline p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.download-attempt-title {
+  overflow-wrap: anywhere;
+}
+.request-ledger .request-dialog-cell {
+  padding: 0;
+  border: 0;
+}
+.request-dialog-cell .book-dialog {
+  white-space: normal;
+}
+.request-dialog-cell .book-dialog p {
+  line-height: 1.6;
+}
+
+@media (max-width: 760px) {
+  .request-ledger-scroll {
+    overflow: hidden;
+  }
+  .request-ledger {
+    display: block;
+    min-width: 0;
+  }
+  .request-ledger thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .request-ledger tbody {
+    display: block;
+  }
+  .request-ledger .request-ledger-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px 8px;
+    padding: 16px;
+    border-top: 1px solid var(--line);
+  }
+  .request-ledger tbody:first-of-type .request-ledger-row:first-child {
+    border-top: 0;
+  }
+  .request-ledger-row > td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+  .request-ledger-row > td:first-child,
+  .request-ledger-row > td:last-child {
+    grid-column: 1 / -1;
+  }
+  .request-ledger-row > td:nth-child(3) {
+    grid-column: span 2;
+  }
+  .request-ledger .request-book-cell {
+    min-width: 0;
+    align-items: flex-start;
+  }
+  .request-ledger .request-row-tools {
+    flex-wrap: wrap;
+  }
+  .request-ledger .request-status {
+    white-space: normal;
+    text-align: left;
+  }
+  .request-status-hint {
+    max-width: none;
+  }
+  .request-transfer-progress {
+    min-width: 0;
+    height: 100%;
+  }
+  .request-transfer-progress progress {
+    width: 40px;
+  }
+  .request-metric::before {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 10px;
+  }
+  .request-metric:nth-child(5)::before {
+    content: "Speed";
+  }
+  .request-metric:nth-child(6)::before {
+    content: "Time left";
+  }
+  .request-detail-row,
+  .request-detail-row > td {
+    display: block;
+  }
+  .request-detail-content {
+    padding: 0;
+    min-width: 0;
+  }
+  .request-detail-heading {
+    flex-wrap: wrap;
+  }
+  .request-detail-sections {
+    min-width: 0;
+  }
+  .request-disclosure > summary,
+  .request-detail-content .request-preferences > summary {
+    padding: 12px;
+  }
+  .request-disclosure-body,
+  .request-detail-content .request-preferences-body {
+    padding: 4px 12px 12px;
+  }
+  .request-target-note {
+    overflow-wrap: anywhere;
+  }
+}

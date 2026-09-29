@@ -99,15 +99,29 @@ export default function DownloadMatchReview({
     match.candidates.some(
       (item) => item.identifier_match && item.work_id !== download.work_id,
     );
-  const reason = !group
-    ? "These files may contain several books. Choose a download containing only the requested book."
-    : identified.length > 1
-      ? "The files point to more than one catalog edition. We need a clearer release to avoid importing the wrong edition."
-      : download.file_conflicts?.length
-        ? download.file_conflicts[0]
-        : issues.length
-          ? "Some files could not be verified or contain conflicting information."
-          : "The downloaded files do not agree with the book you requested.";
+  const unreadable =
+    inspection.snapshot?.files.filter(
+      (file) =>
+        file.state === "held" &&
+        (file.medium ||
+          /\.(epub|pdf|cbz|m4b|m4a|mp3|flac|ogg|opus|aac|wav|wma)$/i.test(
+            file.path,
+          )),
+    ) || [];
+  const reason = unreadable.length
+    ? unreadable[0].reason ||
+      "The downloaded book could not be read. Check its files and try again."
+    : data?.grouping.content.groups.length === 0
+      ? "No supported book files were found in this download."
+      : !group
+        ? "These files may contain several books. Choose a download containing only the requested book."
+        : identified.length > 1
+          ? "The files point to more than one catalog edition. We need a clearer release to avoid importing the wrong edition."
+          : download.file_conflicts?.length
+            ? download.file_conflicts[0]
+            : issues.length
+              ? "Some files could not be verified or contain conflicting information."
+              : "The downloaded files do not agree with the book you requested.";
   const destinations =
     data?.destinations.filter(
       (item) =>
@@ -221,8 +235,13 @@ export default function DownloadMatchReview({
               </p>
             )}
             <div className="actions">
+              {!!unreadable.length && download.can_retry && (
+                <button className="primary" disabled={retrying} onClick={retry}>
+                  {retrying ? "Checking files…" : "Check files again"}
+                </button>
+              )}
               <Link
-                className="primary button"
+                className="button"
                 to={`/books/${download.work_id}?tab=sources`}
               >
                 Find another download

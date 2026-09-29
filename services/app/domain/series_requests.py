@@ -39,6 +39,7 @@ from app.domain.permissions import (
     waiting_for_approval,
 )
 from app.domain.request_preferences import resolve
+from app.domain.series_projection import full_book
 from app.domain.visibility import visible_work
 from app.domain.work_graph import acquisition_lock, canonical_map, canonical_work, graph_lock
 from app.jobs.queue import enqueue
@@ -113,9 +114,7 @@ async def membership(db, user, series, body):
     positions = {}
     for work_id, (_, members) in groups.items():
         for member in members:
-            if member["position"] is not None and not (
-                member["compilation"] or member["partial"] or member["canonical_id"]
-            ):
+            if member["position"] is not None and full_book(member):
                 positions.setdefault(member["position"], set()).add(work_id)
     if not selected <= set(groups):
         raise HTTPException(409, "Series membership or book identity changed; select books again")
@@ -124,7 +123,7 @@ async def membership(db, user, series, body):
         warnings = []
         if any(len(positions.get(member["position"], set())) > 1 for member in members):
             warnings.append("Multiple works at this position; verify membership")
-        normal = [r for r in members if not (r["compilation"] or r["partial"] or r["canonical_id"])]
+        normal = [r for r in members if full_book(r)]
         published = any(
             r["release_date"] and r["release_date"] <= datetime.now(UTC).date().isoformat()
             for r in normal

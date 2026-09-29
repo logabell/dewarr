@@ -64,6 +64,9 @@ class SelectionInput(BaseModel):
     destination_id: UUID
     destination_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirmed_work_id: UUID
+    selected_paths: list[str] | None = Field(
+        default=None, min_length=1, max_length=10000, exclude_if=lambda value: value is None
+    )
     search_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     profile_id: UUID | None = None
     profile_generation: int | None = Field(default=None, ge=0)
@@ -301,6 +304,13 @@ async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_sele
             raise HTTPException(409, "Connect and test Soulseek before downloading this folder")
     else:
         downloader = route
+    if body.selected_paths is not None:
+        paths = body.selected_paths
+        if usenet or downloader.kind != "qbittorrent":
+            raise HTTPException(422, "Selected collection files require qBittorrent 5.x")
+        expected = {f.path for f in descriptor.files}
+        if len(set(paths)) != len(paths) or not set(paths) <= expected:
+            raise HTTPException(422, "Choose distinct files from the inspected torrent")
     mapping = mapped_path(downloader, downloader.config["save_path"], await import_sources(db))
     destination = await db.scalar(
         select(ImportDestination)
@@ -370,6 +380,11 @@ async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_sele
         command=command,
         frozen={
             "schema": 1,
+            **(
+                {"selected_paths": sorted(body.selected_paths)}
+                if body.selected_paths is not None
+                else {}
+            ),
             **(
                 {"download_recovery": {"root_selection_id": str(recovery_selection_id)}}
                 if recovery_selection_id

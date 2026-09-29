@@ -14,7 +14,17 @@ def numbered_sequence(paths):
         return []
     matches = [re.fullmatch(r"(?:track[ _-]*)?(\d{1,3})", path.stem, re.I) for path in paths]
     if not all(matches):
-        return []
+        named = [
+            re.fullmatch(r"(.+?)\s+(\d{1,3})\s+of\s+(\d{1,3})", path.stem, re.I) for path in paths
+        ]
+        if (
+            not all(named)
+            or len({match[1].casefold() for match in named}) != 1
+            or any(int(match[3]) != len(paths) for match in named)
+        ):
+            return []
+        numbers = [int(match[2]) for match in named]
+        return numbers if sorted(numbers) == list(range(1, len(paths) + 1)) else []
     numbers = [int(match[1]) for match in matches]
     return numbers if sorted(numbers) == list(range(1, len(paths) + 1)) else []
 
