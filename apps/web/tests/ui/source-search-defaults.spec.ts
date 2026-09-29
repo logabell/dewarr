@@ -49,9 +49,9 @@ test("manual search shares defaults and confirmed Quick Add feedback retires", a
       saved = {
         id: `search-${searches.length}`,
         work_id: work.id,
-        request_id: null,
+        request_id: body.request_id || null,
         query: body.q ?? "Enshittification",
-        medium: "all",
+        medium: body.medium,
         offset: 0,
         status: "completed",
         stale_identity: false,
@@ -100,5 +100,15 @@ test("manual search shares defaults and confirmed Quick Add feedback retires", a
   await expect(query).toHaveValue("Enshittification Cory Doctorow epub");
   expect(searches).toHaveLength(2);
   await expect(feedback).toHaveCount(0);
+  // A request for an ebook must not reopen the audiobook search from that
+  // same dual-format request or require the reader to correct the selector.
+  saved = { ...saved, medium: "audio", request_id: "request-1" };
+  await page.goto("/books/work-1?tab=sources&request=request-1&slot=ebook");
+  await expect.poll(() => searches.length).toBe(3);
+  expect(searches[2].medium).toBe("ebook");
+  expect(searches[2].request_id).toBe("request-1");
+  await expect(
+    page.getByRole("combobox", { name: "Release medium" }),
+  ).toHaveValue("ebook");
   expect(errors).toEqual([]);
 });

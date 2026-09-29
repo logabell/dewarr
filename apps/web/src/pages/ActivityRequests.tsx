@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -375,14 +375,30 @@ export default function ActivityRequests({
 
 function RequestCover({ title, url }: { title: string; url?: string | null }) {
   const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!failed || retry >= 2) return;
+    const timer = window.setTimeout(
+      () => {
+        setRetry((value) => value + 1);
+        setFailed(false);
+      },
+      1500 * (retry + 1),
+    );
+    return () => window.clearTimeout(timer);
+  }, [failed, retry]);
+  const src = url?.startsWith("https://")
+    ? `/api/catalog/cover-image?url=${encodeURIComponent(url)}`
+    : url;
   return (
     <div className="request-cover" aria-hidden="true">
       {url && !failed ? (
         <img
+          key={retry}
           src={
-            url.startsWith("https://")
-              ? `/api/catalog/cover-image?url=${encodeURIComponent(url)}`
-              : url
+            retry && src?.startsWith("/api/")
+              ? `${src}${src.includes("?") ? "&" : "?"}cover_retry=${retry}`
+              : src || undefined
           }
           alt=""
           referrerPolicy="no-referrer"

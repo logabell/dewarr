@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 
 from app.config import get_settings
 from app.db.models import AcquisitionIntent, AcquisitionReason, AcquisitionTarget, Operation, User
@@ -19,6 +19,7 @@ from app.importing.naming import fingerprint
 from app.jobs.queue import enqueue
 
 KIND = "series.acquire"
+DISCOVERY_REVISION = 1
 
 
 async def configuration(db, user, specification, profile, routes):
@@ -189,6 +190,7 @@ async def initialize(db, parent):
             "configuration": parent.payload["automatic_configuration"],
             "enabled": True,
             "revision": 1,
+            "discovery_revision": DISCOVERY_REVISION,
             "next_at": datetime.now(UTC).isoformat(),
             "books": {
                 r["work_id"]: {
@@ -272,7 +274,12 @@ async def schedule():
                     Operation.kind == KIND,
                     Operation.status.in_(["queued", "running"]),
                     Operation.payload["enabled"].as_boolean().is_(True),
-                    Operation.payload["next_at"].astext <= datetime.now(UTC).isoformat(),
+                    or_(
+                        Operation.payload["next_at"].astext <= datetime.now(UTC).isoformat(),
+                        Operation.payload["discovery_revision"].astext.is_distinct_from(
+                            str(DISCOVERY_REVISION)
+                        ),
+                    ),
                 )
                 .order_by(Operation.created_at, Operation.id)
                 .limit(20)
@@ -338,6 +345,24 @@ async def run(identifier):
             id=row.id, generation=1, revision=payload["revision"], configuration=config
         )
         now = datetime.now(UTC)
+        if payload.get("discovery_revision") != DISCOVERY_REVISION:
+            # Upgrade only active, already-approved requests that were waiting
+            # after the old single search pass. Never revive a held transfer or
+            # broaden children of an explicitly selected collection.
+            if not payload.get("pack_origin"):
+                for saved in payload["books"].values():
+                    for slot in ("ebook", "audio", "either"):
+                        progress = saved["progress"].get(slot, {})
+                        if (
+                            progress.get("next_at")
+                            and progress.get("round")
+                            and not progress.get("search_id")
+                            and not progress.get("selection_id")
+                        ):
+                            progress["refined"] = True
+                            progress.pop("next_at", None)
+                            saved["next_at"] = now.isoformat()
+            payload["discovery_revision"] = DISCOVERY_REVISION
         # Keep accepted identities stable while checking consent and taking work
         # locks. Every series controller visits the same work order.
         await graph_lock(db)

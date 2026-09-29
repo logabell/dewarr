@@ -1,7 +1,7 @@
 # ruff: noqa: F401, F811
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -424,3 +424,93 @@ async def test_requests_keep_series_art_and_show_current_automatic_search(client
         }
     card = (await client.get(f"/api/requests/{request_id}")).json()
     assert card["cover_url"] == "https://example.com/poor-library-thumbnail.jpg"
+
+
+@pytest.mark.parametrize("recover,legacy", [(True, False), (False, False), (True, True)])
+async def test_noisy_first_search_is_refined_automatically_before_backoff(
+    client, database, ready, source, monkeypatch, recover, legacy
+):
+    found = False
+    queries = []
+
+    async def search(owner, action, query, **kwargs):
+        queries.append(query.q)
+        release = source["release"]
+        if not found:
+            release = release.model_copy(update={"authors": ["Unrelated Writer"]})
+        return ReleasePage(items=[release], offset=0, limit=50, total=1, has_more=False), 1
+
+    monkeypatch.setattr(book_sources, "source_call", search)
+    identifier, first = await prepared(client, database, ready)
+    for selection in first:
+        await automatic_selection.run(selection)
+    async with database() as db:
+        for selection in first:
+            assert (await db.get(Operation, selection)).status == "held"
+    if legacy:
+        async with database() as db, db.begin():
+            controller = await db.get(Operation, identifier)
+            payload = deepcopy(controller.payload)
+            payload.pop("discovery_revision", None)
+            later = (datetime.now(UTC) + timedelta(hours=6)).isoformat()
+            payload["next_at"] = later
+            for book in payload["books"].values():
+                book["progress"]["audio"].update(search_id=None, selection_id=None, next_at=later)
+                book["next_at"] = later
+            controller.payload = payload
+        # Direct fixture runs leave queue rows untouched; emulate the completed
+        # worker before exercising the actual scheduler's due-time query.
+        async def completed_job(db, row):
+            return "succeeded"
+
+        monkeypatch.setattr(series_acquisition, "job_status", completed_job)
+        # The new scheduler must discover this request even before its old due time.
+        await series_acquisition.schedule()
+        async with database() as db:
+            controller = await db.get(Operation, identifier)
+            assert controller.payload["next_at"] != later
+        await series_acquisition.run(identifier)
+    else:
+        await tick(database, identifier)
+    async with database() as db:
+        controller = await db.get(Operation, identifier)
+        searches = []
+        for book in controller.payload["books"].values():
+            progress = book["progress"]["audio"]
+            assert progress["refined"] and progress["round"] == 1
+            assert "next_at" not in progress
+            search_id = UUID(progress["search_id"])
+            searches.append(search_id)
+            operation = await db.get(Operation, search_id)
+            assert operation.payload["query"].endswith(" Writer")
+    found = recover
+    for search_id in searches:
+        await book_sources.run(search_id, "mam")
+    await tick(database, identifier)
+    async with database() as db:
+        controller = await db.get(Operation, identifier)
+        second = [
+            UUID(b["progress"]["audio"]["selection_id"])
+            for b in controller.payload["books"].values()
+        ]
+    assert set(first).isdisjoint(second)
+    for selection in second:
+        await automatic_selection.run(selection)
+    if recover:
+        await automatic_packs.run(second[0])
+        async with database() as db:
+            attempt = await db.scalar(select(DownloadAttempt))
+            assert attempt is not None
+        await download_attempts.run(attempt.id)
+        assert ready["qbit"].calls.count("submit") == 1
+    else:
+        await tick(database, identifier)
+        async with database() as db:
+            controller = await db.get(Operation, identifier)
+            for book in controller.payload["books"].values():
+                progress = book["progress"]["audio"]
+                assert not progress.get("refined") and progress["round"] == 1
+                assert datetime.fromisoformat(progress["next_at"]) > datetime.now(UTC)
+                assert progress["search_id"] is None
+            assert not await db.scalar(select(DownloadAttempt.id))
+        assert not ready["qbit"].calls

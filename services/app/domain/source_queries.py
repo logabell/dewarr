@@ -42,6 +42,11 @@ def _title_author_query(work):
     return query[:300]
 
 
+def targeted_query(work):
+    """Narrow a noisy title search by its catalog author; matching stays separate."""
+    return _title_author_query(work)
+
+
 def book_queries(work, query):
     """Broaden a default search after empty responses; preserve custom queries.
 

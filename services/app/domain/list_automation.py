@@ -24,10 +24,11 @@ from app.domain import (
     book_sources,
     list_monitoring,
     list_policies,
+    source_queries,
 )
 from app.domain.acquisition import RequestReason, RequestSpec
 from app.domain.list_requests import owner_context
-from app.domain.work_graph import acquisition_lock
+from app.domain.work_graph import acquisition_lock, canonical_work
 from app.jobs.queue import enqueue
 
 KIND = "lists.acquire"
@@ -125,6 +126,7 @@ async def schedule():
 
 
 async def backoff_or_alternate(db, user, spec, book, target, progress, medium, now):
+    progress.pop("refined", None)
     tried = set(progress.get("tried", [])) | {medium}
     if target.slot == "either" and len(tried) == 1:
         other = "audio" if medium == "ebook" else "ebook"
@@ -222,8 +224,20 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
             progress.update(search_id=None, selection_id=None, next_at=now.isoformat())
             progress["policy_revision"] = policy.revision
             return "wanted", "List resumed; a fresh search is scheduled", now
-        await backoff_or_alternate(db, user, spec, book, target, progress, medium, now)
-        return "wanted", operation.message, datetime.fromisoformat(progress["next_at"])
+        # A noisy or incomplete first search is not evidence that the book is
+        # unavailable. Make one fresh, author-qualified pass before long backoff.
+        # Accepted pack children remain pinned to their original torrent.
+        if (
+            operation.status == "held"
+            and not progress.get("refined")
+            and not (series_authority or {}).get("pack_origin")
+            and "decisions" in operation.payload
+        ):
+            progress.update(refined=True, search_id=None, selection_id=None)
+            progress.pop("next_at", None)
+        else:
+            await backoff_or_alternate(db, user, spec, book, target, progress, medium, now)
+            return "wanted", operation.message, datetime.fromisoformat(progress["next_at"])
     if progress.get("search_id"):
         search = await db.get(Operation, UUID(progress["search_id"]))
         if datetime.fromisoformat(search.payload["expires_at"]) <= now:
@@ -283,7 +297,8 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
                 db,
                 user,
                 command,
-                f"list-select:{cycle}:{progress['round']}",
+                f"list-select:{cycle}:{progress['round']}"
+                + (":refined" if progress.get("refined") else ""),
                 **{authority_key: authority},
             )
         except HTTPException as error:
@@ -304,12 +319,15 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
             "Selecting a release using saved acquisition preferences",
             next_tick(now),
         )
-    progress["round"] = progress.get("round", 0) + 1
+    if not progress.get("refined"):
+        progress["round"] = progress.get("round", 0) + 1
+    work = await canonical_work(db, book.work_id)
     search = await book_sources.start(
         db,
         user,
         book.work_id,
         book_sources.SearchInput(
+            q=source_queries.targeted_query(work) if progress.get("refined") else None,
             medium=medium,
             request_id=book.intent_id,
             profile_id=config["profile"]["id"],
@@ -317,7 +335,7 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
             profile_effective_revision=config["profile"].get("base_effective_revision")
             or config["profile"].get("effective_revision"),
         ),
-        f"list-search:{cycle}:{progress['round']}",
+        f"list-search:{cycle}:{progress['round']}{':refined' if progress.get('refined') else ''}",
         pack_origin=(series_authority or {}).get("pack_origin"),
     )
     progress["search_id"] = str(search.id)

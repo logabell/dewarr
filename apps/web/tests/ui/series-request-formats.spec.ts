@@ -341,6 +341,18 @@ test("automatic series requests confirm start and lead to clear progress with ca
       },
     }),
   );
+  let coverRequests = 0;
+  await page.route("**/api/catalog/cover-image?**", (route) => {
+    if (!route.request().url().includes("midnight.jpg"))
+      return route.fallback();
+    coverRequests += 1;
+    return coverRequests === 1
+      ? route.fulfill({ status: 503, body: "Cover is being fetched" })
+      : route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="150"><rect width="100" height="150" fill="#a43"/></svg>',
+        });
+  });
   await page.goto("/series/hardcover/5451?tab=requests&gaps=1");
   await expect(
     page.getByRole("checkbox", { name: "Download automatically", exact: true }),
@@ -372,7 +384,7 @@ test("automatic series requests confirm start and lead to clear progress with ca
   ).toBeVisible();
   await expect(page.locator(".request-cover img")).toHaveAttribute(
     "src",
-    "/api/catalog/cover-image?url=https%3A%2F%2Fassets.hardcover.app%2Fmidnight.jpg",
+    "/api/catalog/cover-image?url=https%3A%2F%2Fassets.hardcover.app%2Fmidnight.jpg&cover_retry=1",
   );
   await expect(
     page.getByText("Searching sources for this format", { exact: true }),
@@ -380,6 +392,14 @@ test("automatic series requests confirm start and lead to clear progress with ca
   await expect(
     page.getByRole("link", { name: "Choose release", exact: true }),
   ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page
+        .locator(".request-cover img")
+        .evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  expect(coverRequests).toBe(2);
   await page.screenshot({
     path: info.outputPath("series-request-progress.png"),
     fullPage: true,

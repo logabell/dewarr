@@ -42,12 +42,17 @@ export default function BookSources({
   const [params] = useSearchParams();
   // Let the API choose the same short-title default used by Quick Add.
   const [q, setQ] = useState("");
-  const [medium, setMedium] = useState("all");
+  const requestedMedium =
+    params.get("request") &&
+    ["ebook", "audio"].includes(params.get("slot") || "")
+      ? params.get("slot")!
+      : null;
+  const [medium, setMedium] = useState(requestedMedium || "all");
 
   const initial = useRef(false);
   const key = useRef(randomUUID());
   const requestId = params.get("request");
-  const queryKey = ["book-sources", work.id, requestId];
+  const queryKey = ["book-sources", work.id, requestId, requestedMedium];
   const request = useQuery({
     queryKey: ["source-request", requestId],
     enabled: !!requestId,
@@ -128,6 +133,7 @@ export default function BookSources({
       search.isSuccess &&
       search.data &&
       (!requestId || search.data.request_id === requestId) &&
+      (!requestedMedium || search.data.medium === requestedMedium) &&
       !initial.current
     ) {
       initial.current = true;
@@ -137,7 +143,8 @@ export default function BookSources({
     if (
       search.isSuccess &&
       (search.data === null ||
-        (!!requestId && search.data?.request_id !== requestId)) &&
+        (!!requestId && search.data?.request_id !== requestId) ||
+        (!!requestedMedium && search.data?.medium !== requestedMedium)) &&
       (!requestId || request.isSuccess) &&
       profiles.isSuccess &&
       !initial.current
@@ -150,6 +157,7 @@ export default function BookSources({
     search.data,
     profiles.isSuccess,
     requestId,
+    requestedMedium,
     request.isSuccess,
     begin,
   ]);
