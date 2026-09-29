@@ -110,7 +110,7 @@ test("a completed transfer already in the library is In library", () => {
 test("manual release failures and preparation remain visible in Requests", () => {
   assert.equal(
     statusLabel(active, { state: "wanted", selection_status: "held" }),
-    "Needs review",
+    "Source needs review",
   );
   assert.equal(
     statusLabel(active, { state: "wanted", selection_status: "failed" }),

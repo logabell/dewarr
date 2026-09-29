@@ -168,9 +168,9 @@ test("request missing uses personal formats, counts each gap, and preserves manu
   await expect(
     composer.getByText("4 audiobooks", { exact: true }),
   ).toBeVisible();
-  await page
-    .getByRole("checkbox", { name: "Download automatically", exact: true })
-    .check();
+  await expect(
+    page.getByRole("checkbox", { name: "Download automatically", exact: true }),
+  ).toBeChecked();
   await expect(
     composer.getByText("Download settings · Ready", { exact: true }),
   ).toBeVisible();
@@ -234,4 +234,155 @@ test("an ebook-complete series can request all missing audiobooks and honor disc
     page.getByRole("button", { name: "Audiobook", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".series-book-row input:checked")).toHaveCount(5);
+});
+
+test("automatic series requests confirm start and lead to clear progress with catalog covers", async ({
+  page,
+}, info) => {
+  const { errors } = await mockSeries(page);
+  let started = false;
+  const saved = () => ({
+    id: "series-start",
+    status: started ? "completed" : "preview",
+    automatic: true,
+    acquisition_status: started ? "running" : null,
+    acquisition_message: started
+      ? "Searching sources for your missing books"
+      : null,
+    message: started ? "Requests saved" : "Review your selection",
+    records: [
+      {
+        work_id: "work-4",
+        title: "Midnight Sun",
+        position: "5",
+        warnings: [],
+        targets: [{ slot: "audio", state: started ? "pending" : "wanted" }],
+      },
+    ],
+    counts: {
+      wanted: started ? 0 : 1,
+      pending: started ? 1 : 0,
+      satisfied: 0,
+      cancelled: 0,
+    },
+    receipt: started
+      ? [{ work_id: "work-4", request_id: "request-midnight" }]
+      : null,
+    specification: { mode: "audio" },
+    omitted: [],
+    release_policy: {
+      preferences: {
+        desired_media: "audio",
+        source_order: [],
+        criteria: [],
+        preferred_narrators: [],
+        ebook_formats: [],
+        audio_formats: [],
+        blocked_formats: [],
+      },
+      origins: {},
+      scope_origins: {},
+    },
+  });
+  await page.route(
+    "**/api/catalog/series/hardcover/5451/requests/preview",
+    (route) => {
+      expect(route.request().postDataJSON().automatic).toBeTruthy();
+      return route.fulfill({ json: saved() });
+    },
+  );
+  await page.route(
+    "**/api/catalog/series/hardcover/5451/requests/series-start/submit",
+    (route) => {
+      started = true;
+      return route.fulfill({ json: saved() });
+    },
+  );
+  await page.route(
+    "**/api/catalog/series/hardcover/5451/requests/series-start",
+    (route) => route.fulfill({ json: saved() }),
+  );
+  await page.route(/\/api\/requests(?:\?|$)/, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: "request-midnight",
+            work_id: "work-4",
+            work_title: "Midnight Sun",
+            authors: ["Stephenie Meyer"],
+            cover_url: "https://assets.hardcover.app/midnight.jpg",
+            can_open_book: true,
+            owner_name: "Reader",
+            approval_status: "approved",
+            specification: { mode: "audio" },
+            reasons: [
+              {
+                id: "series-reason",
+                active: true,
+                label: "Series: The Twilight Saga",
+              },
+            ],
+            targets: [
+              {
+                slot: "audio",
+                state: "wanted",
+                selection_status: "searching",
+                next_action: "none",
+                message: "Searching sources for this format",
+              },
+            ],
+          },
+        ],
+        total: 1,
+        offset: 0,
+        limit: 10,
+        next_offset: null,
+      },
+    }),
+  );
+  await page.goto("/series/hardcover/5451?tab=requests&gaps=1");
+  await expect(
+    page.getByRole("checkbox", { name: "Download automatically", exact: true }),
+  ).toBeChecked();
+  await page
+    .getByRole("button", { name: "Review request", exact: true })
+    .click();
+  await expect(page.getByText("Ready to start", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Start downloads", exact: true })
+    .click();
+  await expect(
+    page.getByText("Requests started", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Review sources", exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath("series-started.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("link", { name: "Track downloads →", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Searching sources: Midnight Sun audiobook request details",
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".request-cover img")).toHaveAttribute(
+    "src",
+    "/api/catalog/cover-image?url=https%3A%2F%2Fassets.hardcover.app%2Fmidnight.jpg",
+  );
+  await expect(
+    page.getByText("Searching sources for this format", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Choose release", exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath("series-request-progress.png"),
+    fullPage: true,
+  });
+  expect(errors).toEqual([]);
 });

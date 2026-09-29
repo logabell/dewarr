@@ -85,8 +85,7 @@ export default function SeriesRequests({
     scope === "complete_series" && useMainBookReview && matchingReview
       ? mainBookReview?.id
       : undefined;
-  const [automatic, setAutomatic] = useState(false);
-  const routes = useSeriesRoutes(automatic, spec.mode, preferences);
+  const [automaticRequested, setAutomatic] = useState(true);
   const session = useQuery<Auth | null>({
     queryKey: ["session"],
     enabled: false,
@@ -116,6 +115,9 @@ export default function SeriesRequests({
       session.data?.user.role,
       "audio",
     );
+
+  const automatic = automaticRequested && canDownloadSeries;
+  const routes = useSeriesRoutes(automatic, spec.mode, preferences);
 
   const key = useRef(randomUUID());
   const panel = useRef<HTMLElement>(null);
@@ -252,6 +254,7 @@ export default function SeriesRequests({
     }
   }, [draft]);
   const value = saved.data;
+  const bookCount = id && value ? value.records.length : selected.length;
   const busy =
     preview.isPending ||
     submit.isPending ||
@@ -266,10 +269,15 @@ export default function SeriesRequests({
       ref={panel}
     >
       <div className="series-composer-heading">
-        <h2>{id ? "Review request" : "Your request"}</h2>
+        <h2>
+          {id
+            ? value?.status === "preview"
+              ? "Review request"
+              : "Download progress"
+            : "Your request"}
+        </h2>
         <span className="muted">
-          {id && saved.data ? saved.data.records.length : selected.length}{" "}
-          {selected.length === 1 ? "book" : "books"} selected
+          {bookCount} {bookCount === 1 ? "book" : "books"} selected
         </span>
       </div>
       <Notice
@@ -411,6 +419,7 @@ export default function SeriesRequests({
               <input
                 type="checkbox"
                 checked={automatic}
+                disabled={!canDownloadSeries}
                 onChange={(event) => setAutomatic(event.target.checked)}
               />
               Download automatically
@@ -508,14 +517,33 @@ export default function SeriesRequests({
             </p>
           )}
           {value.automatic && (
-            <p>
-              {value.acquisition_message ||
-                "After you accept, missing requested media will be acquired through the approved routes."}
-            </p>
+            <div className="series-start-status" role="status">
+              <strong>
+                {value.status === "preview"
+                  ? "Ready to start"
+                  : value.status === "queued" || value.status === "running"
+                    ? "Starting your requests…"
+                    : value.acquisition_status === "completed"
+                      ? "Books added to your library"
+                      : value.status === "completed"
+                        ? "Requests started"
+                        : "Download status"}
+              </strong>
+              <p>
+                {value.acquisition_message ||
+                  "We’ll search sources, download matching releases, and import each book automatically."}
+              </p>
+              {value.status !== "preview" && (
+                <Link className="primary reader-action-link" to="/requests">
+                  Track downloads →
+                </Link>
+              )}
+            </div>
           )}
           <p className="series-request-totals">
             {value.counts.wanted} missing · {value.counts.satisfied} available ·{" "}
-            {value.counts.pending} already requested
+            {value.counts.pending}{" "}
+            {value.status === "preview" ? "already requested" : "requested"}
             {value.counts.cancelled > 0 &&
               ` · ${value.counts.cancelled} cancelled`}
           </p>
@@ -569,16 +597,20 @@ export default function SeriesRequests({
                       : target.slot === "ebook"
                         ? "Ebook"
                         : "Either medium"}
-                    : {states[target.state] || target.state}
+                    :{" "}
+                    {target.state === "pending" && value.status !== "preview"
+                      ? "Requested"
+                      : states[target.state] || target.state}
                   </p>
                 ))}
-                {value.receipt?.find(
-                  (receipt) => receipt.work_id === book.work_id,
-                ) && (
-                  <Link to={`/books/${book.work_id}?tab=sources`}>
-                    Review sources
-                  </Link>
-                )}
+                {!value.automatic &&
+                  value.receipt?.find(
+                    (receipt) => receipt.work_id === book.work_id,
+                  ) && (
+                    <Link to={`/books/${book.work_id}?tab=sources`}>
+                      Review sources
+                    </Link>
+                  )}
               </article>
             ))}
           </div>
@@ -596,11 +628,15 @@ export default function SeriesRequests({
           )}
           <div className="button-row">
             {["preview", "failed"].includes(value.status) && (
-              <button disabled={busy} onClick={() => submit.mutate()}>
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() => submit.mutate()}
+              >
                 {value.accepted_at
                   ? "Retry saved series request"
                   : value.automatic
-                    ? "Start automatic series acquisition"
+                    ? "Start downloads"
                     : canDownloadSeries
                       ? "Save series requests"
                       : "Send series for approval"}

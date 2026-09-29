@@ -674,3 +674,14 @@
 .series-route-options fieldset {
   padding-top: 12px;
 }
+
+.series-start-status {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.series-start-status p {
+  margin: 0;
+}

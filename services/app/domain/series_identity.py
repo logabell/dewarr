@@ -11,12 +11,19 @@ def position_key(value):
     return Decimal(value) if re.fullmatch(r"\d{1,4}(?:\.\d{1,4})?", value) else None
 
 
+def series_name(value):
+    """Only presentation wrappers are optional, not words inside a series name."""
+    value = display_title(value)
+    value = re.sub(r"^(?:the|a|an)\s+", "", value)
+    return re.sub(r"\s+(?:saga|series)$", "", value).strip()
+
+
 def series_note_agrees(note, series):
     # Preserve punctuation until numbers have been checked: 5.5 is not 5,
     # and 1-3 is a collection, not a single position.
     note = display_title(note)
     for entry in series:
-        name = display_title(entry.get("name", ""))
+        name = series_name(entry.get("name", ""))
         if not name:
             continue
         match = re.search(rf"(?<!\w){re.escape(name)}(?!\w)", note)

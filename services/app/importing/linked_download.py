@@ -21,7 +21,7 @@ def request_file_conflicts(work, release, facts, *, series=(), reviewed_collecti
     credited = release.get("source") in {"audiobookbay", "prowlarr"}
     title_agrees = bool(facts.titles) and all(
         compatible_title(value, work.title, allow_extra_subtitle=reviewed_collection)
-        or (credited and title_outside_series_note(value, catalog) is not None)
+        or (title_outside_series_note(value, catalog) is not None)
         for value in facts.titles
     )
     authors = sorted(normalized(name) for name in work.authors)
@@ -52,7 +52,7 @@ def agrees_with_request(work, release, facts, *, series=()):
     credited_source = release.get("source") in {"audiobookbay", "prowlarr"}
     file_titles_agree = bool(facts.titles) and all(
         compatible_title(value, work.title)
-        or (credited_source and title_outside_series_note(value, catalog) is not None)
+        or (title_outside_series_note(value, catalog) is not None)
         for value in facts.titles
     )
     file_authors_cover = bool(facts.authors) and all(

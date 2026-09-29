@@ -60,10 +60,22 @@ function mediumLabel(slot: string) {
 }
 
 function chipState(label: string) {
-  if (label === "Needs review" || label === "Download needs attention")
+  if (
+    label === "Needs review" ||
+    label === "Source needs review" ||
+    label === "Download needs attention"
+  )
     return "paused";
   if (label === "Download not started") return "failed";
-  if (label === "Preparing download") return "downloading";
+  if (
+    [
+      "Preparing download",
+      "Searching sources",
+      "Waiting for source",
+      "Request queued",
+    ].includes(label)
+  )
+    return "downloading";
   if (label === "In library") return "satisfied";
   if (label === "Downloading" || label === "Importing") return "downloading";
   if (
@@ -122,6 +134,9 @@ function shortDate(value?: string | null) {
 function inProgress(request: Request) {
   return request.targets.some(
     (target) =>
+      ["queued", "running", "searching", "scheduled"].includes(
+        target.selection_status || "",
+      ) ||
       (target.attempt_state && liveDownloadStates.has(target.attempt_state)) ||
       ["queued", "inspecting", "importing"].includes(target.import_state || ""),
   );
@@ -563,6 +578,8 @@ function RequestCard({
           "Downloading",
           "Importing",
           "Preparing download",
+          "Searching sources",
+          "Request queued",
         ].includes(label);
         const progress =
           typeof target.progress === "number"
@@ -626,17 +643,27 @@ function RequestCard({
                   ) : label === "In library" ? (
                     <CircleCheck size={14} aria-hidden />
                   ) : label === "Needs review" ||
+                    label === "Source needs review" ||
                     label === "Download needs attention" ||
                     label === "Download not started" ? (
                     <CircleAlert size={14} aria-hidden />
                   ) : null}
                   {label}
                 </button>
-                {label === "Needs review" && (
+                {[
+                  "Needs review",
+                  "Source needs review",
+                  "Searching sources",
+                  "Waiting for source",
+                  "Request queued",
+                  "Preparing download",
+                ].includes(label) && (
                   <p className="request-status-hint">
-                    {target.selection_status === "held" ? "Choose a release to review its books and files" : target.inspection_id || target.can_claim
-                      ? "Choose Review files to continue"
-                      : "Administrator review required"}
+                    {target.review_message ||
+                      target.message ||
+                      (label === "Source needs review"
+                        ? "Choose a matching download source"
+                        : "Checking download files")}
                   </p>
                 )}
                 {label === "Queued" && target.attempt_message && (

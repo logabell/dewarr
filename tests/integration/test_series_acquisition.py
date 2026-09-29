@@ -369,3 +369,58 @@ async def test_selected_series_books_share_one_eligible_mam_pack_transfer(client
         assert (await db.get(DownloadAttempt, attempt.id)).external_may_exist
         assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 1
     assert ready["qbit"].calls.count("submit") == 1
+
+
+async def test_requests_keep_series_art_and_show_current_automatic_search(client, database, ready):
+    identifier = await accept(client, database, ready)
+    async with database() as db, db.begin():
+        controller = await db.get(Operation, identifier)
+        request_id = next(iter(controller.payload["books"].values()))["request_id"]
+        work_id = UUID(next(iter(controller.payload["books"].values()))["work_id"])
+        member = await db.scalar(
+            select(SeriesMembership).where(SeriesMembership.work_id == work_id)
+        )
+        work = await db.get(Work, work_id)
+        expected = "https://assets.hardcover.app/covers/series-test.jpg"
+        work.cover_url = "https://example.com/poor-library-thumbnail.jpg"
+        member.snapshot = {
+            **member.snapshot,
+            "book": {
+                **member.snapshot.get("book", {}),
+                "title": work.title,
+                "authors": work.authors,
+                "cover_url": expected,
+            },
+        }
+    card = (await client.get(f"/api/requests/{request_id}")).json()
+    assert card["cover_url"] == expected
+    assert card["targets"][0]["selection_status"] == "scheduled"
+    assert card["targets"][0]["next_action"] == "none"
+    await tick(database, identifier)
+    card = (await client.get(f"/api/requests/{request_id}")).json()
+    assert card["targets"][0]["selection_status"] == "searching"
+    assert card["targets"][0]["message"] == "Searching sources for this format"
+    # A subsequent search must replace a stale held source result in the ledger.
+    async with database() as db, db.begin():
+        db.add(
+            Operation(
+                owner_id=(await db.get(Operation, identifier)).owner_id,
+                kind="acquisition.auto-select",
+                status="held",
+                idempotency_key="old-source-hold",
+                message="Old source requires review",
+                payload={"command": {"intent_id": request_id, "slot": "audio"}},
+            )
+        )
+    card = (await client.get(f"/api/requests/{request_id}")).json()
+    assert card["targets"][0]["selection_status"] == "searching"
+    async with database() as db, db.begin():
+        member = await db.scalar(
+            select(SeriesMembership).where(SeriesMembership.work_id == work_id)
+        )
+        member.snapshot = {
+            **member.snapshot,
+            "book": {**member.snapshot["book"], "authors": ["Wrong author"]},
+        }
+    card = (await client.get(f"/api/requests/{request_id}")).json()
+    assert card["cover_url"] == "https://example.com/poor-library-thumbnail.jpg"

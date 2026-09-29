@@ -276,6 +276,9 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
     });
     await page.goto("/series/hardcover/1084?tab=requests");
     await page
+      .getByRole("checkbox", { name: "Download automatically", exact: true })
+      .uncheck();
+    await page
       .getByRole("button", { name: "Select missing", exact: true })
       .click();
     await page.getByRole("button", { name: "Audiobook", exact: true }).click();

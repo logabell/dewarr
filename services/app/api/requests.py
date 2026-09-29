@@ -552,7 +552,13 @@ def _chip(card, target) -> str:
         return "needs-review"
     if getattr(target, "selection_status", None) == "failed":
         return "download-not-started"
-    if getattr(target, "selection_status", None) in {"queued", "running"}:
+    if getattr(target, "selection_status", None) in {
+        "queued",
+        "running",
+        "searching",
+        "waiting",
+        "scheduled",
+    }:
         return "preparing-download"
     if target.state == "wanted":
         return "wanted"
@@ -568,7 +574,7 @@ def _matches_card(card, status: str) -> bool:
     if status == "library":
         return "in-library" in chips
     if status == "downloading":
-        return "downloading" in chips or "importing" in chips
+        return any(chip in {"downloading", "importing", "preparing-download"} for chip in chips)
     return True
 
 
@@ -1013,6 +1019,10 @@ async def view(db, user, intent):
         if saved and saved.quota_waiting and target.state != "satisfied":
             target.state, target.message, target.next_action = "paused", saved.message, "none"
         await _decorate_target(db, user, intent, target)
+    from app.domain.request_presentation import series_cover, series_progress
+
+    for target in targets:
+        await series_progress(db, intent, reasons, target)
     work_id = intent.work_id
     cover_url = None
     authors: list[str] = []
@@ -1023,7 +1033,7 @@ async def view(db, user, intent):
     if work is not None:
         work_id = work.id
         if can_open_book:
-            cover_url = work.cover_url
+            cover_url = await series_cover(db, intent.owner_id, work)
             authors = [author for author in (work.authors or []) if isinstance(author, str)]
     return RequestView(
         id=intent.id,
