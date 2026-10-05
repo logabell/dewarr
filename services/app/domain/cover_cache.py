@@ -12,17 +12,26 @@ from sqlalchemy.dialects.postgresql import insert
 from app.db.models import ProviderBudget, ProviderCache
 from app.domain.cache_entries import prune
 from app.domain.operations import transaction_lock
-from app.importing.covers import CoverError, fetch_cover, validated_url
+from app.importing.covers import CoverError, fetch_cover, normalize_cover, validated_url
 
 
-async def cached_cover(db, url):
+async def cached_cover(db, url, size=1200):
     try:
         validated_url(url)
     except CoverError as error:
         raise HTTPException(422, "Unsupported cover URL") from error
-    key = hashlib.sha256(f"cover-image:v1:{url}".encode()).hexdigest()
+    if size not in {320, 640, 1200}:
+        raise HTTPException(422, "Unsupported cover size")
+    material = f"cover-image:v1:{url}" if size == 1200 else f"cover-thumbnail:v1:{size}:{url}"
+    key = hashlib.sha256(material.encode()).hexdigest()
     lease_key = f"cover-fetch:{key}"
     deadline = asyncio.get_running_loop().time() + 55
+    # Warm reads do not take an advisory lock or write a transaction.
+    cached = await db.get(ProviderCache, key)
+    if cached and cached.expires_at > datetime.now(UTC):
+        data = base64.b64decode(cached.value["jpeg"])
+        await db.rollback()
+        return image_response(data)
     while True:
         # A short durable lease coalesces API workers without occupying a database
         # connection or holding an advisory lock during DNS, HTTP or conversion.
@@ -49,7 +58,12 @@ async def cached_cover(db, url):
             db.add(ProviderBudget(key=lease_key, next_request_at=until))
         await db.commit()
         try:
-            data = await fetch_cover(url)
+            if size == 1200:
+                data = await fetch_cover(url)
+            else:
+                # Variants reuse the durable original and its cross-process fetch lease.
+                original = await cached_cover(db, url)
+                data = await normalize_cover(original.body, size)
         except BaseException as error:
             await db.execute(
                 delete(ProviderBudget).where(
@@ -84,6 +98,10 @@ async def cached_cover(db, url):
             await prune(db, now)
         await db.commit()
         break
+    return image_response(data)
+
+
+def image_response(data):
     return Response(
         data,
         media_type="image/jpeg",

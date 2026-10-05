@@ -338,3 +338,96 @@ async def test_expired_count_does_not_hide_new_pages(client, admin, database, lo
     assert response.status_code == 200, response.text
     assert response.json()["items"][0]["external_id"] == "201"
     assert calls == [1, 3]
+
+
+async def test_home_bundles_indexes_layout_and_only_readers_selected_collections(
+    client, admin, sample, monkeypatch
+):
+    monkeypatch.setattr("app.api.discovery_collections.live_catalog", lambda: {})
+    await client.put("/api/discovery/layout", json={"order": [sample["id"]], "hidden": ["library"]})
+    response = await client.get("/api/discovery/home")
+    assert response.status_code == 200, response.text
+    home = response.json()
+    assert home["layout"] == {"order": [sample["id"]], "hidden": ["library"]}
+    assert home["index"] == (await client.get("/api/discovery/collections?limit=100")).json()
+    assert (
+        home["public_lists"]
+        == (await client.get("/api/discovery/collections?kind=listopia&limit=100")).json()
+    )
+    assert [c["id"] for c in home["selected"]] == [sample["id"]]
+    from tests.integration.test_discovery import login_member
+
+    await login_member(client)
+    other = (await client.get("/api/discovery/home")).json()
+    assert other["selected"] == [] and other["layout"]["hidden"] == []
+
+
+async def test_expired_page_returns_saved_books_and_worker_refreshes(
+    client, admin, database, long_collection
+):
+    from datetime import timedelta
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.db.models import Operation, ProviderCache
+    from app.domain.catalog_refresh import run
+    from app.domain.discovery_pages import collection_key
+
+    sample, calls = long_collection
+    url = f"/api/discovery/collections/{sample['id']}?full=true&page=1"
+    fresh = (await client.get(url)).json()
+    async with database() as db, db.begin():
+        cached = await db.get(ProviderCache, collection_key(UUID(admin["id"]), sample, 1))
+        cached.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    saved = (await client.get(url)).json()
+    assert saved["stale"] and saved["items"] == fresh["items"]
+    assert calls == [1]
+    await client.get(url)
+    async with database() as db:
+        jobs = (
+            await db.scalars(select(Operation).where(Operation.kind == "catalog.refresh"))
+        ).all()
+        assert len(jobs) == 1
+        job_id = jobs[0].id
+    await run(job_id)
+    updated = (await client.get(url)).json()
+    assert not updated["stale"] and calls == [1, 1]
+
+
+async def test_live_chart_shows_saved_snapshot_until_worker_finishes(
+    client, admin, database, sample, monkeypatch
+):
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.db.models import Operation, ProviderCache
+    from app.domain.catalog_refresh import run
+    from app.domain.discovery_catalog import save_snapshot, snapshot_key
+
+    sample.update(provider="nyt", kind="chart")
+    monkeypatch.setattr(
+        "app.api.discovery_collections.live_catalog", lambda: {sample["id"]: sample}
+    )
+    await save_snapshot(sample)
+    async with database() as db, db.begin():
+        cached = await db.get(ProviderCache, snapshot_key(sample["id"]))
+        cached.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    calls = []
+
+    async def fetch(value):
+        calls.append(value["id"])
+        return {**value, "title": "Updated chart", "updated_at": datetime.now(UTC).isoformat()}
+
+    monkeypatch.setattr("app.domain.curation_sources.fetch", fetch)
+    url = f"/api/discovery/collections/{sample['id']}"
+    saved = (await client.get(url)).json()
+    assert saved["collection"]["title"] == sample["title"] and saved["stale"]
+    assert calls == []
+    async with database() as db:
+        job = await db.scalar(select(Operation).where(Operation.kind == "catalog.refresh"))
+    await run(job.id)
+    updated = (await client.get(url)).json()
+    assert updated["collection"]["title"] == "Updated chart" and not updated["stale"]
+    assert calls == [sample["id"]]

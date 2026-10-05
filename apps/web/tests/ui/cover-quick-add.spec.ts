@@ -1,4 +1,4 @@
-import { expect, test } from "../fixtures";
+import { expect, test, emptyDiscoveryHome } from "../fixtures";
 
 test("cover shortcuts acquire missing formats without navigating, including provider imports", async ({
   page,
@@ -34,6 +34,8 @@ test("cover shortcuts acquire missing formats without navigating, including prov
     }),
   );
   await page.route("**/api/**", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/discovery/home")
+      return route.fulfill({ json: emptyDiscoveryHome() });
     const path = new URL(route.request().url()).pathname;
     let data: unknown = { items: [], total: 0 };
     if (path === "/api/auth/me")
@@ -167,6 +169,8 @@ test("cover quick add links to preferences when no default media is saved", asyn
   const writes: unknown[] = [];
   const art = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300"><rect width="200" height="300" fill="#243044"/><text x="16" y="150" fill="white" font-size="18">COVER</text></svg>')}`;
   await page.route("**/api/**", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/discovery/home")
+      return route.fulfill({ json: emptyDiscoveryHome() });
     const path = new URL(route.request().url()).pathname;
     let data: unknown = { items: [], total: 0 };
     if (path === "/api/auth/me")

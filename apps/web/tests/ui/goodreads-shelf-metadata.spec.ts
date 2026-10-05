@@ -1,7 +1,9 @@
 import { expect, test } from "../fixtures";
 
-for (const connected of [true, false]) {
-  test(`Goodreads shelf resolves covers with Hardcover ${connected ? "connected" : "disabled"}`, async ({
+for (const scenario of ["connected", "disabled", "open pending"] as const) {
+  const connected = scenario !== "disabled";
+  const openPending = scenario === "open pending";
+  test(`Goodreads shelf resolves covers with Hardcover ${scenario}`, async ({
     page,
   }) => {
     const workId = "00000000-0000-0000-0000-000000000042";
@@ -16,12 +18,24 @@ for (const connected of [true, false]) {
       description: null,
       availability: { owned: false, ebook: false, audio: false },
     };
+    const matchedBook = {
+      provider: "hardcover",
+      external_id: "42",
+      title: "Atmosphere: A Love Story",
+      authors: work.authors,
+      cover_url: cover,
+      description: "Verified Hardcover description",
+      series: [],
+      editions: [],
+      subjects: [],
+    };
+    let detailLookups = 0;
     let lookups = 0;
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
-      let data: unknown = {};
+      let data: unknown = { items: [], total: 0 };
       if (path === "/api/auth/me")
         data = {
           user: {
@@ -32,6 +46,21 @@ for (const connected of [true, false]) {
           },
           csrf_token: "test",
         };
+      else if (path === "/api/following") data = [];
+      else if (path === `/api/catalog/works/${workId}`) data = work;
+      else if (path === `/api/metadata/works/${workId}`)
+        data = {
+          sources: [],
+          fields: {},
+          versions: [],
+          versions_total: 0,
+          cover_choices: [],
+        };
+      else if (path === `/api/metadata/works/${workId}/reader-match`) {
+        detailLookups++;
+        data = { status: "matched", book: matchedBook };
+      } else if (path.endsWith("/reader-details"))
+        data = { external_id: "42", authors: [], reviews: [] };
       else if (path === "/api/setup/onboarding") data = { status: "completed" };
       else if (path === "/api/metadata/account") data = { enabled: connected };
       else if (path === "/api/discovery/layout")
@@ -73,21 +102,17 @@ for (const connected of [true, false]) {
       else if (path === "/api/metadata/reader-matches") {
         lookups++;
         expect(route.request().postDataJSON().work_ids).toEqual([workId]);
-        data = {
-          results: {
-            [workId]: {
-              status: "matched",
-              book: {
-                provider: "hardcover",
-                external_id: "42",
-                title: "Atmosphere: A Love Story",
-                authors: work.authors,
-                cover_url: cover,
-                description: "Verified Hardcover description",
-              },
-            },
-          },
-        };
+        data =
+          openPending || lookups === 1
+            ? { results: { [workId]: { status: "pending" } } }
+            : {
+                results: {
+                  [workId]: {
+                    status: "matched",
+                    book: matchedBook,
+                  },
+                },
+              };
       }
       if (
         new URL(route.request().url()).pathname.includes(
@@ -101,6 +126,19 @@ for (const connected of [true, false]) {
     const shelf = page.getByRole("region", {
       name: "Want to read followed list",
     });
+    if (openPending) {
+      await expect.poll(() => lookups).toBeGreaterThan(0);
+      await shelf
+        .getByRole("link", { name: "View Atmosphere", exact: true })
+        .click();
+      await expect(page).toHaveURL(new RegExp(`/books/${workId}`));
+      await expect(
+        page.getByRole("img", { name: "Cover of Atmosphere" }),
+      ).toHaveAttribute("src", cover);
+      expect(detailLookups).toBe(1);
+      expect(errors).toEqual([]);
+      return;
+    }
     if (connected) {
       await expect(
         shelf.getByRole("img", { name: "Cover of Atmosphere: A Love Story" }),
@@ -108,7 +146,7 @@ for (const connected of [true, false]) {
       await expect(
         shelf.getByRole("heading", { name: "Atmosphere: A Love Story" }),
       ).toBeVisible();
-      expect(lookups).toBe(1);
+      expect(lookups).toBe(2);
     } else {
       await expect(
         shelf.getByRole("heading", { name: "Atmosphere", exact: true }),
@@ -121,7 +159,7 @@ for (const connected of [true, false]) {
       await expect(
         page.getByRole("img", { name: "Cover of Atmosphere: A Love Story" }),
       ).toBeVisible();
-      expect(lookups).toBe(1);
+      expect(lookups).toBe(2);
     }
     expect(errors).toEqual([]);
   });

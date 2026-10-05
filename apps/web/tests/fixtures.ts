@@ -22,3 +22,21 @@ export const test = base.extend({
     await use(page);
   },
 });
+
+export function emptyDiscoveryHome() {
+  const index = {
+    items: [],
+    total: 0,
+    years: [],
+    genres: [],
+    categories: [],
+    archive_gaps: [],
+  };
+  return {
+    index,
+    public_lists: index,
+    saved: index,
+    layout: { order: [], hidden: [] },
+    selected: [],
+  };
+}

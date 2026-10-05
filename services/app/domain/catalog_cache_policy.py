@@ -32,4 +32,9 @@ BROWSE_OPERATIONS = {
     "discovery",
     "related",
     "upcoming",
+    "community_lists",
+    "community_list",
+    "collection_page",
+    "collection_snapshot",
+    "reader_match",
 }

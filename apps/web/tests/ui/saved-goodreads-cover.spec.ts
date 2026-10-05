@@ -6,6 +6,7 @@ test("saved Goodreads covers survive refresh without metadata", async ({
   const id = "00000000-0000-4000-8000-000000000042";
   const cover = "https://i.gr-assets.com/books/123.jpg";
   let synced = false;
+  let bookReads = 0;
   const work = {
     id,
     title: "Saved book",
@@ -28,13 +29,17 @@ test("saved Goodreads covers survive refresh without metadata", async ({
     else if (path === "/api/metadata/account") data = { enabled: false };
     else if (path === "/api/discovery/layout") data = { order: [], hidden: [] };
     else if (path === "/api/lists/page") data = { items: [list], total: 1 };
-    else if (path === `/api/lists/${id}`) data = { ...list, items: [work] };
-    else if (path.endsWith("/subscription"))
+    else if (path === `/api/lists/${id}`) {
+      bookReads++;
+      data = { ...list, items: [work] };
+    } else if (path.endsWith("/subscription"))
       data = {
         provider: "goodreads",
         enabled: true,
         state: "idle",
-        last_success_at: synced ? "2026-09-21T12:00:00Z" : null,
+        last_success_at: synced
+          ? "2026-09-21T12:00:00Z"
+          : "2026-09-20T12:00:00Z",
       };
     else if (path.endsWith("/subscription/sync")) {
       synced = true;
@@ -58,12 +63,13 @@ test("saved Goodreads covers survive refresh without metadata", async ({
   const image = page.getByRole("img", { name: "Cover of Saved book" });
   await expect(image).toHaveAttribute(
     "src",
-    `/api/catalog/cover-image?url=${encodeURIComponent(cover)}`,
+    `/api/catalog/cover-image?size=320&url=${encodeURIComponent(cover)}`,
   );
   await page
     .getByRole("button", { name: "Refresh Want to read", exact: true })
     .click();
   await expect.poll(() => synced).toBe(true);
+  await expect.poll(() => bookReads).toBe(2);
   await expect(image).toBeVisible();
   await page.reload();
   await expect(image).toBeVisible();

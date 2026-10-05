@@ -111,7 +111,8 @@ function BookDetailContent({
           params: { path: { work_id: id } },
         }),
       ),
-    staleTime: 300_000,
+    staleTime: (query) =>
+      query.state.data?.status === "pending" ? 0 : 300_000,
     retry: false,
   });
   const matchedBook = !acceptedHardcover ? match.data?.book : undefined;

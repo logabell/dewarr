@@ -1,4 +1,4 @@
-import { expect, test } from "../fixtures";
+import { expect, test, emptyDiscoveryHome } from "../fixtures";
 
 test("cover-led shelves, format overlays and persistent display preferences", async ({
   page,
@@ -30,6 +30,8 @@ test("cover-led shelves, format overlays and persistent display preferences", as
     reason: "Library copy first observed",
   }));
   await page.route("**/api/**", (route) => {
+    if (new URL(route.request().url()).pathname === "/api/discovery/home")
+      return route.fulfill({ json: emptyDiscoveryHome() });
     const url = new URL(route.request().url());
     let data: unknown = { items: [], total: 0 };
     if (url.pathname === "/api/auth/me")

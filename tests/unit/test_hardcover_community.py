@@ -144,3 +144,11 @@ async def test_empty_search_does_not_hydrate_and_missing_detail_is_not_found():
     assert not (await source.community_lists("absent", 1)).items and len(calls) == 1
     with pytest.raises(AdapterError, match="no longer available"):
         await source.community_list("91", 0)
+
+
+async def test_public_browse_hydrates_embedded_books_without_a_second_request():
+    entries = [{"id": 1, "book_id": 42, "book": books(42)["books"][0]}]
+    source, calls = adapter({COMMUNITY_LISTS: {"lists": [row(list_books=entries)]}})
+    result = await source.community_lists("", 1)
+    assert result.items[0].books[0].title == "Book 42"
+    assert len(calls) == 1

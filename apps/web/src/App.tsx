@@ -534,22 +534,24 @@ function Shell({ auth }: { auth: Auth }) {
             />
             <button type="submit">Search</button>
           </form>
-          <ConnectionHealth />
-          {auth.user.role !== "viewer" &&
-            /^\/(discover(?:\/collections\/[^/]+)?|lists(?:\/.*)?|following(?:\/.*)?)$/.test(
-              location.pathname,
-            ) && (
-              <div className="topbar-actions">
-                <button
-                  className="topbar-action"
-                  onClick={() => setAddingList(true)}
-                >
-                  <ListPlus size={18} aria-hidden="true" />
-                  Add list
-                </button>
-                <RefreshLists refresh={listsRefresh} />
-              </div>
-            )}
+          <div className="topbar-actions">
+            <ConnectionHealth />
+            {auth.user.role !== "viewer" &&
+              /^\/(discover(?:\/collections\/[^/]+)?|lists(?:\/.*)?|following(?:\/.*)?)$/.test(
+                location.pathname,
+              ) && (
+                <>
+                  <button
+                    className="topbar-action"
+                    onClick={() => setAddingList(true)}
+                  >
+                    <ListPlus size={18} aria-hidden="true" />
+                    Add list
+                  </button>
+                  <RefreshLists refresh={listsRefresh} />
+                </>
+              )}
+          </div>
         </header>
         {addingList && (
           <Suspense fallback={<Loading />}>

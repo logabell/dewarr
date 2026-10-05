@@ -1,12 +1,35 @@
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 
 from app.adapters.catalog_types import BookData, SearchPage
-from app.db.models import CatalogAccount, Work
+from app.db.models import CatalogAccount, Operation, Work
+from app.domain.catalog_refresh import run
 from app.security import encrypt_secrets
 
 pytestmark = pytest.mark.integration
+
+
+async def test_background_match_cancels_when_reader_credentials_change(
+    client, admin, database, monkeypatch
+):
+    (work_id,) = await books(database, admin, "Harbor")
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Rotated credentials must not run an old reader lookup")
+
+    monkeypatch.setattr("app.api.metadata.provider_call", forbidden)
+    response = await client.post("/api/metadata/reader-matches", json={"work_ids": [str(work_id)]})
+    assert response.json()["results"][str(work_id)]["status"] == "pending"
+    async with database() as db, db.begin():
+        job = await db.scalar(select(Operation).where(Operation.kind == "catalog.refresh"))
+        job_id = job.id
+        account = await db.get(CatalogAccount, UUID(admin["id"]))
+        account.generation += 1
+    await run(job_id)
+    async with database() as db:
+        assert (await db.get(Operation, job_id)).status == "cancelled"
 
 
 async def books(database, admin, *titles):
@@ -61,13 +84,36 @@ async def test_one_request_resolves_every_visible_card(client, admin, database, 
     )
     assert response.status_code == 200, response.text
     results = response.json()["results"]
+    assert results[str(first)]["status"] == results[str(second)]["status"] == "pending"
+    assert not calls
+    async with database() as db:
+        jobs = list(await db.scalars(select(Operation).where(Operation.kind == "catalog.refresh")))
+    assert len(jobs) == 2
+    first_job = next(job for job in jobs if job.payload["args"][0] == str(first))
+    await run(first_job.id)
+    partial = (
+        await client.post(
+            "/api/metadata/reader-matches", json={"work_ids": [str(first), str(second)]}
+        )
+    ).json()["results"]
+    assert partial[str(first)]["book"]["title"] == "Harbor"
+    assert partial[str(second)]["status"] == "pending"
+    await run(next(job.id for job in jobs if job.id != first_job.id))
+    results = (
+        await client.post(
+            "/api/metadata/reader-matches",
+            json={"work_ids": [str(first), str(second), str(UUID(int=7))]},
+        )
+    ).json()["results"]
     assert results[str(first)]["book"]["title"] == "Harbor"
     assert results[str(second)]["book"]["title"] == "Lighthouse"
     assert results[str(UUID(int=7))]["book"] is None
     assert calls == ["search", "fetch", "search", "fetch"]
 
 
-async def test_a_provider_pause_stops_the_rest_of_the_batch(client, admin, database, monkeypatch):
+async def test_provider_failure_ends_polling_without_blocking_other_books(
+    client, admin, database, monkeypatch
+):
     first, second = await books(database, admin, "Harbor", "Lighthouse")
     calls = []
 
@@ -84,7 +130,18 @@ async def test_a_provider_pause_stops_the_rest_of_the_batch(client, admin, datab
     )
     assert response.status_code == 200, response.text
     results = response.json()["results"]
-    assert results[str(second)]["reason"] == "Hardcover asked us to wait."
+    assert all(value["status"] == "pending" for value in results.values())
+    assert not calls
+    async with database() as db:
+        jobs = list(await db.scalars(select(Operation).where(Operation.kind == "catalog.refresh")))
+    await run(jobs[0].id)
+    results = (
+        await client.post(
+            "/api/metadata/reader-matches", json={"work_ids": [str(first), str(second)]}
+        )
+    ).json()["results"]
+    assert results[jobs[0].payload["args"][0]]["reason"] == "Hardcover asked us to wait."
+    assert results[jobs[1].payload["args"][0]]["status"] == "pending"
     assert calls == ["search"]
 
 

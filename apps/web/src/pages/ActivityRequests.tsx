@@ -378,7 +378,24 @@ export default function ActivityRequests({
   );
 }
 
-function RequestCover({ title, url }: { title: string; url?: string | null }) {
+function RequestCover({
+  title,
+  url,
+  workId,
+  medium,
+}: {
+  title: string;
+  url?: string | null;
+  workId?: string;
+  medium: "ebook" | "audio";
+}) {
+  const candidates = [
+    url,
+    workId
+      ? `/api/catalog/works/${encodeURIComponent(workId)}/cover?medium=${medium}`
+      : null,
+  ].filter((candidate): candidate is string => !!candidate);
+  const [candidate, setCandidate] = useState(0);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
@@ -386,20 +403,22 @@ function RequestCover({ title, url }: { title: string; url?: string | null }) {
     const timer = window.setTimeout(
       () => {
         setRetry((value) => value + 1);
+        setCandidate(0);
         setFailed(false);
       },
       1500 * (retry + 1),
     );
     return () => window.clearTimeout(timer);
   }, [failed, retry]);
-  const src = url?.startsWith("https://")
-    ? `/api/catalog/cover-image?url=${encodeURIComponent(url)}`
-    : url;
+  const selected = candidates[candidate];
+  const src = selected?.startsWith("https://")
+    ? `/api/catalog/cover-image?url=${encodeURIComponent(selected)}`
+    : selected;
   return (
     <div className="request-cover" aria-hidden="true">
-      {url && !failed ? (
+      {src && !failed ? (
         <img
-          key={retry}
+          key={`${candidate}:${retry}`}
           src={
             retry && src?.startsWith("/api/")
               ? `${src}${src.includes("?") ? "&" : "?"}cover_retry=${retry}`
@@ -407,7 +426,11 @@ function RequestCover({ title, url }: { title: string; url?: string | null }) {
           }
           alt=""
           referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
+          onError={() => {
+            if (candidate + 1 < candidates.length) {
+              setCandidate((value) => value + 1);
+            } else setFailed(true);
+          }}
         />
       ) : (
         <span>
@@ -627,9 +650,11 @@ function RequestCard({
                   data-continuation={index > 0 || undefined}
                 >
                   <RequestCover
-                    key={request.cover_url}
+                    key={`${request.work_id}:${request.can_open_book}:${request.cover_url}`}
                     title={request.work_title}
                     url={request.cover_url}
+                    workId={request.can_open_book ? request.work_id : undefined}
+                    medium={target.slot === "audio" ? "audio" : "ebook"}
                   />
                   <div className="request-row-identity">
                     <h2>

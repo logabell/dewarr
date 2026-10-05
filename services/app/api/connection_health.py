@@ -26,6 +26,7 @@ class ConnectionHealthView(BaseModel):
     connections: list[ConnectionHealthItem]
     issues: int
     check_interval_seconds: int = 300
+    rechecking: bool = False
 
 
 def message_for(status):
@@ -117,3 +118,21 @@ async def connections(user: CurrentUser, db: Database):
     return ConnectionHealthView(
         connections=items, issues=sum(item.status != "connected" for item in items)
     )
+
+
+@router.post("/connections/recheck", response_model=ConnectionHealthView)
+async def recheck_connections(user: CurrentUser, db: Database):
+    from app.domain.connection_health import recheck
+
+    # Any signed-in reader may request the same bounded system check as the worker;
+    # configuration and credentials remain admin-only.
+    snapshot = await connections(user, db)
+    if not snapshot.issues:
+        return snapshot
+    await db.rollback()
+    pending = await recheck()
+    db.expire_all()
+    await db.refresh(user)
+    snapshot = await connections(user, db)
+    snapshot.rechecking = pending
+    return snapshot

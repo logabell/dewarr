@@ -190,7 +190,12 @@ async def cover(
 
 
 @router.get("/cover-image", response_class=Response)
-async def cover_image(user: CurrentUser, db: Database, url: str = Query(max_length=2000)):
+async def cover_image(
+    user: CurrentUser,
+    db: Database,
+    url: str = Query(max_length=2000),
+    size: int = Query(default=1200, ge=320, le=1200),
+):
     from app.domain.cover_cache import cached_cover
 
-    return await cached_cover(db, url)
+    return await cached_cover(db, url, size)

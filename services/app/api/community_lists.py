@@ -59,9 +59,11 @@ def card(value, follows):
     )
 
 
-async def read(db, user_id, operation, *args):
+async def read(db, user_id, operation, *args, force=False):
     try:
-        result, _, _ = await provider_call(db, user_id, "hardcover", operation, *args, force=True)
+        result, _, _ = await provider_call(
+            db, user_id, "hardcover", operation, *args, force=force, background=not force
+        )
         return result
     except AdapterError as error:
         raise adapter_http_error(error) from error
@@ -131,7 +133,7 @@ async def follow(
     if not account or not account.enabled:
         raise HTTPException(409, "Connect your Hardcover account before following a list")
     generation = account.generation
-    value = await read(db, user_id, "community_list", external_id, 0)
+    value = await read(db, user_id, "community_list", external_id, 0, force=True)
     result = await community_lists.follow(db, user_id, idempotency_key, command, value, generation)
     await db.commit()
     return result

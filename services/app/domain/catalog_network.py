@@ -199,7 +199,15 @@ class CatalogGateway:
             await self.cooldown(retry_delay(self.http.response_headers, datetime.now(UTC)))
             return response
 
-        if not self.cache:
+        # Public-list membership can become private between requests. Revalidate
+        # headers on every read; cache stable search IDs and book metadata only.
+        query_name = re.search(r"\bquery\s+(\w+)", (json or {}).get("query", ""))
+        live_visibility = query_name and query_name[1] in {
+            "CommunityLists",
+            "CommunityMatches",
+            "CommunityList",
+        }
+        if not self.cache or live_visibility:
             return await load()
 
         def cacheable(response):

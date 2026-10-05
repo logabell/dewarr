@@ -7,7 +7,13 @@ import "./connection-health.css";
 export default function ConnectionHealth() {
   const health = useQuery({
     queryKey: ["connection-health"],
-    queryFn: async () => result(await api.GET("/api/health/connections")),
+    queryFn: async () => {
+      const snapshot = result(await api.GET("/api/health/connections"));
+      if (!snapshot.issues) return snapshot;
+      // Verify saved failures with the Settings checks before publishing an alert.
+      // The server coalesces requests and enforces a recovery-check cooldown.
+      return result(await api.POST("/api/health/connections/recheck"));
+    },
     refetchInterval: 30_000,
     staleTime: 15_000,
     retry: 1,
@@ -16,7 +22,8 @@ export default function ConnectionHealth() {
     health.data?.connections?.filter(
       (connection) => connection.status !== "connected",
     ) ?? [];
-  if (!health.isError && issues.length === 0) return null;
+  if (!health.isError && (health.data?.rechecking || issues.length === 0))
+    return null;
   const label = health.isError
     ? "Connection status unavailable"
     : `${issues.length} connection ${issues.length === 1 ? "issue" : "issues"}`;
@@ -64,7 +71,12 @@ export default function ConnectionHealth() {
             </li>
           ))}
         </ul>
-        <small>Connections are checked automatically every 5 minutes.</small>
+        <small>
+          Connection issues are automatically rechecked before this alert
+          appears and retried about once a minute while you’re using Dewarr.
+          Routine checks run every 5 minutes. Service cooldowns may delay a
+          retry.
+        </small>
       </div>
     </details>
   );

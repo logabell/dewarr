@@ -97,3 +97,31 @@ async def test_concurrent_cover_requests_share_one_fetch(database, monkeypatch):
     monkeypatch.setattr("app.domain.cover_cache.fetch_cover", fetch)
     assert await asyncio.gather(*(request() for _ in range(6))) == [b"shared-image"] * 6
     assert calls == [URL]
+
+
+async def test_thumbnail_variants_share_original_and_keep_export_resolution(
+    client, admin, monkeypatch
+):
+    import io
+
+    from PIL import Image
+
+    from tests.media_fixtures import cover_bytes
+
+    calls = []
+
+    async def fetch(url):
+        calls.append(url)
+        return cover_bytes(size=(800, 1200), format="JPEG")
+
+    monkeypatch.setattr("app.domain.cover_cache.fetch_cover", fetch)
+    for size in (320, 640, 1200, 320):
+        response = await client.get("/api/catalog/cover-image", params={"url": URL, "size": size})
+        assert response.status_code == 200, response.text
+        with Image.open(io.BytesIO(response.content)) as image:
+            assert image.height == size
+            assert not image.getexif()
+    assert calls == [URL]
+    assert (
+        await client.get("/api/catalog/cover-image", params={"url": URL, "size": 999})
+    ).status_code == 422

@@ -3,13 +3,18 @@ import { api, result } from "../api/client";
 import type { Collection } from "../components/DiscoveryCollections";
 import type { components } from "../api/schema";
 
-export function useDiscoverShelfSources(all = false, selected: string[] = []) {
+export function useDiscoverShelfSources(
+  all = false,
+  selected: string[] = [],
+  known: Collection[] = [],
+) {
   const collectionIds = selected.filter(
     (id) =>
       !id.startsWith("personal:") &&
       !["personal", "library", "trending", "new-releases", "upcoming"].includes(
         id,
-      ),
+      ) &&
+      !known.some((collection) => collection.id === id),
   );
   const collections = useQuery<Collection[]>({
     queryKey: ["discover-shelf-collections", all, collectionIds],
@@ -73,7 +78,17 @@ export function useDiscoverShelfSources(all = false, selected: string[] = []) {
       })),
   });
   return {
-    collections,
+    collections: {
+      ...collections,
+      data: all
+        ? collections.data
+        : [
+            ...known,
+            ...(collections.data || []).filter(
+              (c) => !known.some((k) => k.id === c.id),
+            ),
+          ],
+    },
     lists: {
       ...lists,
       data: [

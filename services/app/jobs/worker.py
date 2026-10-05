@@ -157,8 +157,9 @@ async def run_pools(queue):
         - catalog_cache
         - {"recovery"}
     )
-    # One slot per work class. Confirmation may hash large files, so it
-    # must not share the slot responsible for scheduling and health.
+    # One slot per work class, plus two bounded display-refresh slots so a slow
+    # provider does not hold up every visible card. Provider rate limits still
+    # apply across both slots. File work remains separate from control jobs.
     async with asyncio.TaskGroup() as workers:
         for index, queues in enumerate(
             (control, files, inventory, confirmation, remaining, catalog_cache)
@@ -166,7 +167,7 @@ async def run_pools(queue):
             workers.create_task(
                 queue.run_worker_async(
                     queues=sorted(queues),
-                    concurrency=1,
+                    concurrency=2 if queues == catalog_cache else 1,
                     name=(
                         "control",
                         "files",

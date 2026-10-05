@@ -622,6 +622,7 @@ nav a.active .nav-count {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 .list-refresh {
   display: flex;

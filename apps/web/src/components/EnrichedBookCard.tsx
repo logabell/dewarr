@@ -80,6 +80,8 @@ export default function EnrichedBookCard({ work }: { work: Work }) {
     queryFn: ({ signal }) => resolve(work.id, signal),
     enabled: visible && needsMetadata && !!account.data?.enabled,
     staleTime: 300_000,
+    refetchInterval: (query) =>
+      query.state.data?.status === "pending" ? 2000 : false,
     retry: false,
   });
   const book = account.data?.enabled ? match.data?.book : undefined;

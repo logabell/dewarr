@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
@@ -34,6 +36,7 @@ from app.db.models import (
     ListSubscription,
     MetadataSettings,
     Operation,
+    ProviderCache,
     ProviderObject,
     User,
     Version,
@@ -148,7 +151,7 @@ async def provider_call(
         scope,
         token,
         force=force,
-        cache=operation not in {"list_page", "list_choices", "community_lists", "community_list"},
+        cache=operation not in {"list_page", "list_choices"},
         on_stale=refresh if background and not force else None,
     ) as gateway:
         from app.adapters.audible import Audible
@@ -489,7 +492,7 @@ async def accessible_work(db, user, work_id, *, lock=False):
 class ReaderMatch(BaseModel):
     candidates: list[BookData] = Field(default_factory=list)
     book: BookData | None = None
-    status: Literal["matched", "unmatched", "disabled"] = "unmatched"
+    status: Literal["matched", "unmatched", "disabled", "pending"] = "unmatched"
     basis: str | None = None
     reason: str | None = None
 
@@ -586,7 +589,7 @@ async def reader_lookup_identity(db, user, work_id):
 
 
 @router.get("/works/{work_id}/reader-match", response_model=ReaderMatch)
-async def reader_match(work_id: UUID, user: CurrentUser, db: Database):
+async def reader_match(work_id: UUID, user: CurrentUser, db: Database, background: bool = False):
     """Read-only reader metadata for inventory books without a provider binding.
 
     Never creates catalog identities or claims edition ownership from a search result.
@@ -597,6 +600,35 @@ async def reader_match(work_id: UUID, user: CurrentUser, db: Database):
     if not identity:
         return ReaderMatch(status="disabled")
     canonical_id, raw = identity
+    account = await db.get(CatalogAccount, user_id)
+    if not account or not account.enabled:
+        return ReaderMatch(status="disabled")
+    if account.status == FailureKind.AUTHENTICATION.value:
+        raise HTTPException(409, "Reconnect your Hardcover account before browsing metadata")
+    generation = account.generation
+    from app.domain.catalog_network import catalog_endpoint
+
+    key = hashlib.sha256(
+        json.dumps(
+            [
+                "reader-match-v1",
+                str(user_id),
+                generation,
+                str(canonical_id),
+                raw,
+                catalog_endpoint("hardcover"),
+            ]
+        ).encode()
+    ).hexdigest()
+    cached = await db.get(ProviderCache, key)
+    if cached and cached.expires_at > datetime.now(UTC):
+        return ReaderMatch.model_validate(cached.value)
+    if background:
+        from app.domain.catalog_refresh import schedule
+
+        await db.rollback()
+        queued = await schedule(user_id, "local", generation, "reader_match", [str(work_id), key])
+        return ReaderMatch(status="pending" if queued else "disabled")
     evidence = MatchEvidence.model_validate_json(raw)
     try:
 
@@ -607,10 +639,15 @@ async def reader_match(work_id: UUID, user: CurrentUser, db: Database):
         user = await current_actor(db, user_id)
         if await reader_lookup_identity(db, user, canonical_id) != identity:
             return ReaderMatch(reason="Library evidence changed during lookup. Retry the match.")
+        account = await db.get(CatalogAccount, user_id, populate_existing=True)
+        if not account or not account.enabled or account.generation != generation:
+            return ReaderMatch(status="disabled")
         result = ReaderMatch(**match.model_dump())
+        from app.domain.display_refresh import save_result
+
+        await save_result(db, key, result.model_dump(mode="json"))
         if result.book:
-            account = await db.get(CatalogAccount, user_id)
-            remember_match(user_id, account.generation if account else None, identity, result)
+            remember_match(user_id, generation, identity, result)
         return result
     except AdapterError as error:
         raise adapter_http_error(error) from error
@@ -652,7 +689,9 @@ async def reader_matches(body: ReaderMatchBatch, user: CurrentUser, db: Database
     user_id, results = user.id, {}
     for index, work_id in enumerate(dict.fromkeys(body.work_ids)):
         try:
-            results[work_id] = await reader_match(work_id, await current_actor(db, user_id), db)
+            results[work_id] = await reader_match(
+                work_id, await current_actor(db, user_id), db, background=True
+            )
         except HTTPException as error:
             if error.status_code in (401, 403):
                 raise

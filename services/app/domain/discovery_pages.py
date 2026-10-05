@@ -21,7 +21,7 @@ def collection_key(user_id, collection, suffix):
     return cache_key(user_id, collection["id"], collection["updated_at"], suffix)
 
 
-async def source_page(db, user_id, collection, page):
+async def source_page(db, user_id, collection, page, *, background=True):
     version = collection["updated_at"]
     key = collection_key(user_id, collection, page)
     await db.rollback()
@@ -70,8 +70,21 @@ async def source_page(db, user_id, collection, page):
             )
         return value
 
-    value, _ = await read_through(key, load, fresh_for=timedelta(days=1), allow_stale=False)
-    return value
+    async def refresh():
+        from app.domain.catalog_refresh import schedule
+
+        return await schedule(
+            user_id, "local", None, "collection_page", [collection["id"], version, page]
+        )
+
+    value, stale = await read_through(
+        key,
+        load,
+        fresh_for=timedelta(days=1),
+        allow_stale=False,
+        on_stale=refresh if background else None,
+    )
+    return {**value, "stale": stale}
 
 
 async def collection_page(db, user_id, collection, page):
@@ -82,17 +95,19 @@ async def collection_page(db, user_id, collection, page):
         known = None
     total = known.value["count"] if known else collection["count"]
     if known and start >= total:
-        return [], total
+        return [], total, False
     books = []
+    stale = False
     for number in range(start // 100 + 1, (stop - 1) // 100 + 2):
         data = await source_page(db, user_id, collection, number)
+        stale |= data.get("stale", False)
         source_start = (number - 1) * 100
         source_end = source_start + len(data["books"])
         total = max(data["count"], source_end + 1) if data["has_more"] else source_end
         books.extend(data["books"][max(0, start - source_start) : stop - source_start])
         if not data["has_more"]:
             break
-    return books, total
+    return books, total, stale
 
 
 async def find_book(db, user_id, collections, external_id):

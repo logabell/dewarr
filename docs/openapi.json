@@ -386,6 +386,27 @@
         }
       }
     },
+    "/api/health/connections/recheck": {
+      "post": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Recheck Connections",
+        "operationId": "recheck_connections_api_health_connections_recheck_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionHealthView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/setup": {
       "get": {
         "tags": [
@@ -3613,6 +3634,18 @@
               "maxLength": 2000,
               "title": "Url"
             }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1200,
+              "minimum": 320,
+              "default": 1200,
+              "title": "Size"
+            }
           }
         ],
         "responses": {
@@ -4231,6 +4264,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discovery/home": {
+      "get": {
+        "tags": [
+          "discovery-collections"
+        ],
+        "summary": "Home",
+        "operationId": "home_api_discovery_home_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryHome"
                 }
               }
             }
@@ -10875,6 +10929,16 @@
               "type": "string",
               "format": "uuid",
               "title": "Work Id"
+            }
+          },
+          {
+            "name": "background",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Background"
             }
           }
         ],
@@ -21920,6 +21984,11 @@
       },
       "CollectionDetail": {
         "properties": {
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "default": false
+          },
           "collection": {
             "$ref": "#/components/schemas/CollectionCard"
           },
@@ -23021,6 +23090,11 @@
             "type": "integer",
             "title": "Check Interval Seconds",
             "default": 300
+          },
+          "rechecking": {
+            "type": "boolean",
+            "title": "Rechecking",
+            "default": false
           }
         },
         "type": "object",
@@ -24346,6 +24420,38 @@
           "has_more"
         ],
         "title": "DiscoveryBookPage"
+      },
+      "DiscoveryHome": {
+        "properties": {
+          "index": {
+            "$ref": "#/components/schemas/CollectionIndex"
+          },
+          "public_lists": {
+            "$ref": "#/components/schemas/CollectionIndex"
+          },
+          "saved": {
+            "$ref": "#/components/schemas/CollectionIndex"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/DiscoveryPreferences"
+          },
+          "selected": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionCard"
+            },
+            "type": "array",
+            "title": "Selected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "public_lists",
+          "saved",
+          "layout",
+          "selected"
+        ],
+        "title": "DiscoveryHome"
       },
       "DiscoveryItem": {
         "properties": {
@@ -30716,7 +30822,7 @@
           "matcher_version": {
             "type": "integer",
             "title": "Matcher Version",
-            "default": 5
+            "default": 6
           }
         },
         "additionalProperties": false,
@@ -35530,7 +35636,8 @@
             "enum": [
               "matched",
               "unmatched",
-              "disabled"
+              "disabled",
+              "pending"
             ],
             "title": "Status",
             "default": "unmatched"

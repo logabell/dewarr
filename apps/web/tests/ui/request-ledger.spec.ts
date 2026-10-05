@@ -83,6 +83,27 @@ test("requests show transfer telemetry, review actions and counts in compact row
   );
   let progress = 0.42;
   let attemptState = "downloading";
+  let catalogCover: string | null =
+    "https://assets.hardcover.app/editions/artemis.jpg";
+  let libraryCoverAvailable = true;
+  let transientCoverAttempts = 0;
+  await page.route("**/api/catalog/works/fulfilled/cover?*", (route) =>
+    libraryCoverAvailable
+      ? route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240"><rect width="160" height="240" fill="#765"/></svg>',
+        })
+      : route.fulfill({ status: 404 }),
+  );
+  await page.route("**/api/catalog/cover-image?*", (route) => {
+    const url = new URL(route.request().url()).searchParams.get("url");
+    if (
+      url?.endsWith("/missing.jpg") ||
+      (url?.endsWith("/retry.jpg") && transientCoverAttempts++ === 0)
+    )
+      return route.fulfill({ status: 404 });
+    return route.fallback();
+  });
   await page.route("**/api/requests/counts", (route) =>
     route.fulfill({
       json: { pending: 1, downloading: 1, review: 1, active: 3 },
@@ -126,7 +147,7 @@ test("requests show transfer telemetry, review actions and counts in compact row
           can_cancel: true,
         }),
         can_withdraw: true,
-        cover_url: "https://assets.hardcover.app/editions/artemis.jpg",
+        cover_url: catalogCover,
       },
     ];
     items[0].can_withdraw = true;
@@ -184,6 +205,25 @@ test("requests show transfer telemetry, review actions and counts in compact row
   );
   await expect(cover).toHaveJSProperty("naturalWidth", 200);
   expect((await cover.boundingBox())!.height).toBeLessThan(50);
+  // Older requests can lack catalog art, or retain a catalog URL that no longer works.
+  // Both should display the connected library's artwork for the requested format.
+  for (const missingCover of [
+    null,
+    "https://assets.hardcover.app/editions/missing.jpg",
+  ]) {
+    catalogCover = missingCover;
+    await page.reload();
+    await expect(cover).toHaveAttribute(
+      "src",
+      "/api/catalog/works/fulfilled/cover?medium=audio",
+    );
+    await expect(cover).toHaveJSProperty("naturalWidth", 160);
+  }
+  libraryCoverAvailable = false;
+  catalogCover = "https://assets.hardcover.app/editions/retry.jpg";
+  await page.reload();
+  await expect(cover).toHaveJSProperty("naturalWidth", 200);
+  expect(transientCoverAttempts).toBe(2);
   await expect(review).toContainText("Needs review");
   await expect(
     review.getByRole("link", { name: "Review files" }),

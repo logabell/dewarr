@@ -128,8 +128,12 @@ export function PersonalRow({
       ["queued", "running"].includes(q.state.data?.state || "") ? 1500 : 30_000,
   });
   const lastSuccess = subscription.data?.last_success_at;
+  const observedSuccess = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (lastSuccess) {
+    if (subscription.isPending) return;
+    const previous = observedSuccess.current;
+    observedSuccess.current = lastSuccess ?? null;
+    if (previous !== undefined && lastSuccess && lastSuccess !== previous) {
       if (shelf.current) shelf.current.scrollLeft = 0;
       void cache.invalidateQueries({
         queryKey: ["discovery-personal", list.id],
@@ -137,7 +141,7 @@ export function PersonalRow({
       });
       void cache.invalidateQueries({ queryKey: ["lists"] });
     }
-  }, [lastSuccess, cache, list.id]);
+  }, [lastSuccess, subscription.isPending, cache, list.id]);
   const refresh = useMutation({
     mutationFn: async () => {
       if (!subscription.data) return books.refetch();

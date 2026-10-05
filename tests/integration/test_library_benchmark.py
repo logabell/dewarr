@@ -147,7 +147,8 @@ async def test_ten_thousand_book_pages(client, admin, database, monkeypatch):
             "/api/discovery/library",
             f"/api/catalog/works/{UUID(int=1000)}/cover",
         ):
-            for attempt in range(2):
+            # A few warm cover samples separate SQL savings from Python warmup/GC.
+            for attempt in range(5 if path.endswith("/cover") else 2):
                 statements.clear()
                 started = time.perf_counter()
                 response = await client.get(path)

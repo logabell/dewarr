@@ -72,6 +72,7 @@ export function BookHero({
     <header className="reader-hero book-detail-hero">
       <div className="reader-cover-wrap">
         <BookCover
+          detail
           actions={false}
           title={title}
           providerBook={providerBook}

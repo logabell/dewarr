@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.adapters.contracts import AdapterError
-from app.db.models import Integration, SourceConnection, User
+from app.db.models import Integration, RateLimit, SourceConnection, User
 from app.db.session import session_factory
 from app.domain.mam_diagnostics import probe_egress
 from app.domain.operations import transaction_lock
@@ -68,6 +68,14 @@ async def record_proxy(generation, result):
         row = await db.get(SourceConnection, "mam")
         if not row or not row.enabled or row.deleted_at or row.generation != generation:
             return
+        if (
+            result.ip
+            and proxy_snapshot(row)[0] == "unavailable"
+            and decrypt_secrets(row.encrypted_secrets).get("mam_id")
+        ):
+            # Working IP lookup cannot clear a failed MAM route. The authenticated
+            # test must succeed first, even if it is currently busy/cooling down.
+            return
         row.proxy_health = {
             "generation": generation,
             "status": "connected" if result.ip else "unavailable",
@@ -77,7 +85,37 @@ async def record_proxy(generation, result):
         }
 
 
-async def run():
+async def recheck():
+    """Coalesce browser recovery checks across users/processes, with a bounded retry budget.
+
+    A short committed claim avoids holding a DB transaction during network I/O.
+    The existing adapter leases still protect requests from overlapping worker/manual tests.
+    """
+    now = datetime.now(UTC)
+    key = "connections:recheck"
+    async with session_factory()() as db, db.begin():
+        await transaction_lock(db, key)
+        claim = await db.get(RateLimit, key)
+        if claim and claim.resets_at > now:
+            return claim.count == 1
+        deadline = now + timedelta(minutes=3)
+        if claim:
+            claim.count, claim.resets_at = 1, deadline
+        else:
+            db.add(RateLimit(key=key, count=1, resets_at=deadline))
+    try:
+        await run(only_issues=True)
+    finally:
+        async with session_factory()() as db, db.begin():
+            await transaction_lock(db, key)
+            claim = await db.get(RateLimit, key)
+            if claim and claim.resets_at == deadline:
+                claim.count = 0
+                claim.resets_at = datetime.now(UTC) + timedelta(minutes=1)
+    return False
+
+
+async def run(*, only_issues=False):
     from app.config import get_settings
     from app.domain.audiobookbay_network import abb_call
     from app.domain.downloaders import DOWNLOAD_KINDS, test_connection
@@ -125,14 +163,20 @@ async def run():
                 logger.warning("Connection health check failed (%s)", type(error).__name__)
 
     async def source_check(row):
+        if (
+            only_issues
+            and connection_status(row) == "connected"
+            and not (row.key == "mam" and row.proxy_url and proxy_snapshot(row)[0] != "connected")
+        ):
+            return
         if row.key == "mam":
             # Check egress first: the authenticated request may then expose a
             # MAM-specific proxy failure or direct fallback despite working egress.
             if row.proxy_url:
                 await check_proxy(row.generation)
-            if row.proxy_url or due(row, now):
+            if only_issues or row.proxy_url or due(row, now):
                 await source_call(admin_id, "test", expected_generation=row.generation)
-        elif due(row, now):
+        elif only_issues or due(row, now):
             if row.key == "prowlarr":
                 await prowlarr_call(admin_id, "test", expected_generation=row.generation)
             elif row.key == "audiobookbay":
@@ -145,7 +189,7 @@ async def run():
         *(
             guarded(lambda row=row: test_connection(admin_id, row.id))
             for row in clients
-            if due(row, now)
+            if (connection_status(row) != "connected" if only_issues else due(row, now))
         ),
     )
 

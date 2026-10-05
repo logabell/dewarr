@@ -23,7 +23,7 @@ from app.jobs.retry import CatalogRetry
 async def schedule(user_id, provider, generation, operation, args):
     if get_settings().recovery_mode or operation not in BROWSE_OPERATIONS:
         return False
-    endpoint = catalog_endpoint(provider)
+    endpoint = "local-display-v1" if provider == "local" else catalog_endpoint(provider)
     payload = to_jsonable_python(
         dict(
             provider=provider,
@@ -82,7 +82,7 @@ async def run(operation_id):
         account = await db.get(CatalogAccount, owner_id)
         provider = payload["provider"]
         try:
-            endpoint = catalog_endpoint(provider)
+            endpoint = "local-display-v1" if provider == "local" else catalog_endpoint(provider)
         except AdapterError:
             endpoint = None
         if (
@@ -90,10 +90,13 @@ async def run(operation_id):
             or not user
             or not user.active
             or payload["operation"] not in BROWSE_OPERATIONS
-            or provider not in {"hardcover", "openlibrary", "audible", "custom"}
+            or provider not in {"hardcover", "openlibrary", "audible", "custom", "local"}
             or endpoint != payload["endpoint"]
             or (
-                provider == "hardcover"
+                (
+                    provider == "hardcover"
+                    or (provider == "local" and payload["operation"] == "reader_match")
+                )
                 and (
                     not account
                     or not account.enabled
@@ -113,14 +116,20 @@ async def run(operation_id):
     try:
         async with session_factory()() as db:
             # A different request may already have filled some constituent queries.
-            _, stale, _ = await provider_call(
-                db,
-                owner_id,
-                provider,
-                payload["operation"],
-                *args,
-                expected_generation=payload["generation"],
-            )
+            if provider == "local":
+                from app.domain.display_refresh import run_display
+
+                await run_display(db, owner_id, payload)
+                stale = False
+            else:
+                _, stale, _ = await provider_call(
+                    db,
+                    owner_id,
+                    provider,
+                    payload["operation"],
+                    *args,
+                    expected_generation=payload["generation"],
+                )
             if stale:
                 raise CatalogRetry(60)
     except Exception as error:

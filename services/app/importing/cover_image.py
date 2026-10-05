@@ -11,7 +11,9 @@ MAX_OUTPUT = 512 * 1024
 MAX_PIXELS = 16_000_000
 
 
-def normalize(data: bytes) -> bytes:
+def normalize(data: bytes, size: int = 1200) -> bytes:
+    if size not in {320, 640, 1200}:
+        raise ValueError("Unsupported cover size")
     if not data or len(data) > MAX_INPUT:
         raise ValueError("Cover input exceeds limits")
     with warnings.catch_warnings():
@@ -24,7 +26,7 @@ def normalize(data: bytes) -> bytes:
                 raise ValueError("Animated covers are unsupported")
             source.load()  # Require a complete raster, not just a readable header.
             oriented = ImageOps.exif_transpose(source)
-            oriented.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+            oriented.thumbnail((size, size), Image.Resampling.LANCZOS)
             rgba = oriented.convert("RGBA")
             clean = Image.new("RGB", rgba.size, "white")
             clean.paste(rgba, mask=rgba.getchannel("A"))
@@ -46,7 +48,9 @@ def main():
     if sys.platform == "linux":
         resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
     try:
-        result = normalize(sys.stdin.buffer.read(MAX_INPUT + 1))
+        result = normalize(
+            sys.stdin.buffer.read(MAX_INPUT + 1), int(sys.argv[1]) if len(sys.argv) > 1 else 1200
+        )
     except Exception:
         sys.exit(1)  # Never echo source metadata or decoder errors into job logs.
     sys.stdout.buffer.write(result)

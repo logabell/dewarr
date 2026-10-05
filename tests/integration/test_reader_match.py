@@ -5,16 +5,30 @@ import pytest
 from sqlalchemy import func, select
 
 from app.adapters.catalog_types import BookData, SearchPage
-from app.db.models import User, Work, WorkMetadataSource
+from app.db.models import CatalogAccount, User, Work, WorkMetadataSource
+from app.security import encrypt_secrets
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+async def connected(database, admin):
+    async with database() as db, db.begin():
+        db.add(
+            CatalogAccount(
+                user_id=UUID(admin["id"]),
+                enabled=True,
+                generation=1,
+                encrypted_token=encrypt_secrets({"token": "reader-fixture-token"}),
+            )
+        )
 
 
 @pytest.mark.parametrize(
     "case", ["match", "ambiguous", "wrong-author", "more", "changed", "rejected", "private"]
 )
 async def test_inventory_reader_lookup_is_conservative_and_read_only(
-    client, admin, database, monkeypatch, case
+    client, admin, database, monkeypatch, connected, case
 ):
     from app.api import metadata
 
@@ -98,7 +112,7 @@ async def test_reader_lookup_requires_login(client):
 
 
 async def test_save_verified_match_persists_source_without_changing_library_version(
-    client, admin, database, monkeypatch
+    client, admin, database, monkeypatch, connected
 ):
     from app.adapters.catalog_types import EditionData
     from app.api import metadata
@@ -160,7 +174,9 @@ async def test_save_verified_match_persists_source_without_changing_library_vers
     assert again.json()["status"] == "disabled"
 
 
-async def test_save_match_rechecks_identity_after_provider_io(client, admin, database, monkeypatch):
+async def test_save_match_rechecks_identity_after_provider_io(
+    client, admin, database, monkeypatch, connected
+):
     from app.api import metadata
 
     async with database() as db, db.begin():
@@ -195,7 +211,7 @@ async def test_save_match_rechecks_identity_after_provider_io(client, admin, dat
 
 @pytest.mark.parametrize("changed", [False, True])
 async def test_goodreads_shelf_isbns_supply_reader_metadata(
-    client, admin, database, monkeypatch, changed
+    client, admin, database, monkeypatch, connected, changed
 ):
     from app.adapters.catalog_types import EditionData
     from app.db.models import BookList, ListSubscription

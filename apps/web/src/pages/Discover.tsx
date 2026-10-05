@@ -129,17 +129,27 @@ function Home({ canEdit }: { canEdit: boolean }) {
     queryKey: ["metadata-account"],
     queryFn: async () => result(await api.GET("/api/metadata/account")),
   });
-  const index = useCollections({ limit: 100 });
-  const publicLists = useCollections({ kind: "listopia", limit: 100 });
-  const saved = useCollections({ saved: true, limit: 100 });
-  const layout = useQuery({
+  const home = useQuery({
+    queryKey: ["discovery-collections", "home"],
+    queryFn: async ({ signal }) => {
+      const value = result(await api.GET("/api/discovery/home", { signal }));
+      cache.setQueryData(["discovery-layout"], value.layout);
+      return value;
+    },
+    staleTime: 300_000,
+  });
+  const index = { ...home, data: home.data?.index };
+  const publicLists = { ...home, data: home.data?.public_lists };
+  const saved = { ...home, data: home.data?.saved };
+  const layout = useQuery<DiscoverLayout>({
     queryKey: ["discovery-layout"],
-    queryFn: async () => result(await api.GET("/api/discovery/layout")),
+    enabled: false,
   });
   const [customizing, setCustomizing] = useState(false);
   const sources = useDiscoverShelfSources(
     customizing,
     layout.data?.order || [],
+    home.data?.selected,
   );
   const save = useMutation({
     mutationFn: async (draft: DiscoverLayout) => {
@@ -340,7 +350,7 @@ function Home({ canEdit }: { canEdit: boolean }) {
           sources.collections.error
         }
       />
-      {(index.isPending || layout.isPending) && <Loading />}
+      {(index.isPending || (!index.error && layout.isPending)) && <Loading />}
       {!layout.isPending &&
         rows
           .filter((r) => !hidden.includes(r.id))
@@ -786,7 +796,19 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
       { state: location.state },
     );
   }
-  const query = usePagedQuery({
+  const preview = useQuery({
+    queryKey: ["discovery-collection", id, "snapshot", winners],
+    queryFn: async ({ signal }) =>
+      result(
+        await api.GET("/api/discovery/collections/{collection_id}", {
+          params: { path: { collection_id: id }, query: { winners } },
+          signal,
+        }),
+      ),
+    staleTime: 300_000,
+    refetchInterval: refreshPending,
+  });
+  const fullQuery = usePagedQuery({
     queryKey: ["discovery-collection", id, winners],
     queryFn: async (page, signal) =>
       result(
@@ -800,7 +822,14 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
       ),
     next: (last, pages) => (last.has_more ? pages.length + 1 : undefined),
     staleTime: 60_000,
+    refetchInterval: refreshPending,
   });
+  const query = {
+    ...fullQuery,
+    data: fullQuery.data ?? preview.data,
+    error: fullQuery.error || (!fullQuery.data ? preview.error : null),
+    isPending: fullQuery.isPending && !preview.data,
+  };
   const c = query.data?.collection;
   const items = [
     ...new Map(
@@ -816,7 +845,7 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
       />
       <Notice error={query.error} />
       {query.isPending && <Loading />}
-      {query.error && !query.data && (
+      {fullQuery.error && !fullQuery.data && (
         <button disabled={query.isFetching} onClick={() => query.refetch()}>
           Retry collection
         </button>

@@ -19,21 +19,23 @@ COMMUNITY_LISTS = """query CommunityLists($offset: Int!) {
  lists(where: {public: {_eq: true}},
  order_by: [{followers_count: desc_nulls_last}, {id: asc}], limit: 21, offset: $offset) {
  $HEADER
- list_books(order_by: {id: asc}, limit: 4) { id book_id }
+ list_books(order_by: {id: asc}, limit: 4) { id book_id book { $BOOK } }
  }
-}""".replace("$HEADER", HEADER)
+}""".replace("$HEADER", HEADER).replace("$BOOK", BOOK)
 COMMUNITY_MATCHES = """query CommunityMatches($ids: [Int!]!) {
  lists(where: {id: {_in: $ids}, public: {_eq: true}}, limit: 20) {
  $HEADER
- list_books(order_by: {id: asc}, limit: 4) { id book_id }
+ list_books(order_by: {id: asc}, limit: 4) { id book_id book { $BOOK } }
  }
-}""".replace("$HEADER", HEADER)
+}""".replace("$HEADER", HEADER).replace("$BOOK", BOOK)
 COMMUNITY_LIST = """query CommunityList($id: Int!, $after: Int!) {
  lists(where: {id: {_eq: $id}, public: {_eq: true}}, limit: 1) {
  $HEADER
- list_books(where: {id: {_gt: $after}}, order_by: {id: asc}, limit: 21) { id book_id }
+ list_books(where: {id: {_gt: $after}}, order_by: {id: asc}, limit: 21) {
+ id book_id book { $BOOK }
  }
-}""".replace("$HEADER", HEADER)
+ }
+}""".replace("$HEADER", HEADER).replace("$BOOK", BOOK)
 COMMUNITY_BOOKS = """query CommunityBooks($ids: [Int!]!) {
  books(where: {id: {_in: $ids}}, limit: 80) { $BOOK }
 }""".replace("$BOOK", BOOK)
@@ -91,15 +93,24 @@ def preview(row, *, limit, cursor=0):
     return result, list(dict.fromkeys(selected))
 
 
-async def hydrate(query, previews):
+async def hydrate(query, previews, rows):
     selected = list(dict.fromkeys(key for _, keys in previews for key in keys))
     if not selected:
         return
-    rows = (await query(COMMUNITY_BOOKS, {"ids": selected}))["books"]
-    if not isinstance(rows, list) or len(rows) > len(selected):
+    embedded = {
+        entry["book_id"]: entry["book"]
+        for row in rows
+        for entry in row["list_books"]
+        if entry["book_id"] in selected and "book" in entry
+    }
+    missing = [key for key in selected if key not in embedded]
+    if any(value is not None and positive(value["id"]) != key for key, value in embedded.items()):
+        raise parse_failure()
+    fetched = (await query(COMMUNITY_BOOKS, {"ids": missing}))["books"] if missing else []
+    if not isinstance(fetched, list) or len(fetched) > len(missing):
         raise parse_failure()
     records = {}
-    for row in rows:
+    for row in [*(value for value in embedded.values() if value is not None), *fetched]:
         key = positive(row["id"])
         if key not in selected or key in records:
             raise parse_failure()
@@ -155,7 +166,7 @@ async def browse(query, term, page):
             has_more = len(rows) > 20
             rows = rows[:20]
         previews = [preview(row, limit=4) for row in rows]
-        await hydrate(query, previews)
+        await hydrate(query, previews, rows)
         return PublicLists(
             items=[value for value, _ in previews], has_more=has_more, warning=warning
         )
@@ -178,7 +189,7 @@ async def detail(query, external_id, cursor):
         value, keys = preview(rows[0], limit=21, cursor=cursor)
         if value.external_id != external_id:
             raise parse_failure()
-        await hydrate(query, [(value, keys)])
+        await hydrate(query, [(value, keys)], rows)
         return value
     except (KeyError, TypeError, ValueError, AttributeError, ValidationError) as error:
         raise parse_failure() from error

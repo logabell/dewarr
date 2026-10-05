@@ -196,3 +196,117 @@ async def test_working_egress_does_not_hide_mam_proxy_failure(client, admin, mon
     assert tested["proxy_status"] == "unavailable"
     assert tested["connection"]["proxy_health"]["status"] == "unavailable"
     assert (await client.get("/api/health/connections")).json()["issues"] == 2
+
+
+async def test_automatic_recheck_heals_recent_proxy_failure_before_returning_snapshot(
+    client, admin, database, source_http, monkeypatch
+):
+    from app.domain import source_network
+
+    # Route the configured proxy through the fixture transport, with real cookie rotation.
+    fixture_client = source_network.MAMClient
+    monkeypatch.setattr(
+        source_network,
+        "MAMClient",
+        lambda *args, **kwargs: fixture_client(*args, **{**kwargs, "proxy_url": None}),
+    )
+    await configure(client, proxy_url="http://proxy.test:8888")
+
+    async def probe(*args):
+        return EgressResult(ip="203.0.113.1")
+
+    monkeypatch.setattr(connection_health, "probe_egress", probe)
+    async with database() as db, db.begin():
+        row = await db.get(SourceConnection, "mam")
+        row.status = "connected"
+        row.last_checked_at = datetime.now(UTC)
+        row.proxy_health = {
+            "generation": row.generation,
+            "status": "unavailable",
+            "checked_at": datetime.now(UTC).isoformat(),
+            "message": "MAM proxy could not reach MAM.",
+        }
+    assert (await client.get("/api/health/connections")).json()["issues"] == 1
+    response = await client.post("/api/health/connections/recheck")
+    assert response.status_code == 200, response.text
+    assert response.json()["issues"] == 0
+    assert response.json()["rechecking"] is False
+    assert len(source_http["calls"]) == 1
+    # Healthy polling does not cause additional tests.
+    await client.post("/api/health/connections/recheck")
+    assert len(source_http["calls"]) == 1
+
+
+async def test_recheck_retains_real_failure_limits_retries_and_later_recovers(
+    client, admin, database, source_http
+):
+    from app.db.models import RateLimit
+
+    await configure(client)
+    source_http["status"] = 503
+    first = (await client.post("/api/health/connections/recheck")).json()
+    assert first["issues"] == 1
+    assert first["rechecking"] is False
+    calls = len(source_http["calls"])
+    assert calls > 0
+    await client.post("/api/health/connections/recheck")
+    assert len(source_http["calls"]) == calls
+    async with database() as db, db.begin():
+        claim = await db.get(RateLimit, "connections:recheck")
+        claim.resets_at = datetime.now(UTC) - timedelta(seconds=1)
+    source_http["status"] = 200
+    # MAM does not accept cookie rotation from an unsuccessful 503 response.
+    source_http["cookie"] = "first-fixture"
+    healed = (await client.post("/api/health/connections/recheck")).json()
+    assert healed["issues"] == 0
+
+
+async def test_overlapping_rechecks_report_pending_without_another_probe(
+    client, admin, source_http
+):
+    import asyncio
+
+    await configure(client)
+    source_http["wait"] = asyncio.Event()
+    first = asyncio.create_task(client.post("/api/health/connections/recheck"))
+    try:
+        await asyncio.wait_for(source_http["entered"].wait(), timeout=5)
+        second = (await client.post("/api/health/connections/recheck")).json()
+        assert second["rechecking"] is True
+        assert len(source_http["calls"]) == 1
+    finally:
+        source_http["wait"].set()
+        response = await first
+    assert response.json()["issues"] == 0
+
+
+async def test_egress_success_cannot_clear_failed_proxy_during_busy_session(
+    client, admin, database, monkeypatch
+):
+    from uuid import uuid4
+
+    await configure(client, proxy_url="http://proxy.test:8888")
+    async with database() as db, db.begin():
+        row = await db.get(SourceConnection, "mam")
+        row.status = "connected"
+        row.last_checked_at = datetime.now(UTC)
+        row.lease_token = uuid4()
+        row.lease_until = datetime.now(UTC) + timedelta(minutes=1)
+        row.proxy_health = {
+            "generation": row.generation,
+            "status": "unavailable",
+            "checked_at": datetime.now(UTC).isoformat(),
+            "message": "MAM proxy could not reach MAM.",
+        }
+
+    async def probe(*args):
+        return EgressResult(ip="203.0.113.1")
+
+    monkeypatch.setattr(connection_health, "probe_egress", probe)
+    result = (await client.post("/api/health/connections/recheck")).json()
+    assert result["issues"] == 1
+    assert result["connections"][1]["status"] == "unavailable"
+
+
+async def test_recheck_requires_authentication(client):
+    assert (await client.post("/api/health/connections/recheck")).status_code == 401

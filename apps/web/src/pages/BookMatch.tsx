@@ -34,6 +34,8 @@ export default function BookMatch({
         }),
       ),
     enabled: !source,
+    staleTime: (query) =>
+      query.state.data?.status === "pending" ? 0 : 300_000,
     retry: false,
   });
   const save = useMutation({

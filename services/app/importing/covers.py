@@ -181,7 +181,7 @@ async def download_cover(url, *, transport=None, resolver=public_addresses):
         _cover_request.reset(marker)
 
 
-async def normalize_cover(data):
+async def normalize_cover(data, size=1200):
     if len(data) > MAX_INPUT:
         raise CoverError("The cover response exceeds the size limit")
     try:
@@ -189,6 +189,7 @@ async def normalize_cover(data):
             sys.executable,
             "-m",
             "app.importing.cover_image",
+            str(size),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

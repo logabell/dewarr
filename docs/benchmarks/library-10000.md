@@ -4,6 +4,22 @@ Measured the real FastAPI routes, SQLAlchemy/PostgreSQL queries, and inventory
 synchronization code against a disposable local database. These are workstation
 measurements, not measurements of a deployed NAS or remote provider.
 
+## Cover follow-up — October 5, 2026
+
+The same 10,000-book page fixture was rerun on disposable PostgreSQL 18, through
+the bounded workstation runner. Warm library-cover responses used **5 SQL
+statements**, down from the previous **11**. Four consecutive warm reads took
+10.6, 10.1, 10.3 and 9.9 ms (median 10.2 ms); SQL accounted for 3.3–3.6 ms.
+The first cover read took 39.1 ms and 18 statements, including cache publication
+and the post-fetch access check. Provider latency and image conversion remain
+excluded. The database version differs from the original run, so these timings
+are observations rather than a controlled percentage comparison.
+
+The cover path now shares the scoped display-family relation in one CTE, selects
+edition preferences in the candidate query, and reads the preferred cached image
+without a second candidate calculation. Cold fills retain the access recheck;
+warm responses still validate current grants before returning either bytes or 304.
+
 ## Fixture and method
 
 - Apple M5 Pro, 24 GiB RAM, PostgreSQL 16.14 (Homebrew).

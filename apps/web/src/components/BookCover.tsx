@@ -1,3 +1,4 @@
+import { coverImage, coverImageSet } from "../coverImages";
 import { useState } from "react";
 import { BookOpen, Check, Headphones, Star } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -15,6 +16,7 @@ type Props = {
   work?: Work | null;
   medium?: "any" | "ebook" | "audio";
   rating?: number | null;
+  detail?: boolean;
 };
 export default function BookCover({
   title,
@@ -24,6 +26,7 @@ export default function BookCover({
   work,
   medium = "any",
   rating,
+  detail = false,
 }: Props) {
   const display = useDisplayPreferences();
   const { data: session } = useQuery<Auth | null>({
@@ -110,13 +113,11 @@ export default function BookCover({
     >
       {src ? (
         <img
-          src={
-            src.startsWith("https://")
-              ? `/api/catalog/cover-image?url=${encodeURIComponent(src)}`
-              : src
-          }
+          src={coverImage(src, detail ? 1200 : 320)}
+          srcSet={detail ? undefined : coverImageSet(src)}
+          decoding="async"
           alt={`Cover of ${title}`}
-          loading="lazy"
+          loading={detail ? "eager" : "lazy"}
           referrerPolicy="no-referrer"
           onError={() => setFailed((old) => [...old, src])}
           onLoad={(event) => {

@@ -62,18 +62,28 @@ Provider response freshness is defined in
 | Catalog search and library identifier/title matching | 5 minutes |
 | Other catalog queries, including author bibliographies | 1 hour |
 | Live provider list membership and list choices | Bypass the catalog response cache |
+| Public Hardcover list previews | Revalidate visibility on every read; include book artwork in the same GraphQL response |
 | Goodreads expanded collection pages | 1 day, scoped to reader and collection version |
-| Public cover image bytes | 365 days per URL; browser reuse for 1 day |
+| Reader enrichment results | 5 minutes, scoped to reader, account generation, catalog endpoint and library evidence |
+| Public cover image bytes | 365 days per URL and size (320/640/1200); variants share the original fetch; browser reuse for 1 day |
 | Library cover image bytes | 1 day, invalidated by backend generation, cover path or inventory revision |
 | Download-source search results | Separate, short-lived selection data; existing 25-minute expiry |
 
 Browse endpoints explicitly opt into stale-while-revalidate. For up to one day
 after freshness expires they return saved provider data and coalesce a durable
-`catalog.refresh` job. A dedicated worker slot prevents imports and scans from
-occupying every refresh slot. Jobs contain query arguments, never credentials;
+`catalog.refresh` job. Two dedicated worker slots prevent a slow lookup from
+blocking every other display refresh; provider rate limits remain shared.
+Imports and scans use separate slots. Jobs contain query arguments, never credentials;
 they check current access, credential generation and restore state before use.
 Refresh failures have bounded retries and a five-minute rescheduling cooldown.
 Imports and list synchronization retain synchronous provider-read semantics.
+
+Discover starts with one response containing its collection indexes, saved layout
+and selected collection cards. Full collection pages show the saved preview while
+loading their first expanded page. Expired expanded pages and saved live charts
+refresh through the worker. Visible reader cards enqueue missing metadata in
+small batches and poll for individual results, so one slow provider lookup does
+not delay delivery of the other cards' available metadata.
 
 Cold and expired synchronous reads share a short database lease across API and
 worker processes. Provider I/O runs outside database transactions, with bounded
@@ -87,6 +97,9 @@ skips locked rows so simultaneous refreshes do not deadlock each other's writes.
 Library cover responses use `private, no-cache` with an ETag: the browser may
 retain the image, but must revalidate access before reuse, including a 304
 response. Access and backend configuration are checked again after a cache fill.
+Warm artwork uses a single scoped candidate query and a direct cache read; cold
+fills still recheck access after network I/O. Public card artwork requests 320px
+or 640px variants, while book detail and export paths retain 1200px originals.
 Unchanged JSON responses update freshness without rewriting their JSON value.
 
 The UI retains browsed queries for ten minutes after becoming inactive, separately

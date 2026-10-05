@@ -139,7 +139,9 @@ async def test_preview_follow_and_worker_sync_use_shared_services_without_acquis
         assert await db.scalar(select(func.count()).select_from(ListEntry)) == 2
         assert await db.scalar(select(func.count()).select_from(AcquisitionIntent)) == 0
         assert await db.scalar(select(func.count()).select_from(ListAcquisitionPolicy)) == 0
-        assert await db.scalar(select(func.count()).select_from(ProviderCache)) == 0
+        cached = list(await db.scalars(select(ProviderCache)))
+        assert cached  # Search IDs and public book metadata may be reused.
+        assert all("lists" not in row.value.get("data", {}) for row in cached)
     assert (await follow(client)).json() == data
     assert (await client.get("/api/discovery/lists")).json()["items"][0][
         "followed_list_id"

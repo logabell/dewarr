@@ -212,11 +212,7 @@ export default function QuickAdd({
           }
         >
           <Download size={16} aria-hidden="true" />
-          {busy
-            ? "Adding…"
-            : actionLabel === "Quick add"
-              ? `Quick add · ${label}`
-              : actionLabel}
+          {busy ? "Adding…" : actionLabel}
         </button>
         <div className="cover-quick-formats">
           <button

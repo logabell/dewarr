@@ -1,9 +1,13 @@
 import { expect, test, type Page } from "../fixtures";
 
 const checked = "2026-09-24T19:00:00Z";
-async function setup(page: Page) {
+async function setup(
+  page: Page,
+  options: { recover?: boolean; wait?: Promise<void>; path?: string } = {},
+) {
   const state = {
     fail: false,
+    rechecks: 0,
     connections: [
       {
         key: "mam",
@@ -47,9 +51,34 @@ async function setup(page: Page) {
         csrf_token: "test",
       };
     else if (path === "/api/setup/onboarding") data = { status: "completed" };
-    else if (path === "/api/health/connections") {
+    else if (path === "/api/metadata/account") data = { enabled: false };
+    else if (path === "/api/discovery/home")
+      data = {
+        layout: { order: [], hidden: [] },
+        index: { items: [], years: [] },
+        public_lists: { items: [] },
+        saved: { items: [] },
+        selected: [],
+      };
+    else if (path === "/api/discovery/library")
+      data = { items: [], has_more: false };
+    else if (
+      path === "/api/health/connections" ||
+      path === "/api/health/connections/recheck"
+    ) {
       if (state.fail)
         return route.fulfill({ status: 503, json: { detail: "Unavailable" } });
+      if (path.endsWith("/recheck")) {
+        expect(route.request().method()).toBe("POST");
+        state.rechecks++;
+        await options.wait;
+        if (options.recover)
+          state.connections = state.connections.map((item) => ({
+            ...item,
+            status: "connected",
+            message: "Connection verified.",
+          }));
+      }
       data = {
         connections: state.connections,
         issues: state.connections.filter((c) => c.status !== "connected")
@@ -60,16 +89,23 @@ async function setup(page: Page) {
     return route.fulfill({ json: data });
   });
   await page.clock.install();
-  await page.goto("/settings#display");
+  await page.goto(options.path ?? "/settings#display");
   return state;
 }
 
 test("top bar explains connection failures and links to settings", async ({
   page,
 }) => {
-  await setup(page);
+  const state = await setup(page, { path: "/discover" });
   const warning = page.getByLabel("3 connection issues", { exact: true });
   await expect(warning).toBeVisible();
+  expect(state.rechecks).toBe(1);
+  const warningBox = await warning.boundingBox();
+  const addBox = await page
+    .getByRole("button", { name: "Add list", exact: true })
+    .boundingBox();
+  expect(addBox!.x - (warningBox!.x + warningBox!.width)).toBeLessThan(20);
+  expect(addBox!.x).toBeGreaterThan(warningBox!.x);
   await warning.focus();
   await page.keyboard.press("Enter");
   const panel = page.getByLabel("Connection issues", { exact: true });
@@ -86,6 +122,24 @@ test("top bar explains connection failures and links to settings", async ({
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+});
+
+test("a transient failure is verified and healed before any warning appears", async ({
+  page,
+}) => {
+  let finish!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const state = await setup(page, { recover: true, wait });
+  await expect.poll(() => state.rechecks).toBe(1);
+  await expect(page.locator(".connection-health")).toHaveCount(0);
+  const verified = page.waitForResponse("**/api/health/connections/recheck");
+  finish();
+  await verified;
+  await page.clock.fastForward(31_000);
+  await expect(page.locator(".connection-health")).toHaveCount(0);
+  expect(state.rechecks).toBe(1);
 });
 
 test("polling clears recovered issues and reports an unavailable health API", async ({

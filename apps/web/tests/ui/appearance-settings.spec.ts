@@ -1,4 +1,4 @@
-import { expect, test } from "../fixtures";
+import { expect, test, emptyDiscoveryHome } from "../fixtures";
 
 test("cover shapes persist while legacy overlay preferences cannot hide overlays", async ({
   page,
@@ -19,6 +19,8 @@ test("cover shapes persist while legacy overlay preferences cannot hide overlays
     }
   });
   await page.route("**/api/**", (route) => {
+    if (new URL(route.request().url()).pathname === "/api/discovery/home")
+      return route.fulfill({ json: emptyDiscoveryHome() });
     const path = new URL(route.request().url()).pathname;
     let data: unknown = { items: [], total: 0 };
     if (path === "/api/auth/me")

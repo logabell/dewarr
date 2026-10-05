@@ -1,3 +1,4 @@
+import { coverImage, coverImageSet } from "../coverImages";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "../components/InfiniteScroll";
 import ListDownloads from "../components/ListDownloads";
@@ -29,7 +30,9 @@ function Covers({ list }: { list: Card }) {
         list.covers.map((cover, index) => (
           <img
             key={`${cover}:${index}`}
-            src={cover}
+            src={coverImage(cover)}
+            srcSet={coverImageSet(cover)}
+            decoding="async"
             alt=""
             loading="lazy"
             referrerPolicy="no-referrer"

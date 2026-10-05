@@ -84,6 +84,7 @@ class CollectionEntry(CollectionBook):
 
 
 class CollectionDetail(BaseModel):
+    stale: bool = False
     collection: CollectionCard
     items: list[CollectionEntry]
     total: int
@@ -177,6 +178,18 @@ async def load_live(value, user, db):
         latest = max((value, cached.value), key=lambda v: datetime.fromisoformat(v["updated_at"]))
         return user, latest, None
     uid = user.id
+    if value["books"]:
+        from app.domain.catalog_refresh import schedule
+
+        await db.rollback()
+        if await schedule(
+            uid, "local", None, "collection_snapshot", [value["id"], value["updated_at"]]
+        ):
+            return (
+                await current_actor(db, uid),
+                value,
+                "Showing saved books while this collection refreshes.",
+            )
     await db.rollback()
     from app.domain.curation_sources import fetch
 
@@ -230,6 +243,41 @@ async def collections(
     limit: int = Query(default=24, ge=1, le=100),
 ):
     values, follows = await sources(db, user)
+    return collection_index(
+        values,
+        follows,
+        kind=kind,
+        provider=provider,
+        audience=audience,
+        language=language,
+        q=q,
+        genre=genre,
+        category=category,
+        year=year,
+        saved=saved,
+        ids=ids,
+        page=page,
+        limit=limit,
+    )
+
+
+def collection_index(
+    values,
+    follows,
+    *,
+    kind="all",
+    provider="",
+    audience="",
+    language="",
+    q="",
+    genre="",
+    category="",
+    year=None,
+    saved=False,
+    ids=None,
+    page=1,
+    limit=24,
+):
     rows = [
         v
         for v in values.values()
@@ -274,6 +322,30 @@ async def collections(
     )
 
 
+class DiscoveryHome(BaseModel):
+    index: CollectionIndex
+    public_lists: CollectionIndex
+    saved: CollectionIndex
+    layout: DiscoveryPreferences
+    selected: list[CollectionCard]
+
+
+@router.get("/home", response_model=DiscoveryHome)
+async def home(user: CurrentUser, db: Database):
+    # Load reader snapshots once for the initial shelves, not once per filter.
+    values, follows = await sources(db, user)
+    preferences = await layout(user, db)
+    return DiscoveryHome(
+        index=collection_index(values, follows, limit=100),
+        public_lists=collection_index(values, follows, kind="listopia", limit=100),
+        saved=collection_index(values, follows, saved=True, limit=100),
+        layout=preferences,
+        selected=[
+            card(values[key], follows.get(key)) for key in preferences.order if key in values
+        ],
+    )
+
+
 async def detail_view(value, user, db, followed=None, page=1, winners=False, q="", full=False):
     books = [
         CollectionBook.model_validate(b)
@@ -281,6 +353,7 @@ async def detail_view(value, user, db, followed=None, page=1, winners=False, q="
         if (not winners or b.get("winner"))
         and (not q or q.casefold() in (b["title"] + " " + " ".join(b["authors"])).casefold())
     ]
+    stale = False
     total = len(books)
     books = books[(page - 1) * 40 : page * 40]
     if full and value["kind"] == "listopia":
@@ -288,7 +361,7 @@ async def detail_view(value, user, db, followed=None, page=1, winners=False, q="
             raise HTTPException(422, "Full list browsing does not support snapshot filters")
         user_id = user.id
         try:
-            raw, total = await collection_page(db, user_id, value, page)
+            raw, total, stale = await collection_page(db, user_id, value, page)
         except AdapterError as error:
             await db.rollback()
             raise HTTPException(
@@ -317,6 +390,7 @@ async def detail_view(value, user, db, followed=None, page=1, winners=False, q="
         )
     return CollectionDetail(
         collection=card(value, followed),
+        stale=stale,
         items=items,
         total=total,
         page=page,
@@ -408,6 +482,7 @@ async def collection(
     _, follows = await sources(db, user)
     result = await detail_view(value, user, db, follows.get(collection_id), page, winners, q, full)
     if warning:
+        result.stale = True
         result.collection.warning = warning
     return result
 

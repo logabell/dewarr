@@ -407,7 +407,15 @@ async def test_control_jobs_run_while_each_expensive_work_class_is_busy(database
     queue = get_queue()
     release = asyncio.Event()
     started = {
-        name: asyncio.Event() for name in ("imports", "inventory", "confirmation", "metadata")
+        name: asyncio.Event()
+        for name in (
+            "imports",
+            "inventory",
+            "confirmation",
+            "metadata",
+            "catalog-cache:first",
+            "catalog-cache:second",
+        )
     }
     finished = asyncio.Event()
 
@@ -419,7 +427,7 @@ async def test_control_jobs_run_while_each_expensive_work_class_is_busy(database
         finished.set()
 
     for name in started:
-        task = queue.task(name=f"scaling.busy.{name}", queue=name)(busy)
+        task = queue.task(name=f"scaling.busy.{name}", queue=name.split(":")[0])(busy)
         await task.defer_async(name=name)
     probe = queue.task(name="scaling.control", queue="system")(control)
     worker = asyncio.create_task(run_pools(queue))

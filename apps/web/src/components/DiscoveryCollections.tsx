@@ -1,3 +1,5 @@
+import { refreshPending } from "../queryPolicies";
+import { coverImage, coverImageSet } from "../coverImages";
 import { usePagedQuery } from "../hooks/usePagedQuery";
 import ShelfViewAll from "./ShelfViewAll";
 import BookSourceIcon from "./BookSourceIcon";
@@ -98,7 +100,9 @@ export function CollectionTile({ collection }: { collection: Collection }) {
         {collection.covers.map((cover, i) => (
           <img
             key={i}
-            src={`/api/catalog/cover-image?url=${encodeURIComponent(cover)}`}
+            src={coverImage(cover)}
+            srcSet={coverImageSet(cover)}
+            decoding="async"
             alt=""
             loading="lazy"
             referrerPolicy="no-referrer"
@@ -185,6 +189,7 @@ export function CollectionRow({
           signal,
         }),
       ),
+    refetchInterval: refreshPending,
     next: (last, pages) =>
       last.has_more && pages.reduce((n, p) => n + p.items.length, 0) < 100
         ? pages.length + 1

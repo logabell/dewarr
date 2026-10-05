@@ -1,4 +1,4 @@
-import { expect, test } from "../fixtures";
+import { expect, test, emptyDiscoveryHome } from "../fixtures";
 
 const series = (n: number) => ({
   external_id: String(n),
@@ -43,6 +43,8 @@ test("Discover series tab scrolls through saved pages without starting catalog r
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/api/**", (route) => {
+    if (new URL(route.request().url()).pathname === "/api/discovery/home")
+      return route.fulfill({ json: emptyDiscoveryHome() });
     const url = new URL(route.request().url());
     if (url.pathname === "/api/catalog/cover-image") return route.fallback();
     requests.push(`${route.request().method()} ${url.pathname}`);

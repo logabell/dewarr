@@ -192,6 +192,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/health/connections/recheck": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Recheck Connections */
+    post: operations["recheck_connections_api_health_connections_recheck_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/setup": {
     parameters: {
       query?: never;
@@ -1489,6 +1506,23 @@ export interface paths {
     put?: never;
     /** Add Collection */
     post: operations["add_collection_api_discovery_collections_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/discovery/home": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Home */
+    get: operations["home_api_discovery_home_get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -7046,6 +7080,11 @@ export interface components {
     };
     /** CollectionDetail */
     CollectionDetail: {
+      /**
+       * Stale
+       * @default false
+       */
+      stale: boolean;
       collection: components["schemas"]["CollectionCard"];
       /** Items */
       items: components["schemas"]["CollectionEntry"][];
@@ -7462,6 +7501,11 @@ export interface components {
        * @default 300
        */
       check_interval_seconds: number;
+      /**
+       * Rechecking
+       * @default false
+       */
+      rechecking: boolean;
     };
     /** ConnectionReconciliationRequest */
     ConnectionReconciliationRequest: {
@@ -7951,6 +7995,15 @@ export interface components {
       page: number;
       /** Has More */
       has_more: boolean;
+    };
+    /** DiscoveryHome */
+    DiscoveryHome: {
+      index: components["schemas"]["CollectionIndex"];
+      public_lists: components["schemas"]["CollectionIndex"];
+      saved: components["schemas"]["CollectionIndex"];
+      layout: components["schemas"]["DiscoveryPreferences"];
+      /** Selected */
+      selected: components["schemas"]["CollectionCard"][];
     };
     /** DiscoveryItem */
     DiscoveryItem: {
@@ -10273,7 +10326,7 @@ export interface components {
       limit: number;
       /**
        * Matcher Version
-       * @default 5
+       * @default 6
        */
       matcher_version: number;
     };
@@ -12123,7 +12176,7 @@ export interface components {
        * @default unmatched
        * @enum {string}
        */
-      status: "matched" | "unmatched" | "disabled";
+      status: "matched" | "unmatched" | "disabled" | "pending";
       /** Basis */
       basis?: string | null;
       /** Reason */
@@ -15415,6 +15468,26 @@ export interface operations {
       };
     };
   };
+  recheck_connections_api_health_connections_recheck_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConnectionHealthView"];
+        };
+      };
+    };
+  };
   setup_status_api_auth_setup_get: {
     parameters: {
       query?: never;
@@ -17657,6 +17730,7 @@ export interface operations {
     parameters: {
       query: {
         url: string;
+        size?: number;
       };
       header?: never;
       path?: never;
@@ -18020,6 +18094,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  home_api_discovery_home_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DiscoveryHome"];
         };
       };
     };
@@ -21836,7 +21930,9 @@ export interface operations {
   };
   reader_match_api_metadata_works__work_id__reader_match_get: {
     parameters: {
-      query?: never;
+      query?: {
+        background?: boolean;
+      };
       header?: never;
       path: {
         work_id: string;
