@@ -16,13 +16,12 @@ from app.domain.catalog_titles import (
     display_title_sql,
 )
 from app.domain.visibility import visible_origin_work, visible_work
-from app.domain.work_graph import canonical_map
+from app.domain.work_graph import canonical_families, canonical_map
 
 
 def display_map(user, work_ids=None):
     from app.domain.availability import availability_rows
 
-    canonical = canonical_map()
     # A detail/page projection needs only these title families. Include every
     # subtitle/author/language candidate so ambiguity rules remain unchanged.
     selected = None
@@ -30,16 +29,16 @@ def display_map(user, work_ids=None):
         from sqlalchemy.orm import aliased
 
         seed = aliased(Work)
-        titles = (
-            select(display_base_sql(seed.title))
-            .join(canonical, canonical.c.work_id == seed.id)
-            .where(canonical.c.origin_id.in_(work_ids))
-        )
+        origins = canonical_map(work_ids)
+        titles = select(display_base_sql(seed.title)).join(origins, origins.c.work_id == seed.id)
         selected = (
             select(Work.id)
             .where(Work.redirect_to.is_(None), display_base_sql(Work.title).in_(titles))
             .cte()
         )
+    canonical = (
+        canonical_families(select(selected.c.id)) if selected is not None else canonical_map()
+    )
     candidate = Work.id.in_(select(selected.c.id)) if selected is not None else True
     holding_candidate = (
         canonical.c.work_id.in_(select(selected.c.id)) if selected is not None else True

@@ -72,7 +72,11 @@ export default function QuickAddStatus({
               ? "Finding your download"
               : held
                 ? "Request needs attention"
-                : "Quick add complete"}
+                : receipt?.message?.startsWith("Already available")
+                  ? "In library"
+                  : /queued/i.test(receipt?.message || "")
+                    ? "Downloads queued"
+                    : "Request saved"}
         </strong>
       </div>
       <p>{message}</p>
@@ -94,7 +98,7 @@ export default function QuickAddStatus({
               : "/requests"
           }
         >
-          View downloads
+          View request
         </Link>
       </div>
     </section>

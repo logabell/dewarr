@@ -9,6 +9,7 @@ from app.db.models import CatalogSeries, SeriesMembership, Version, Work, WorkMe
 from app.domain.catalog_titles import identity_authors, optional_subtitle_base, parse_title_labels
 from app.domain.visibility import visible_origin_work
 from app.domain.work_graph import family_ids
+from app.importing.match_evidence import catalog_identifiers
 
 MAX_SERIES_QUERIES = 3
 MAX_CATALOG_SOURCES = 50
@@ -75,12 +76,7 @@ async def edition_identifiers(db, work, medium):
             *(() if medium == "all" else (Version.medium == medium,)),
         )
     )
-    values = {
-        value.strip()
-        for identifiers in rows
-        for key in ("isbn", "isbn10", "isbn13", "isbn_10", "isbn_13", "asin")
-        if isinstance(value := (identifiers or {}).get(key), str) and value.strip()
-    }
+    values = {value for identifiers in rows for _, value in catalog_identifiers(identifiers or {})}
     return sorted(values)[:50]
 
 

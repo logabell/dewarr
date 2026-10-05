@@ -7,8 +7,10 @@ from pathlib import PurePosixPath
 from sqlalchemy import select
 
 from app.db.models import CatalogSeries, SeriesMembership, Work
+from app.domain.audio_manifest import distinct_numbered_tracks
 from app.domain.release_profiles import normalized
 from app.domain.series_projection import full_book
+from app.domain.title_matching import exact_title_key
 from app.domain.visibility import visible_work
 from app.domain.work_graph import canonical_map, family_ids
 
@@ -101,11 +103,11 @@ def source_series(release, work, context):
         normalized(a) for a in work["authors"]
     ):
         return []
-    names = {normalized(s.name) for s in getattr(release, "series", [])}
+    names = {exact_title_key(s.name) for s in getattr(release, "series", [])}
     for value in (getattr(release, "title", ""), release.raw_title):
-        names.add(normalized(value))
+        names.add(exact_title_key(value))
         names.add(
-            normalized(
+            exact_title_key(
                 re.sub(
                     r"\s*(?:[-:–]\s*)?(?:complete series|box[ -]?set|"
                     r"books?\s+\d+\s*[-–]\s*\d+)\s*$",
@@ -115,30 +117,37 @@ def source_series(release, work, context):
                 )
             )
         )
-    return [s for s in context["series"] if normalized(s["name"]) in names]
+    return [s for s in context["series"] if exact_title_key(s["name"]) in names]
 
 
 def label(value):
     # Only an explicit leading position is removed. Substrings and series-number
     # inference cannot identify a book or turn an omnibus into separate children.
-    return normalized(re.sub(r"^(?:book\s*)?\d+(?:\.\d+)?\s*[-–.:]\s*", "", value, flags=re.I))
+    return exact_title_key(re.sub(r"^(?:book\s*)?\d+(?:\.\d+)?\s*[-–.:]\s*", "", value, flags=re.I))
 
 
 def manifest(release, work, context, descriptor, medium):
     candidates = source_series(release, work, context)
+    if not candidates:
+        return None
     primary = [
         f for f in descriptor.files if PurePosixPath(f.path).suffix[1:].lower() in PRIMARY[medium]
     ]
+    labelled_files = []
+    for file in primary:
+        path = PurePosixPath(file.path)
+        # Exclude the torrent root: its name cannot establish every child's identity.
+        labels = {label(path.stem), *(label(p) for p in path.parts[1:-1])} - {""}
+        labelled_files.append((file, labels))
     proofs = []
     for series in candidates:
+        by_title = {}
+        for member in series["members"]:
+            by_title.setdefault(exact_title_key(member["title"]), []).append(member)
         groups = {}
         valid = True
-        for file in primary:
-            path = PurePosixPath(file.path)
-            # Exclude the torrent root: a release named like one book must not
-            # assign every unrelated child file to that book.
-            labels = {label(path.stem), *(label(p) for p in path.parts[1:-1])}
-            matches = [m for m in series["members"] if normalized(m["title"]) in labels]
+        for file, labels in labelled_files:
+            matches = [member for name in labels for member in by_title.get(name, [])]
             if len(matches) != 1:
                 valid = False
                 break
@@ -161,14 +170,9 @@ def manifest(release, work, context, descriptor, medium):
                     and len({p.suffix.lower() for p in paths}) == 1
                 )
                 if valid and len(files) > 1:
-                    title = normalized(group["work"]["title"])
-                    stems = [normalized(p.stem).removeprefix(title).strip() for p in paths]
-                    valid = all(
-                        re.fullmatch(
-                            r"(?:(?:disc|cd|part)\s*\d+\s*)?(?:(?:track|chapter)\s*)?\d+", stem
-                        )
-                        for stem in stems
-                    ) and len(set(stems)) == len(stems)
+                    valid = distinct_numbered_tracks(
+                        (p.stem for p in paths), group["work"]["title"]
+                    )
             if not valid:
                 break
         if valid:

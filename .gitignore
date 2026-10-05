@@ -43,6 +43,7 @@ backups/
 !/docs/CONNECTION-HEALTH.md
 !/docs/STORAGE-COMPATIBILITY.md
 !/docs/LIBRARY-FOLDERS.md
+!/docs/METADATA-SOURCES.md
 
 # Publish only reusable build, catalog, and test tools.
 /scripts/*.py

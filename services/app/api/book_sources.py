@@ -23,6 +23,7 @@ from app.domain.release_profiles import (
     ProfileSnapshot,
     ReleaseAssessment,
     assess_release,
+    catalog_language_release,
     indexer_title_authors,
     ranking_key,
 )
@@ -135,6 +136,7 @@ async def view(db, user, operation_id):
     work = {**payload["work"], "identifiers": payload.get("identifiers", [])}
     for row in rows:
         release = parse_release(row.source_key, row.release_snapshot)
+        release = catalog_language_release(release, work)
         assessment = assess_release(release, work, preferences, payload["medium"])
         if not changed and (authors := indexer_title_authors(release, work)):
             # Display parsed credits without rewriting the saved source evidence.
@@ -260,7 +262,13 @@ async def search_detail(search_id: UUID, user: CurrentUser, db: Database):
 @router.post(
     "/source-searches/{search_id}/results/{result_id}/artifact", response_model=SourceArtifactView
 )
-async def inspect(search_id: UUID, result_id: UUID, user: Member, db: Database):
+async def inspect(
+    search_id: UUID,
+    result_id: UUID,
+    user: Member,
+    db: Database,
+    use_wedge: bool = Query(False),
+):
     operation, changed = await checked(db, search_id, user.id)
     row = await db.get(SourceResult, result_id)
     if not row or row.owner_id != user.id or row.operation_id != operation.id:
@@ -270,6 +278,19 @@ async def inspect(search_id: UUID, result_id: UUID, user: Member, db: Database):
     connection = await db.get(SourceConnection, row.source_key)
     if not connection or not connection.enabled or connection.generation != row.source_generation:
         raise HTTPException(409, "Source connection changed. Search again.")
+    if use_wedge and row.source_key != "mam":
+        raise HTTPException(422, "Freeleech wedges are available only for MAM releases")
+    if use_wedge:
+        from app.domain.acquisition import RequestOptions
+        from app.domain.permissions import auto_approves
+
+        release = parse_release(row.source_key, row.release_snapshot)
+        if release.medium not in {"ebook", "audio"}:
+            raise HTTPException(409, "The release medium is unknown; inspect this release first")
+        if not auto_approves(user, RequestOptions(mode=release.medium)):
+            raise HTTPException(
+                403, "This account can request books, but a download needs approval"
+            )
     if row.source_key == "audiobookbay":
         return await resolve_abb(result_id, user, db)
     if row.source_key == "prowlarr":
@@ -281,7 +302,9 @@ async def inspect(search_id: UUID, result_id: UUID, user: Member, db: Database):
     )
     await db.rollback()
     try:
-        identifier = await resolve_mam(owner_id, source_id, expected_generation=generation)
+        identifier = await resolve_mam(
+            owner_id, source_id, expected_generation=generation, use_wedge=use_wedge
+        )
     except AdapterError as error:
         raise adapter_http_error(error) from error
     return await artifact_view(db, identifier, owner_id)

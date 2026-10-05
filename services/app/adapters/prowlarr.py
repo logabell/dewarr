@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.adapters.contracts import AdapterError, FailureKind, Release
 from app.adapters.http import configured_url
 from app.domain.catalog_network import retry_delay
+from app.domain.indexer_labels import indexer_language
 from app.network_addresses import public_address
 
 _private_download = contextvars.ContextVar("prowlarr_download", default=False)
@@ -116,6 +117,9 @@ class ProwlarrRelease(Release):
 
     @model_validator(mode="after")
     def explicit_formats(self):
+        if not self.language and (language := indexer_language(self.title)):
+            self.language = language
+            self.details = {**self.details, "language_basis": "release_title"}
         if not self.formats:
             formats = r"m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi|azw|cbz|cbr"
             labels = [

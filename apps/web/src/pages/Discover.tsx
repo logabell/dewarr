@@ -5,14 +5,20 @@ import { HardcoverCollections } from "./CommunityLists";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   Check,
   Search,
   Settings,
   SlidersHorizontal,
   Trophy,
 } from "lucide-react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import { ReturnLink } from "../components/NavigationContinuity";
+import { languageName } from "../components/LanguageSelect";
 import { api, result } from "../api/client";
 import { Loading, Notice } from "../components";
 import CustomizeDiscover, {
@@ -23,6 +29,7 @@ import FollowedLists, {
   PersonalListPage,
   PersonalRow,
 } from "../components/FollowedLists";
+import DeferredShelf from "../components/DeferredShelf";
 import DiscoveryShelf from "../components/DiscoveryShelf";
 import ListDownloads from "../components/ListDownloads";
 import ShelfPagination from "../components/ShelfPagination";
@@ -31,6 +38,8 @@ import RecentLibrary from "../components/RecentLibrary";
 import { useTrackStoryGraphToRead } from "../hooks/useTrackStoryGraphToRead";
 import {
   CollectionActions,
+  collectionCaption,
+  collectionSource,
   CollectionBooks,
   CollectionRow,
   CollectionTile,
@@ -128,7 +137,10 @@ function Home({ canEdit }: { canEdit: boolean }) {
     queryFn: async () => result(await api.GET("/api/discovery/layout")),
   });
   const [customizing, setCustomizing] = useState(false);
-  const sources = useDiscoverShelfSources();
+  const sources = useDiscoverShelfSources(
+    customizing,
+    layout.data?.order || [],
+  );
   const save = useMutation({
     mutationFn: async (draft: DiscoverLayout) => {
       for (const c of sources.collections.data || []) {
@@ -298,8 +310,6 @@ function Home({ canEdit }: { canEdit: boolean }) {
         <div className="explore-home-tools">
           <button
             disabled={
-              sources.lists.isPending ||
-              sources.collections.isPending ||
               !!sources.lists.error ||
               !!sources.collections.error ||
               layout.isPending ||
@@ -334,25 +344,44 @@ function Home({ canEdit }: { canEdit: boolean }) {
       {!layout.isPending &&
         rows
           .filter((r) => !hidden.includes(r.id))
-          .map((row) => <div key={row.id}>{row.content}</div>)}
+          .map((row, index) =>
+            index < 2 ? (
+              <div key={row.id}>{row.content}</div>
+            ) : (
+              <DeferredShelf key={row.id} title={row.title}>
+                {row.content}
+              </DeferredShelf>
+            ),
+          )}
       {rows.length > 0 && rows.every((r) => hidden.includes(r.id)) && (
         <p className="explore-empty">
           Your home is clear. Choose shelves in Customize or add a collection.
         </p>
       )}
-      {customizing && (
-        <CustomizeDiscover
-          shelves={options}
-          initial={{
-            order: rows.map((r) => r.id),
-            hidden: hidden.filter((id) => id !== "personal"),
-          }}
-          close={() => setCustomizing(false)}
-          save={(draft) => save.mutate(draft)}
-          busy={save.isPending}
-          error={save.error}
-        />
-      )}
+      <Link className="back-link" to="/discover?view=yours">
+        Browse all your lists →
+      </Link>
+      {customizing &&
+        (sources.collections.isFetching || sources.lists.isFetching) && (
+          <p role="status">Loading available shelves…</p>
+        )}
+      {customizing &&
+        sources.collections.isSuccess &&
+        sources.lists.isSuccess &&
+        !sources.collections.isPlaceholderData &&
+        !sources.lists.isPlaceholderData && (
+          <CustomizeDiscover
+            shelves={options}
+            initial={{
+              order: rows.map((r) => r.id),
+              hidden: hidden.filter((id) => id !== "personal"),
+            }}
+            close={() => setCustomizing(false)}
+            save={(draft) => save.mutate(draft)}
+            busy={save.isPending}
+            error={save.error}
+          />
+        )}
     </>
   );
 }
@@ -364,14 +393,23 @@ function CollectionIndex({ awards }: { awards: boolean }) {
   const genre = params.get("genre") || "";
   const q = params.get("q") || "";
   const source = params.get("source") || "all";
+  const audience = params.get("audience") || "";
+  const language = params.get("language") || "";
   const query = usePagedQuery({
-    queryKey: ["discovery-collections", { awards, year, category, genre, q }],
+    queryKey: [
+      "discovery-collections",
+      { awards, year, category, genre, q, source, audience, language },
+    ],
     queryFn: async (page, signal) =>
       result(
         await api.GET("/api/discovery/collections", {
           params: {
             query: {
-              kind: awards ? "award" : "listopia",
+              kind: awards ? "award" : "collections",
+              provider:
+                source === "all" || source === "hardcover" ? "" : source,
+              audience,
+              language,
               year,
               category,
               genre,
@@ -400,12 +438,14 @@ function CollectionIndex({ awards }: { awards: boolean }) {
       <div className="explore-view-heading">
         <div>
           <h2>
-            {awards ? "Goodreads Choice Awards" : "Collections worth exploring"}
+            {awards
+              ? "Stories worth celebrating"
+              : "Collections worth exploring"}
           </h2>
           <p>
             {awards
-              ? "Explore winners and nominees by year."
-              : "Reader-curated lists, ready for your next chapter."}
+              ? "Award winners, finalists, and honors from the organizations that chose them."
+              : "Bestsellers, recording releases, and reader-curated lists in one place."}
           </p>
         </div>
       </div>
@@ -438,7 +478,7 @@ function CollectionIndex({ awards }: { awards: boolean }) {
             </label>
             <Link
               className="back-link"
-              to={`/discover?view=browse&winners=1${year ? `&year=${year}` : ""}${category ? `&category=${encodeURIComponent(category)}` : ""}`}
+              to={`/discover?${new URLSearchParams({ ...Object.fromEntries(params), view: "browse", winners: "1" })}`}
             >
               Browse winners <Trophy size={14} />
             </Link>
@@ -459,7 +499,7 @@ function CollectionIndex({ awards }: { awards: boolean }) {
             </select>
           </label>
         )}
-        {!awards && (
+        {
           <label>
             Source
             <select
@@ -468,11 +508,45 @@ function CollectionIndex({ awards }: { awards: boolean }) {
               onChange={(e) => change("source", e.target.value)}
             >
               <option value="all">All sources</option>
-              <option value="goodreads">Goodreads</option>
-              <option value="hardcover">Hardcover</option>
+              {(query.data?.providers || ["goodreads"]).map((provider) => (
+                <option key={provider} value={provider}>
+                  {collectionSource(provider)}
+                </option>
+              ))}
+              {!awards && <option value="hardcover">Hardcover</option>}
             </select>
           </label>
-        )}
+        }
+        <label>
+          Audience
+          <select
+            value={audience}
+            onChange={(e) => change("audience", e.target.value)}
+          >
+            <option value="">All audiences</option>
+            {(query.data?.audiences || [])
+              .filter((a) => a !== "all")
+              .map((a) => (
+                <option key={a} value={a}>
+                  {genreLabel(a)}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          Language
+          <select
+            value={language}
+            onChange={(e) => change("language", e.target.value)}
+          >
+            <option value="">All languages</option>
+            {query.data?.languages?.map((l) => (
+              <option key={l} value={l}>
+                {languageName(l)}
+              </option>
+            ))}
+          </select>
+        </label>
         <form
           className="explore-filter-search"
           onSubmit={(e) => {
@@ -491,6 +565,21 @@ function CollectionIndex({ awards }: { awards: boolean }) {
             <Search size={17} />
           </button>
         </form>
+        {(year ||
+          category ||
+          genre ||
+          q ||
+          source !== "all" ||
+          audience ||
+          language) && (
+          <button
+            onClick={() =>
+              setParams({ view: awards ? "awards" : "collections" })
+            }
+          >
+            Clear filters
+          </button>
+        )}
       </div>
       {(awards || source !== "hardcover") && (
         <>
@@ -520,7 +609,7 @@ function CollectionIndex({ awards }: { awards: boolean }) {
           )}{" "}
         </>
       )}
-      {!awards && source !== "goodreads" && (
+      {!awards && (source === "all" || source === "hardcover") && (
         <HardcoverCollections
           term={[q, genreLabel(genre)].filter(Boolean).join(" ")}
         />
@@ -538,15 +627,31 @@ function Browse() {
   const winners = params.get("winners") === "1";
   const owned = params.get("owned") === "1";
   const q = params.get("q") || "";
+  const source = params.get("source") || "all";
+  const audience = params.get("audience") || "";
+  const language = params.get("language") || "";
   const query = usePagedQuery({
     queryKey: [
       "discovery-browse",
-      { year, category, genre, winners, owned, q },
+      { year, category, genre, winners, owned, q, source, audience, language },
     ],
     queryFn: async (page, signal) =>
       result(
         await api.GET("/api/discovery/browse", {
-          params: { query: { page, year, category, genre, winners, owned, q } },
+          params: {
+            query: {
+              page,
+              year,
+              category,
+              genre,
+              winners,
+              owned,
+              q,
+              provider: source === "all" ? "" : source,
+              audience,
+              language,
+            },
+          },
           signal,
         }),
       ),
@@ -632,6 +737,23 @@ function Browse() {
       {category && (
         <button onClick={() => change("category", "")}>{category} ×</button>
       )}
+      <div className="button-row">
+        {source !== "all" && (
+          <button onClick={() => change("source", "")}>
+            {collectionSource(source)} ×
+          </button>
+        )}
+        {audience && (
+          <button onClick={() => change("audience", "")}>
+            {genreLabel(audience)} ×
+          </button>
+        )}
+        {language && (
+          <button onClick={() => change("language", "")}>
+            {languageName(language)} ×
+          </button>
+        )}
+      </div>
       <Notice error={query.error} />
       {query.isPending && <Loading />}
       {query.data && (
@@ -651,7 +773,19 @@ function Browse() {
 }
 
 function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
-  const [winners, setWinners] = useState(false);
+  const location = useLocation();
+  const [params, setParams] = useSearchParams();
+  const winners = params.get("winners") === "1";
+  function setWinners(value: boolean) {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        value ? next.set("winners", "1") : next.delete("winners");
+        return next;
+      },
+      { state: location.state },
+    );
+  }
   const query = usePagedQuery({
     queryKey: ["discovery-collection", id, winners],
     queryFn: async (page, signal) =>
@@ -676,13 +810,10 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
   const total = query.loadedPages?.at(-1)?.total ?? c?.count ?? 0;
   return (
     <>
-      <Link
-        className="back-link explore-back"
-        to={`/discover?view=${c?.kind === "award" ? "awards" : "collections"}`}
-      >
-        <ArrowLeft size={15} />
-        {c?.kind === "award" ? "Awards" : "Collections"}
-      </Link>
+      <ReturnLink
+        fallback={`/discover?view=${c?.kind === "award" ? "awards" : "collections"}`}
+        label={c?.kind === "award" ? "Awards" : "Collections"}
+      />
       <Notice error={query.error} />
       {query.isPending && <Loading />}
       {query.error && !query.data && (
@@ -694,15 +825,16 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
         <>
           <header className="explore-detail-heading">
             <div>
-              <p className="explore-kicker">
-                {c.kind === "award"
-                  ? `${c.year} · Goodreads Choice Awards`
-                  : "Goodreads · Listopia"}
-              </p>
+              <p className="explore-kicker">{collectionCaption(c)}</p>
               <h2>{c.title}</h2>
+              {c.description && (
+                <p className="curation-description">{c.description}</p>
+              )}
+              {c.edition_date && (
+                <p className="curation-note">List edition: {c.edition_date}</p>
+              )}
               <p className="muted">
-                {total.toLocaleString()}{" "}
-                {c.kind === "award" ? "nominees" : "books"}
+                {total.toLocaleString()} {total === 1 ? "book" : "books"}
                 {query.hasNextPage
                   ? ` · ${items.length.toLocaleString()} loaded`
                   : ""}
@@ -711,6 +843,11 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
             <CollectionActions collection={c} canEdit={canEdit} />
           </header>
           {c.warning && <p className="notice">{c.warning}</p>}
+          {c.coverage === "partial" && (
+            <p className="curation-note">
+              A selection from this source; this is not a complete archive.
+            </p>
+          )}
           {c.kind === "award" && (
             <div className="explore-segment">
               <button
@@ -719,7 +856,7 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
                   setWinners(false);
                 }}
               >
-                All nominees
+                All selections
               </button>
               <button
                 aria-pressed={winners}
@@ -732,11 +869,18 @@ function CollectionPage({ id, canEdit }: { id: string; canEdit: boolean }) {
             </div>
           )}
           <CollectionBooks items={items} />
+          {!items.length && (
+            <p className="explore-empty">
+              {winners
+                ? "No winner is recorded for this selection yet. Choose All selections to see the nominees."
+                : "No books are available in this collection yet."}
+            </p>
+          )}
           <InfiniteScroll query={query} />
           <p className="explore-footnote">
             {c.kind === "listopia"
               ? "Books load from Goodreads as you scroll."
-              : `Updated ${new Date(c.updated_at).toLocaleDateString()} · Verified collection snapshot.`}
+              : `Verified ${new Date(c.updated_at).toLocaleDateString()} · ${c.refresh_mode === "app-update" ? "Official award facts are updated with Dewarr releases." : "Collections refresh daily while followed."}`}
           </p>
         </>
       )}

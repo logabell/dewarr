@@ -25,6 +25,8 @@ You can unlink from **Settings → Sign-in** after confirming your local passwor
 
 Administrators can open **Settings → Users & access → Account details** to change a username or display name, or disable an account. Disabling ends its sessions and blocks sign-in while retaining owned data and audit history. Rename the account to free its old username. You cannot disable your own account or the last active administrator. Account deletion is not required to resolve a username collision or to link an existing administrator.
 
+From another administrator account, **Account details → Sign-in and account removal** also offers OIDC/Plex unlinking and deletion of unused accounts. Type the displayed username to confirm. Unlinking requires a local password or another enabled, linked provider and ends all sessions and pending linking attempts. The account and its history remain. Provider matching and registration settings still govern future sign-ins. Deletion removes sign-in identities, sessions, and library grants, freeing the username. It rejects accounts with owned data, followed lists, preferences, or history; disable and rename those accounts instead. If the account changes during review, reload its details before retrying.
+
 ## Authentik
 
 1. Create an application and choose the **OAuth2/OpenID Connect** provider. This is not the proxy provider.

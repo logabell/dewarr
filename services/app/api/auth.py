@@ -11,10 +11,22 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import COOKIE, Admin, CurrentUser, Database, client_host, require_origin
 from app.config import get_settings
-from app.db.models import AuditEvent, LibraryGrant, LoginSession, PermissionRole, RateLimit, User
+from app.db.models import (
+    AuditEvent,
+    LibraryGrant,
+    LoginSession,
+    OidcIdentity,
+    OidcProvider,
+    PermissionRole,
+    PlexIdentity,
+    PlexLogin,
+    RateLimit,
+    User,
+)
 from app.domain import library_access
 from app.domain.permissions import (
     ADMIN,
@@ -411,6 +423,170 @@ class AccountProfileInput(BaseModel):
         if not value.strip():
             raise ValueError("Enter a display name")
         return value.strip()
+
+
+class AccountSignInView(BaseModel):
+    local_password: bool
+    oidc: bool
+    plex: bool
+    revision: str
+
+
+class AccountRemovalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm_username: str = Field(min_length=3, max_length=100)
+    expected_revision: str
+
+
+async def account_sign_in(db, user):
+    from app.importing.naming import fingerprint
+
+    oidc = await db.get(OidcIdentity, user.id)
+    plex = await db.get(PlexIdentity, user.id)
+    return AccountSignInView(
+        local_password=bool(user.password_hash),
+        oidc=oidc is not None,
+        plex=plex is not None,
+        revision=fingerprint(
+            {
+                "username": user.username,
+                "display_name": user.display_name,
+                "role": user.role,
+                "permissions": user.permissions,
+                "active": user.active,
+                "password": user.password_hash,
+                "oidc": [oidc.issuer, oidc.subject] if oidc else None,
+                "plex": plex.plex_user_id if plex else None,
+            }
+        ),
+    )
+
+
+async def locked_account(db, actor, user_id):
+    # Same ordering as provider registration/linking and account-profile edits.
+    await db.execute(text("SELECT pg_advisory_xact_lock(720002)"))
+    rows = {
+        user.id: user
+        for user in await db.scalars(
+            select(User)
+            .where(User.id.in_([actor.id, user_id]))
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    }
+    actor = rows.get(actor.id)
+    if not actor or not actor.active or actor.role != "admin":
+        raise HTTPException(403, "Administrator access changed")
+    user = rows.get(user_id)
+    if not user:
+        raise HTTPException(404, "Account not found")
+    return actor, user
+
+
+async def confirm_account_action(db, user, body):
+    current = await account_sign_in(db, user)
+    if user.username != body.confirm_username or current.revision != body.expected_revision:
+        raise HTTPException(409, "This account changed or the username does not match; reload it")
+
+
+@router.get("/users/{user_id}/sign-in", response_model=AccountSignInView)
+async def user_sign_in(user_id: UUID, actor: Admin, db: Database):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Account not found")
+    return await account_sign_in(db, user)
+
+
+@router.delete("/users/{user_id}/providers/{provider}", response_model=AccountSignInView)
+async def unlink_user_provider(
+    user_id: UUID,
+    provider: Literal["oidc", "plex"],
+    body: AccountRemovalInput,
+    actor: Admin,
+    db: Database,
+):
+    actor, user = await locked_account(db, actor, user_id)
+    await confirm_account_action(db, user, body)
+    if actor.id == user.id:
+        raise HTTPException(409, "Use another administrator account to change this sign-in")
+    identity_type = OidcIdentity if provider == "oidc" else PlexIdentity
+    identity = await db.get(identity_type, user.id)
+    if not identity:
+        raise HTTPException(409, "This sign-in provider is no longer linked")
+    alternative = bool(user.password_hash)
+    if not alternative and provider == "oidc":
+        plex = await db.get(PlexLogin, 1)
+        alternative = bool(plex and plex.enabled and await db.get(PlexIdentity, user.id))
+    elif not alternative:
+        from app.domain.oidc import snapshot
+
+        oidc = await db.get(OidcIdentity, user.id)
+        configured = snapshot(await db.get(OidcProvider, 1))
+        alternative = bool(oidc and configured and oidc.issuer == configured.issuer)
+    if not alternative:
+        raise HTTPException(409, "Keep a local password or another enabled linked sign-in provider")
+    await db.delete(identity)
+    # Session deletion also cascades pending OIDC account-link exchanges.
+    await db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+    db.add(AuditEvent(actor_id=actor.id, action=f"{provider}.unlinked", entity_id=user.id))
+    await db.flush()
+    result = await account_sign_in(db, user)
+    await db.commit()
+    return result
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(user_id: UUID, body: AccountRemovalInput, actor: Admin, db: Database):
+    actor, user = await locked_account(db, actor, user_id)
+    await confirm_account_action(db, user, body)
+    await guard_admin_loss(db, [(user, 0)])
+    if actor.id == user.id:
+        raise HTTPException(409, "Use another administrator account to delete this account")
+    username = user.username
+    history_message = (
+        "This account has retained history or owned data. Disable it instead; "
+        "rename it if you need to reuse its username."
+    )
+    # Some owned records (followed lists, release watches, notification history,
+    # preferences) cascade on user deletion. Do not mistake those accounts for
+    # unused ones just because the database would permit removing them.
+    disposable = {LoginSession.__table__, OidcIdentity.__table__, PlexIdentity.__table__}
+    for table in User.metadata.tables.values():
+        if table in disposable:
+            continue
+        for foreign_key in table.foreign_keys:
+            if (
+                foreign_key.column.table is User.__table__
+                and foreign_key.ondelete == "CASCADE"
+                and await db.scalar(
+                    select(foreign_key.parent).where(foreign_key.parent == user.id).limit(1)
+                )
+                is not None
+            ):
+                raise HTTPException(409, history_message)
+    try:
+        async with db.begin_nested():
+            # Access grants are configuration, not owned library or activity history.
+            await db.execute(delete(LibraryGrant).where(LibraryGrant.user_id == user.id))
+            await db.delete(user)
+            await db.flush()
+    except IntegrityError as error:
+        if getattr(error.orig, "sqlstate", None) != "23503":
+            raise
+        raise HTTPException(
+            409,
+            history_message,
+        ) from error
+    db.add(
+        AuditEvent(
+            actor_id=actor.id,
+            action="user.deleted",
+            entity_id=user_id,
+            detail={"username": username},
+        )
+    )
+    await db.commit()
 
 
 @router.put("/users/{user_id}/profile", response_model=UserView)

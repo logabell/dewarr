@@ -1,4 +1,6 @@
 import asyncio
+import json
+import time
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -24,7 +26,7 @@ from app.db.models import (
     Work,
     WorkMetadataSource,
 )
-from app.domain.acquisition import RequestReason, RequestSpec, submit
+from app.domain.acquisition import RequestReason, RequestSpec, assess, inventory_candidates, submit
 from app.jobs.queue import enqueue, get_queue
 from app.security import hash_password
 
@@ -114,6 +116,58 @@ async def request(client, payload, key=None):
     )
     assert result.status_code == 202, result.text
     return result.json()
+
+
+async def test_status_assessment_has_a_small_inventory_payload(
+    client, admin, catalog, database, tmp_path
+):
+    files = [{"path": f"chapter-{n:03}.mp3", "metadata": "x" * 250} for n in range(500)]
+    async with database() as db, db.begin():
+        for n in range(20):
+            asset = LibraryAsset(
+                library_id=catalog["library"],
+                external_id=f"large-recording-{n}",
+                version_id=catalog["versions"][1],
+                medium="audio",
+                state="present",
+                full_content=True,
+                files=files,
+                metadata_snapshot={"description": "x" * 50000},
+                read_issues=["x" * 1000],
+            )
+            db.add(asset)
+            await db.flush()
+            db.add(AssetContains(asset_id=asset.id, work_id=catalog["work"], verified=True))
+    async with database() as db:
+        user = await db.get(User, UUID(admin["id"]))
+        started = time.perf_counter()
+        rows = await inventory_candidates(db, user, catalog["work"])
+        elapsed = time.perf_counter() - started
+        # Measure materialized data, not SQL text or driver-specific compression.
+        values = [
+            {
+                key: value
+                for key, value in (
+                    entity._mapping if hasattr(entity, "_mapping") else vars(entity)
+                ).items()
+                if not key.startswith("_")
+            }
+            for asset, version, _ in rows
+            for entity in (asset, version)
+            if entity is not None
+        ]
+        loaded_bytes = len(json.dumps(values, default=str).encode())
+        metrics = {
+            "copies": len(rows),
+            "materialized_bytes": loaded_bytes,
+            "elapsed_seconds": elapsed,
+        }
+        (tmp_path / "inventory-payload-metrics.json").write_text(json.dumps(metrics))
+        print(metrics)
+        outcomes = await assess(db, user, catalog["work"], RequestSpec(mode="both"))
+        assert {row["state"] for row in outcomes} == {"satisfied"}
+        assert len(rows) == 21
+        assert loaded_bytes < 20000, "Status polling loaded full recording manifests"
 
 
 async def test_media_satisfaction_is_separate_from_work_ownership(client, admin, catalog):

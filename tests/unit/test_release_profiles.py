@@ -12,6 +12,7 @@ from app.domain.release_profiles import (
     ProfileSnapshot,
     ReleasePreferences,
     assess_release,
+    catalog_language_release,
     enforce_inspected_profile,
     enforce_profile,
     overlay_profile,
@@ -31,6 +32,16 @@ WORK = {"title": "Harbor", "authors": ["Writer"]}
         ("[M4B] Andy Weir-Project Hail Mary", [], "corroborated"),
         ("Andy Weir - Project Hail Mary", [], "corroborated"),
         ("Project.Hail.Mary.by.Andy.Weir", [], "corroborated"),
+        ("Andy.Weir.-.Project.Hail.Mary.German.Audiobook", [], "corroborated"),
+        ("Andy Weir - Project Hail Mary German Hoerbuch", [], "corroborated"),
+        ("Andy.Weir.-.Project.Hail.Mary.Hoerbuch.German.MP3", [], "corroborated"),
+        ("Andy.Weir.-.Project.Hail.Mary.Ungekuerzt", [], "corroborated"),
+        ("Andy Weir - Project Hail Mary Ungekürzt", [], "corroborated"),
+        ("Andy Weir - Project Hail Mary Unabridged", [], "corroborated"),
+        ("Andy Weir - Project Hail Mary [German]", [], "corroborated"),
+        ("Andy.Weir.-.Project.Hail.Mary.AUDIOBOOK", [], "corroborated"),
+        ("Project.Hail.Mary.By.Andy.Weir.Abook.MP3-MG", [], "corroborated"),
+        ("Andy.Weir.-.Project.Hail.Mary.Hoerspiel.Audiobook.German", [], "corroborated"),
         ("Project Hail Mary - Andy Weir.m4b", [], "corroborated"),
         ("Andy Weir - Project Hail Mary (retail) (m4b)", [], "corroborated"),
         ("Andy Weir - Project Hail Mary ( M4B ) (retail)", [], "corroborated"),
@@ -43,6 +54,14 @@ WORK = {"title": "Harbor", "authors": ["Writer"]}
         ("Andy Weir - Project Hail Mary.part01.rar", [], "possible"),
         ("Andy Weir - Project Hail Mary sample", [], "possible"),
         ("Andy Weir - Project Hail Mary and The Martian", [], "possible"),
+        ("Andy Weir - Project Hail Mary and The Martian German Audiobook", [], "possible"),
+        ("Andy Weir - Project Hail Mary Summary German Audiobook", [], "possible"),
+        ("Andy Weir - Project Hail Mary part 1 of 2 German Audiobook", [], "possible"),
+        ("Andy Weir - Project Hail Mary.epub.part01.rar.German", [], "possible"),
+        ("Andy Weir - Project Hail Mary [German)", [], "possible"),
+        ("Andy Weir - Project Hail Mary.Abook.MP3-SAMPLE", [], "possible"),
+        ("Andy Weir - Project Hail Mary.Abook.MP3-PART01", [], "possible"),
+        ("Andy Weir - Project Hail Mary German Audiobook", ["Other Writer"], "unmatched"),
         ("[M4B] Andy Weir-Project Hail Mary", ["Other Writer"], "unmatched"),
     ],
 )
@@ -67,6 +86,93 @@ def test_indexer_exact_author_title_pair_can_replace_missing_structured_fields(
         candidate, {"title": "Project Hail Mary", "authors": ["Andy Weir"]}, ReleasePreferences()
     )
     assert assessment.identity == expected
+
+
+@pytest.mark.parametrize("title", ["German", "Unabridged", "Audiobook", "2023"])
+def test_indexer_labels_do_not_remove_the_catalog_title(title):
+    from types import SimpleNamespace
+
+    from app.domain.release_profiles import indexer_title_authors
+
+    candidate = SimpleNamespace(
+        source="prowlarr", title=f"Writer - {title}.German.Audiobook", authors=[]
+    )
+    assert indexer_title_authors(candidate, {"title": title, "authors": ["Writer"]}) == ["Writer"]
+
+
+@pytest.mark.parametrize(
+    "title,book,language",
+    [
+        ("Writer - The Good German.Audiobook", "The Good German", None),
+        ("Writer - The Good [German].Audiobook", "The Good German", None),
+        ("Writer - German.Audiobook", "German", None),
+        ("Writer - [German].Audiobook", "German", None),
+        ("Writer - The Good German.German.Audiobook", "The Good German", "de"),
+        ("Writer - The Good German.[English].Audiobook", "The Good German", "en"),
+        ("Writer - Harbor German Hoerbuch", "Harbor", "de"),
+        ("Writer.-.Harbor.Hoerbuch.German.MP3", "Harbor", "de"),
+        ("Harbor.By.Writer.German.Abook.MP3-MG", "Harbor", "de"),
+        ("Writer - Harbor [German]", "Harbor", "de"),
+        ("Writer - Harbor German", "Harbor", None),
+        ("Writer - Harbor German English Audiobook", "Harbor", None),
+    ],
+)
+def test_language_claims_stop_at_catalog_title_boundary_without_mutating_source(
+    title, book, language
+):
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    source = ProwlarrRelease(
+        source_id="language-fixture",
+        acquisition_supported=True,
+        title=title,
+        raw_title=title,
+        medium="audio",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+    )
+    before = source.model_dump()
+    result = catalog_language_release(source, {"title": book, "authors": ["Writer"]})
+    assert result.language == language
+    assert result.details.get("language_basis") == ("release_title" if language else None)
+    assert source.model_dump() == before
+    legacy = source.model_copy(
+        update={"language": "de", "details": {"language_basis": "release_title"}}
+    )
+    assert (
+        catalog_language_release(legacy, {"title": book, "authors": ["Writer"]}).language
+        == language
+    )
+    explicit = source.model_copy(update={"language": "fr", "details": {}})
+    assert (
+        catalog_language_release(explicit, {"title": book, "authors": ["Writer"]}).language == "fr"
+    )
+
+
+def test_german_radio_play_retains_recording_style_restriction():
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    title = "Andy.Weir.-.Project.Hail.Mary.Hoerspiel.Audiobook.German"
+    candidate = ProwlarrRelease(
+        source_id="fixture",
+        title=title,
+        raw_title=title,
+        medium="audio",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+    assessment = assess_release(
+        candidate,
+        {"title": "Project Hail Mary", "authors": ["Andy Weir"]},
+        ReleasePreferences(recording_style="narrated"),
+    )
+    assert assessment.identity == "corroborated"
+    assert "The profile accepts narrated recordings only" in assessment.blocked
 
 
 def test_audiobookbay_credit_and_series_position_can_corroborate_identity():

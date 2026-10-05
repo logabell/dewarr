@@ -79,6 +79,22 @@ def test_unsafe_or_unsupported_templates_are_rejected(template):
         NamingProfile(ebook_folder=template)
 
 
+def test_literal_braces_keep_optional_narrator_semantics_and_literal_tokens():
+    profile = NamingProfile(
+        audio_folder="{author}/{title}[ {{{narrator}}}]", audio_filename="{title} {{audio}}"
+    )
+    named = plan_import([group(medium="audio", narrators=["Casey Reed"])], profile).items[0]
+    assert named.folder == "audiobooks/Writer/Harbor {Casey Reed}"
+    assert named.files[0].destination.endswith("/Harbor {audio}.m4b")
+    unnamed = plan_import([group(medium="audio")], profile).items[0]
+    assert unnamed.folder == "audiobooks/Writer/Harbor"
+    assert any("No narrator metadata" in warning for warning in unnamed.warnings)
+    with pytest.raises(ValidationError):
+        NamingProfile(audio_folder="{{title}}")
+    with pytest.raises(ValidationError):
+        NamingProfile(audio_folder="{title}[ {{narrator}}]")
+
+
 @pytest.mark.parametrize(
     "path",
     [

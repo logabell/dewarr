@@ -272,6 +272,11 @@ function PreferenceForm({ value }: { value: Preferences }) {
       }}
     >
       <h3>Catalog defaults</h3>
+      <p className="muted">
+        Hardcover supplies book identity. Additional catalogs fill gaps; Audible
+        and Audnexus supply details for verified recordings. Your edits stay
+        protected.
+      </p>
       <div className="settings-fields">
         <label>
           Primary catalog
@@ -326,6 +331,24 @@ function PreferenceForm({ value }: { value: Preferences }) {
               }
             />
             Fill missing details from Open Library
+          </label>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.recording_enrichment ?? true}
+              onChange={(event) =>
+                setSettings({
+                  ...settings,
+                  recording_enrichment: event.target.checked,
+                })
+              }
+            />
+            Fill missing details for verified audiobook recordings
+            <SettingHelp label="recording enrichment">
+              Uses the ASIN already supplied by Hardcover. Narrators, language,
+              abridgment, and runtime are filled only when missing. Conflicting
+              recordings need review.
+            </SettingHelp>
           </label>
           <label className="check-label">
             <input
@@ -458,6 +481,7 @@ function PreferenceForm({ value }: { value: Preferences }) {
             setSettings({
               ...settings,
               automatic_enrichment: true,
+              recording_enrichment: true,
               automatic_edition_lookup: true,
               automatic_library_matching: true,
               write_library_series: false,

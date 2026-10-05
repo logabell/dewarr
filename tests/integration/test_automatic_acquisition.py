@@ -110,6 +110,7 @@ async def test_search_to_automatic_download_and_confirmed_member_library(
     recording_file_conflict=None,
     recording_catalog_change=False,
     list_origin=None,
+    mobi_companion=False,
 ):
     route = ready_route
     if series_pack:
@@ -117,6 +118,8 @@ async def test_search_to_automatic_download_and_confirmed_member_library(
     work_id = route["plan"]["document"]["groups"][0]["work_id"]
     extension = "epub" if medium == "ebook" else "mp3"
     source = route["source"] / ("selected." + extension)
+    if mobi_companion:
+        source = route["source"] / "Harbor" / "selected.epub"
     if series_pack:
         source = route["source"] / "Coast" / ("First Harbor." + extension)
     if medium == "ebook":
@@ -159,6 +162,26 @@ async def test_search_to_automatic_download_and_confirmed_member_library(
             }
         }
     )
+    if mobi_companion:
+        companion = source.with_suffix(".mobi")
+        companion.write_bytes(b"Unsupported alternative ebook copy")
+        payload = original + companion.read_bytes()
+        raw = lt.bencode(
+            {
+                b"info": {
+                    b"name": source.parent.name.encode(),
+                    b"piece length": 16384,
+                    b"files": [
+                        {b"length": len(original), b"path": [source.name.encode()]},
+                        {b"length": companion.stat().st_size, b"path": [companion.name.encode()]},
+                    ],
+                    b"pieces": b"".join(
+                        hashlib.sha1(payload[pos : pos + 16384]).digest()
+                        for pos in range(0, len(payload), 16384)
+                    ),
+                }
+            }
+        )
     if series_pack:
         from tests.pack_fixture import catalog as pack_catalog
 
@@ -218,7 +241,7 @@ async def test_search_to_automatic_download_and_confirmed_member_library(
         narrators=["Jordan Lee"] if medium == "audio" else [],
         medium=medium,
         language="en",
-        formats=[extension],
+        formats=[extension, "mobi"] if mobi_companion else [extension],
         size_bytes=len(original),
         seeders=42,
         isbn="9781234567897",
@@ -1068,6 +1091,9 @@ async def test_search_to_automatic_download_and_confirmed_member_library(
     output = list(route["target"].rglob("*." + extension))
     assert len(output) == 1 and output[0].stat().st_ino == source.stat().st_ino
     assert output[0].read_bytes() == original == source.read_bytes()
+    if mobi_companion:
+        assert not list(route["target"].rglob("*.mobi"))
+        assert companion.read_bytes() == b"Unsupported alternative ebook copy"
     assert not list(route["target"].rglob("private-neighbor.epub"))
     book = (await client.get(f"/api/catalog/works/{work_id}")).json()
     assert book["availability"]["owned"] and book["availability"][medium]
@@ -1448,4 +1474,21 @@ async def test_exact_recording_catalog_change_after_submission_preserves_transfe
         request_limits=True,
         exact_version=True,
         recording_catalog_change=field,
+    )
+
+
+async def test_epub_mobi_torrent_publishes_only_supported_epub(
+    client, admin, database, ready_route, review_account, monkeypatch
+):
+    await test_search_to_automatic_download_and_confirmed_member_library(
+        client,
+        admin,
+        database,
+        ready_route,
+        review_account,
+        monkeypatch,
+        "ebook",
+        False,
+        request_limits=True,
+        mobi_companion=True,
     )

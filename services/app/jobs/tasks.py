@@ -3,6 +3,7 @@ from uuid import UUID
 
 from procrastinate import RetryStrategy
 from sqlalchemy import select
+from sqlalchemy.orm import load_only
 
 from app.config import get_settings
 from app.db.models import AuditEvent, Integration, Operation, User
@@ -23,6 +24,17 @@ async def publish_book(operation_id: str) -> None:
     from app.importing.execution import execute
 
     await execute(UUID(operation_id))
+
+
+@tasks.task(
+    name="organization.ebook-companions",
+    queue="imports",
+    retry=RetryStrategy(max_attempts=4, wait=30),
+)
+async def ebook_companions(entry_id: str, after: str | None = None) -> None:
+    from app.importing.colocate import reconcile
+
+    await reconcile(entry_id, after)
 
 
 @tasks.task(
@@ -57,10 +69,22 @@ async def schedule_import_confirmation(timestamp: int) -> None:
     # Bound each transaction and each tick while draining more than one page.
     for _ in range(5):
         async with session_factory()() as db, db.begin():
-            entries = list(
-                await db.scalars(
-                    select(ImportEntry)
+            pairs = (
+                await db.execute(
+                    select(ImportEntry, Operation)
                     .join(Operation, Operation.id == ImportEntry.operation_id)
+                    .options(
+                        load_only(
+                            ImportEntry.id,
+                            ImportEntry.operation_id,
+                            ImportEntry.state,
+                            ImportEntry.published_at,
+                            ImportEntry.destination_id,
+                            ImportEntry.next_check_at,
+                            raiseload=True,
+                        ),
+                        load_only(Operation.id, Operation.status, Operation.job_id, raiseload=True),
+                    )
                     .where(
                         ImportEntry.state.in_(["awaiting-library", "cancelling", "queued"]),
                         ImportEntry.next_check_at <= datetime.now(UTC),
@@ -73,7 +97,11 @@ async def schedule_import_confirmation(timestamp: int) -> None:
                     .limit(20)
                     .with_for_update(skip_locked=True, of=ImportEntry)
                 )
-            )
+            ).all()
+            entries = [entry for entry, _ in pairs]
+            operations = {operation.id: operation for _, operation in pairs}
+            if not entries:
+                break
             routes = dict(
                 (
                     await db.execute(
@@ -106,7 +134,7 @@ async def schedule_import_confirmation(timestamp: int) -> None:
                     )
                     jobs.update((entry.id, job_id) for entry in group)
             for entry in entries:
-                operation = await db.get(Operation, entry.operation_id)
+                operation = operations[entry.operation_id]
                 operation.status = "queued"
                 operation.job_id = jobs.get(entry.id) or await enqueue(
                     db,
@@ -325,43 +353,56 @@ async def schedule_downloads(timestamp: int) -> None:
         return
     async with session_factory()() as db, db.begin():
         now = datetime.now(UTC)
-        rows = await db.scalars(
-            select(DownloadAttempt)
+        rows = await db.execute(
+            select(DownloadAttempt, Operation)
+            .join(Operation, Operation.id == DownloadAttempt.operation_id)
+            .options(
+                load_only(DownloadAttempt.id, DownloadAttempt.next_check_at, raiseload=True),
+                load_only(Operation.id, Operation.job_id, raiseload=True),
+            )
             .where(
                 DownloadAttempt.state.not_in(["complete", "cancelled"]),
                 DownloadAttempt.next_check_at <= now,
                 or_(DownloadAttempt.lease_until.is_(None), DownloadAttempt.lease_until <= now),
+                # Apply the live-job guard before LIMIT so a busy first page
+                # cannot starve later downloads that need a monitor job.
+                text(
+                    "NOT EXISTS (SELECT 1 FROM book_queue.procrastinate_jobs j "
+                    "WHERE j.id = operations.job_id AND j.status IN ('todo', 'doing'))"
+                ),
             )
             .order_by(DownloadAttempt.next_check_at, DownloadAttempt.id)
             .limit(20)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, of=DownloadAttempt)
         )
-        for row in rows:
-            operation = await db.get(Operation, row.operation_id)
-            status = await db.scalar(
-                text("SELECT status::text FROM book_queue.procrastinate_jobs WHERE id=:id"),
-                {"id": operation.job_id},
-            )
-            if status in {"todo", "doing"}:
-                continue
+        for row, operation in rows:
             operation.job_id = await enqueue(db, "acquisition.download", attempt_id=str(row.id))
             row.next_check_at = now + timedelta(minutes=1)
         automatic_rows = await db.scalars(
-            select(AutomaticImport)
+            select(AutomaticImport.id)
             .where(AutomaticImport.state.in_(["queued", "inspecting"]))
-            .order_by(AutomaticImport.created_at)
+            .order_by(AutomaticImport.created_at, AutomaticImport.id)
             .limit(20)
         )
-        for automatic in automatic_rows:
-            await recover(db, automatic.id)
+        for automatic_id in automatic_rows:
+            await recover(db, automatic_id)
         continuations = await db.scalars(
-            select(AutomaticImportContinuation)
-            .where(AutomaticImportContinuation.state.in_(["queued", "inspecting"]))
+            select(AutomaticImportContinuation.id)
+            .join(Operation, Operation.id == AutomaticImportContinuation.operation_id)
+            .where(
+                AutomaticImportContinuation.state.in_(["queued", "inspecting"]),
+                # Busy jobs must not occupy the recovery batch ahead of a lost
+                # continuation. recover_reuse rechecks under its advisory lock.
+                text(
+                    "NOT EXISTS (SELECT 1 FROM book_queue.procrastinate_jobs j "
+                    "WHERE j.id = operations.job_id AND j.status IN ('todo', 'doing'))"
+                ),
+            )
             .order_by(AutomaticImportContinuation.created_at, AutomaticImportContinuation.id)
             .limit(20)
         )
-        for continuation in continuations:
-            await recover_reuse(db, continuation.id)
+        for continuation_id in continuations:
+            await recover_reuse(db, continuation_id)
     from app.domain.series_acquisition import schedule as schedule_series
 
     await schedule_series()

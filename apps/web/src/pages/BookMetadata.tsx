@@ -97,7 +97,7 @@ export default function BookMetadata({
   };
   const refresh = useMutation({
     mutationFn: async (source: {
-      provider: "hardcover" | "openlibrary";
+      provider: components["schemas"]["BookData"]["provider"];
       external_id: string;
     }) =>
       result(
@@ -123,7 +123,7 @@ export default function BookMetadata({
   });
   const more = useMutation({
     mutationFn: async (source: {
-      provider: "hardcover" | "openlibrary";
+      provider: components["schemas"]["BookData"]["provider"];
       external_id: string;
     }) =>
       result(
@@ -368,6 +368,9 @@ export default function BookMetadata({
                     </div>
                     <h3>{version.title || work.title}</h3>
                     <p>
+                      {version.runtime_minutes
+                        ? `${version.runtime_minutes} minutes · `
+                        : ""}
                       {version.narrators.length
                         ? `Narrated by ${version.narrators.join(", ")}`
                         : version.medium === "audio"

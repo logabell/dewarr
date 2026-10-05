@@ -96,6 +96,8 @@ pytestmark = pytest.mark.integration
         "automatic-identified-missing-tags-audio",
         "automatic-subtitle-audio",
         "automatic-linked-ebook",
+        "automatic-multiple-isbns",
+        "automatic-multiple-isbns-unlisted",
         "automatic-identified-subtitle",
         "automatic-language-alias",
         "automatic-manifest",
@@ -137,6 +139,8 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
         "automatic-identified-missing-tags-audio",
         "automatic-subtitle-audio",
         "automatic-linked-ebook",
+        "automatic-multiple-isbns",
+        "automatic-multiple-isbns-unlisted",
         "automatic-identified-subtitle",
         "automatic-language-alias",
     }
@@ -197,6 +201,19 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
     else:
         epub(
             source,
+            metadata=(
+                '<package xmlns="http://www.idpf.org/2007/opf"><metadata '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                "<dc:title>First Harbor</dc:title><dc:creator>Alex Morgan</dc:creator>"
+                "<dc:language>en</dc:language>"
+                "<dc:identifier>9781234567897</dc:identifier>"
+                "<dc:identifier>9780306406157</dc:identifier>"
+                '</metadata><manifest><item id="chapter" href="chapter.xhtml" '
+                'media-type="application/xhtml+xml"/></manifest>'
+                '<spine><itemref idref="chapter"/></spine></package>'
+            )
+            if handoff in {"automatic-multiple-isbns", "automatic-multiple-isbns-unlisted"}
+            else None,
             author="Alex Morgan; Other Writer"
             if handoff == "automatic-author-conflict"
             else "Alex Morgan;"
@@ -339,7 +356,11 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
     assert selected_response.status_code == 201, selected_response.text
     owner_client = client
     if automatic_mode:
-        if medium == "ebook" and not provider_mode and handoff != "automatic-linked-ebook":
+        if (
+            medium == "ebook"
+            and not provider_mode
+            and handoff not in {"automatic-linked-ebook", "automatic-multiple-isbns-unlisted"}
+        ):
             catalog_title = (
                 "First Harbor: A Journey Through the History of Coastal Life"
                 if handoff == "automatic-identified-subtitle"
@@ -537,8 +558,22 @@ async def test_single_epub_download_to_confirmed_library_keeps_neighbor_private(
                 "automatic-identified-missing-tags-audio",
                 "automatic-subtitle-audio",
                 "automatic-linked-ebook",
+                "automatic-multiple-isbns",
+                "automatic-multiple-isbns-unlisted",
             }:
                 assert auto.evidence["linked_download"]["work_id"] == old["work_id"]
+                if handoff in {"automatic-multiple-isbns", "automatic-multiple-isbns-unlisted"}:
+                    imported_version = await db.get(Version, entries[0].version_id)
+                    assert imported_version.work_id == UUID(old["work_id"])
+                    assert imported_version.identifiers == {}
+                    evidence = await db.scalar(
+                        select(ProviderObject).where(
+                            ProviderObject.version_id == imported_version.id,
+                            ProviderObject.provider == "file-import",
+                        )
+                    )
+                    assert len(evidence.snapshot["evidence"]["identifiers"]) == 2
+                    assert not resolution_provider["calls"]
                 if handoff == "automatic-linked-ebook":
                     imported_version = await db.get(Version, entries[0].version_id)
                     assert imported_version.work_id == UUID(old["work_id"])

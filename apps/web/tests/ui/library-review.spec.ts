@@ -26,6 +26,7 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  const matchSearches: string[] = [];
   const matches: { asset: string; body: unknown }[] = [];
   let imported = false;
   const items = [
@@ -112,9 +113,10 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
             : true,
       );
       data = { items: shown, total: shown.length };
-    } else if (path === "/api/catalog/works")
+    } else if (path === "/api/catalog/works") {
+      matchSearches.push(url.searchParams.get("q") || "");
       data = { items: [work], total: 1 };
-    else if (path.endsWith("/match") && method === "POST") {
+    } else if (path.endsWith("/match") && method === "POST") {
       const id = path.split("/").at(-2)!;
       matches.push({ asset: id, body: route.request().postDataJSON() });
       items.splice(
@@ -140,7 +142,9 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
 
   await page.goto("/review");
   const nav = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(nav.getByRole("link", { name: /^Review/ })).toContainText("3");
+  await expect(
+    nav.getByRole("link", { name: /^Library review/ }),
+  ).toContainText("3");
   await expect(
     page.getByRole("navigation", { name: "Review filter" }),
   ).toBeVisible();
@@ -185,10 +189,21 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
     .getByRole("button", { name: "Find the book" })
     .click();
   await expect(detail).toContainText("Missing title");
-  await detail.getByRole("combobox", { name: "Book" }).selectOption(work.id);
+  await detail.getByLabel("Search catalog", { exact: true }).fill("A");
+  await detail.getByLabel("Search catalog", { exact: true }).fill("A Closed");
+  await detail
+    .getByLabel("Search catalog", { exact: true })
+    .fill("A Closed and Common Orbit");
+  await expect
+    .poll(() => matchSearches.includes("A Closed and Common Orbit"))
+    .toBe(true);
+  expect(matchSearches).not.toContain("A Closed");
+  await detail
+    .getByRole("radio", { name: /A Closed and Common Orbit/ })
+    .check();
   await page.screenshot({ path: "test-results/library-review-dialog.png" });
-  await detail.getByRole("button", { name: "Confirm match" }).click();
-  await expect(detail).toHaveCount(0);
+  await detail.getByRole("button", { name: "Save and review next" }).click();
+  await expect(detail).toContainText("The Long Way");
   expect(matches[0]).toEqual({
     asset: "a1",
     body: {
@@ -203,12 +218,11 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
     "Linked “Untagged Folder”",
   );
   await expect(cards).toHaveCount(2);
-  await expect(nav.getByRole("link", { name: /^Review/ })).toContainText("2");
+  await expect(
+    nav.getByRole("link", { name: /^Library review/ }),
+  ).toContainText("2");
 
-  await page
-    .getByRole("article", { name: "The Long Way" })
-    .getByRole("button", { name: "Find the book" })
-    .click();
+  await expect(page).toHaveURL(/item=asset%3Aa2/);
   await detail.getByRole("link", { name: "On Hardcover" }).click();
   await expect(page).toHaveURL(/source=hardcover/);
   await expect(
@@ -224,7 +238,10 @@ test("library review links unmatched items to Dewarr and Hardcover books", async
     .getByRole("button", { name: /The Long Way to a Small, Angry Planet/ })
     .click();
   await detail.getByRole("button", { name: "Use this book" }).click();
-  await expect(detail).toHaveCount(0);
+  await expect(detail).toContainText("Broken Rip");
+  await detail
+    .getByRole("button", { name: "Close review library item" })
+    .click();
   expect(imported).toBe(true);
   expect(matches[1]).toEqual({
     asset: "a2",

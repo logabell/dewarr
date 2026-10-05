@@ -81,7 +81,7 @@ def summary_fingerprint(items: list[dict]) -> dict[str, tuple]:
 
 
 # Bump when the item parser or identity rules need a complete detail refresh.
-INVENTORY_SCHEMA = 2
+INVENTORY_SCHEMA = 3
 DETAIL_REFRESH = timedelta(hours=24)
 APPLY_BATCH = 100
 SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -293,6 +293,7 @@ async def record_read_issue(db, library, item, now):
 
 async def apply_item(db, library, item, generation, integration_id, seen, *, kind=None):
     now = datetime.now(UTC)
+    observed_media = {medium for medium in ("ebook", "audio") if getattr(item, medium)}
     await record_read_issue(db, library, item, now)
     if getattr(item, "unreadable", False):
         # Keep the previous observation. A later successful read can replace it.
@@ -306,10 +307,19 @@ async def apply_item(db, library, item, generation, integration_id, seen, *, kin
             )
             if asset:
                 asset.last_seen_at, asset.seen_generation = now, generation
-        return
+        return observed_media
     # Without a readable title or author, Dewarr cannot tell which book this is.
     held = bool(IDENTITY_ISSUES.intersection(item.read_issues))
+    if kind is None:
+        kind = await db.scalar(select(Integration.kind).where(Integration.id == integration_id))
+    companions = []
+    if kind == "audiobookshelf":
+        from app.importing.companion_inventory import companion_rows
+
+        companions = await companion_rows(db, library, item, seen)
     for medium in ("ebook", "audio"):
+        if medium == "ebook" and companions:
+            continue
         files = getattr(item, medium)
         if not files:
             continue
@@ -450,6 +460,21 @@ async def apply_item(db, library, item, generation, integration_id, seen, *, kin
             from app.domain.containment import reconcile
 
             await reconcile(db, asset, link, item)
+    if companions:
+        from app.importing.companion_inventory import apply_companion_item
+
+        # Reconcile the audio first: changed metadata or a manual rematch must
+        # invalidate its old identity before companion coverage is considered.
+        await apply_companion_item(
+            db, library, item, generation, integration_id, now, seen, companions
+        )
+        # ABS may report a tracked ebook only in libraryFiles, without selecting
+        # a primary ebookFile. Cache this observation, but never absent files.
+        from app.importing.naming import EBOOK
+
+        if any(file.format in EBOOK for file in item.library_files):
+            observed_media.add("ebook")
+    return observed_media
 
 
 async def publish_library(
@@ -566,7 +591,9 @@ async def publish_library(
                 key=lambda row: normalized(row.snapshot["title"]),
             ):
                 item = ABSItem.model_validate(row.snapshot)
-                await apply_item(db, library, item, generation, integration_id, seen, kind=kind)
+                observed_media = await apply_item(
+                    db, library, item, generation, integration_id, seen, kind=kind
+                )
                 if (
                     not item.unreadable
                     and not item.read_issues
@@ -580,7 +607,7 @@ async def publish_library(
                             item_external_id=item.id,
                             source_marker=row.source_marker,
                             observed_media=[
-                                medium for medium in ("ebook", "audio") if getattr(item, medium)
+                                medium for medium in ("ebook", "audio") if medium in observed_media
                             ],
                             credential_generation=credential_generation,
                             scope_fingerprint=scope,

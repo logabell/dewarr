@@ -32,6 +32,18 @@ async def blocked(db, work_id, medium, release, descriptor=None):
     return next((row for row in entries if set(row.identities).intersection(keys)), None)
 
 
+async def active_keys(db, work_id, medium):
+    """One transaction-local snapshot for ranking many candidates of one request."""
+    rows = await db.scalars(
+        select(ReleaseBlock.identities).where(
+            ReleaseBlock.work_id.in_(family_ids(work_id)),
+            ReleaseBlock.medium == medium,
+            ReleaseBlock.active.is_(True),
+        )
+    )
+    return {key for identities in rows for key in identities}
+
+
 async def add(db, selection, reason, actor_id, *, automatic=True):
     work = await canonical_work(db, selection.frozen["origin_work_id"])
     release = selection.frozen["release"]

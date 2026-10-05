@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
+import DownloadFileBrowser from "../components/DownloadFileBrowser";
 import DownloadImportReview from "../components/DownloadImportReview";
 import ImportExecution from "../components/ImportExecution";
 import { libraryRelativePath } from "../components/importPaths";
@@ -37,6 +38,7 @@ export default function ImportReview() {
   const selectedId = params.get("inspection");
   const [source, setSource] = useState("");
   const [path, setPath] = useState("");
+  const [browsing, setBrowsing] = useState(false);
   const [complete, setComplete] = useState(false);
   const [offset, setOffset] = useState(0);
   const cache = useQueryClient();
@@ -111,13 +113,14 @@ export default function ImportReview() {
       </Link>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Downloads</p>
+          {!selectedId && <p className="eyebrow">Downloads</p>}
           <h1>{selectedId ? "Download review" : "Completed downloads"}</h1>
-          <p className="muted">
-            {selectedId
-              ? "Your book, from download to library."
-              : "Review downloads that need your attention, or import a local folder."}
-          </p>
+          {!selectedId && (
+            <p className="muted">
+              Review downloads that need your attention, or import a local
+              folder.
+            </p>
+          )}
         </div>
       </div>
       <Notice error={selected.error} />
@@ -131,9 +134,11 @@ export default function ImportReview() {
         <Review key={selected.data.id} inspection={selected.data} />
       ) : null}
       {selectedId ? (
-        <Link className="import-review-back" to="/requests">
-          All requests
-        </Link>
+        selected.data?.download?.state === "complete" ? null : (
+          <Link className="button" to="/requests?status=review">
+            Back to download review
+          </Link>
+        )
       ) : (
         <section aria-label="Import another download">
           <form
@@ -146,60 +151,97 @@ export default function ImportReview() {
             <h2>Inspect a download</h2>
             {!roots.data?.length && !roots.isPending && (
               <p className="notice">
-                No download roots are configured. Configure read-only worker
-                mounts and BOOK_IMPORT_SOURCES before inspecting files.
+                Connect a download folder before inspecting files.{" "}
+                <Link to="/settings#downloaders">Open downloader settings</Link>{" "}
+                to configure its completed-download path.
+                <details>
+                  <summary>Manual mount setup</summary>Mount the download folder
+                  read-only in the worker and configure BOOK_IMPORT_SOURCES with
+                  its root name and absolute path. Then refresh this page.
+                </details>
               </p>
             )}
-            <label>
-              Download root
-              <select
-                value={source || roots.data?.[0] || ""}
-                onChange={(event) => setSource(event.target.value)}
+            {!!roots.data?.length && (
+              <fieldset
+                className="import-source-fields"
                 disabled={create.isPending}
               >
-                {!roots.data?.length && (
-                  <option value="">No configured roots</option>
-                )}
-                {roots.data?.map((key) => (
-                  <option value={key} key={key}>
-                    {key}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Download path
-              <input
-                value={path}
-                onChange={(event) => setPath(event.target.value)}
-                placeholder="Series pack folder or completed-book.epub"
-                maxLength={1024}
-                required
-                disabled={create.isPending}
-              />
-            </label>
-            <p className="muted">
-              Enter a completed file or folder relative to the selected root.
-            </p>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={complete}
-                onChange={(event) => setComplete(event.target.checked)}
-                disabled={create.isPending}
-              />
-              The download has finished and its files are no longer changing
-            </label>
+                <label>
+                  Download root
+                  <select
+                    value={source || roots.data?.[0] || ""}
+                    onChange={(event) => {
+                      setSource(event.target.value);
+                      setPath("");
+                      setComplete(false);
+                    }}
+                    disabled={create.isPending}
+                  >
+                    {!roots.data?.length && (
+                      <option value="">No configured roots</option>
+                    )}
+                    {roots.data?.map((key) => (
+                      <option value={key} key={key}>
+                        {key}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Download path
+                  <input
+                    value={path}
+                    onChange={(event) => setPath(event.target.value)}
+                    placeholder="Series pack folder or completed-book.epub"
+                    maxLength={1024}
+                    required
+                    disabled={create.isPending}
+                  />
+                </label>
+                <button type="button" onClick={() => setBrowsing(true)}>
+                  Browse files and folders
+                </button>
+                <p className="muted">
+                  Choose a completed file or folder, or enter its path relative
+                  to the selected root.
+                </p>
+                <label className="check-label">
+                  <input
+                    type="checkbox"
+                    checked={complete}
+                    onChange={(event) => setComplete(event.target.checked)}
+                    disabled={create.isPending}
+                  />
+                  The download has finished and its files are no longer changing
+                </label>
+              </fieldset>
+            )}
             <Notice error={roots.error || create.error} />
-            <button
-              className="primary"
-              disabled={
-                !complete || !path || !roots.data?.length || create.isPending
-              }
-            >
-              {create.isPending ? "Queuing…" : "Inspect files"}
-            </button>
+            {!!roots.data?.length && (
+              <button
+                className="primary"
+                disabled={!complete || !path || create.isPending}
+              >
+                {create.isPending ? "Queuing…" : "Inspect files"}
+              </button>
+            )}
+            {roots.isError && (
+              <button type="button" onClick={() => roots.refetch()}>
+                Retry download roots
+              </button>
+            )}
           </form>
+          {browsing && (
+            <DownloadFileBrowser
+              source={source || roots.data?.[0] || ""}
+              close={() => setBrowsing(false)}
+              select={(value) => {
+                setPath(value);
+                setComplete(false);
+                setBrowsing(false);
+              }}
+            />
+          )}
           <section className="panel editor" aria-label="Inspection history">
             <h2>Recent inspections</h2>
             <Notice error={history.error} />

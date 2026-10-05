@@ -92,7 +92,8 @@ function Editor({
   const cache = useQueryClient();
   const [overrides, setOverrides] = useState(current.overrides);
   const [merge, setMerge] = useState<boolean | null>(null);
-  const showAudiobookImport = admin && !librariesOnly;
+  const showAudiobookImport =
+    admin && !librariesOnly && scope === "installation";
   const organization = useQuery({
     queryKey: ["organization-settings"],
     enabled: showAudiobookImport,

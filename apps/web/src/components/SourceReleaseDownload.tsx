@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, Download, LoaderCircle } from "lucide-react";
-import { Link } from "react-router-dom";
-import { api, result } from "../api/client";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { api, result, type Auth } from "../api/client";
 import type { components } from "../api/schema";
 import { randomUUID } from "../randomUUID";
 
@@ -30,7 +30,9 @@ export default function SourceReleaseDownload({
   download,
   offerWedge = false,
   showLabel = false,
+  row = false,
   possibleCollection = false,
+  reviewContext,
 }: {
   searchId: string;
   resultId: string;
@@ -40,13 +42,47 @@ export default function SourceReleaseDownload({
   download?: SavedDownload | null;
   offerWedge?: boolean;
   showLabel?: boolean;
+  row?: boolean;
   possibleCollection?: boolean;
+  reviewContext?: string;
 }) {
   const [reviewCollection, setReviewCollection] = useState(false);
   const key = useRef(randomUUID());
   const cache = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { data: session } = useQuery<Auth | null>({
+    queryKey: ["session"],
+    enabled: false,
+  });
   const [operationId, setOperationId] = useState<string>();
   const [useWedge, setUseWedge] = useState(false);
+  const inspect = useMutation({
+    mutationFn: async () =>
+      result(
+        await api.POST(
+          "/api/source-searches/{search_id}/results/{result_id}/artifact",
+          {
+            params: {
+              path: { search_id: searchId, result_id: resultId },
+              query: offerWedge && useWedge ? { use_wedge: true } : {},
+            },
+          },
+        ),
+      ),
+    onSuccess: (artifact) => {
+      cache.setQueryData(["source-artifact", artifact.id], artifact);
+      const context = new URLSearchParams(reviewContext);
+      if (!context.has("request") && saved?.request_id)
+        context.set("request", saved.request_id);
+      navigate(`/sources/artifacts/${artifact.id}?${context}`, {
+        state: {
+          returnTo: location.pathname + location.search,
+          bookOrigin: location.state?.returnTo,
+        },
+      });
+    },
+  });
   const start = useMutation({
     mutationFn: async (spendWedge: boolean) =>
       result(
@@ -98,7 +134,11 @@ export default function SourceReleaseDownload({
   const saved =
     !receipt || download?.operation_id === receipt.id ? download : null;
   const selecting = !!receipt && ["queued", "running"].includes(receipt.status);
-  const busy = start.isPending || selecting || saved?.state === "preparing";
+  const busy =
+    start.isPending ||
+    inspect.isPending ||
+    selecting ||
+    saved?.state === "preparing";
   const error = start.error?.message || status.error?.message;
   const state: SavedDownload["state"] | undefined = start.isPending
     ? "preparing"
@@ -119,6 +159,10 @@ export default function SourceReleaseDownload({
                     : "selected"
           : undefined);
   const failed = state === "failed" || state === "needs-review";
+  const canReview =
+    state === "needs-review" &&
+    session?.user.role === "admin" &&
+    !!reviewContext;
   const tone =
     state === "needs-review"
       ? "info"
@@ -172,21 +216,28 @@ export default function SourceReleaseDownload({
   ) : null;
   return (
     <>
-      {(showLabel ||
+      {((showLabel && !row) ||
         !state ||
         (!complete && !busy && !["downloading", "queued"].includes(state))) && (
         <button
           className={showLabel ? "primary" : "release-info-button"}
-          aria-label={`Download ${title}`}
+          aria-label={`${canReview ? "Review release" : "Download"} ${title}`}
           title={
             state && (complete || busy)
               ? labels[state]
-              : disabledReason || "Download this release"
+              : disabledReason ||
+                (canReview
+                  ? "Review the manifest and select this release"
+                  : "Download this release")
           }
           disabled={disabled || !!busy || complete}
           onClick={() => {
             if (possibleCollection) {
               setReviewCollection(true);
+              return;
+            }
+            if (canReview) {
+              inspect.mutate();
               return;
             }
             if (receipt && !busy) {
@@ -207,12 +258,16 @@ export default function SourceReleaseDownload({
           ) : (
             <Download size={18} aria-hidden />
           )}
-          {showLabel &&
+          {(showLabel || canReview) &&
             (busy
-              ? "Starting…"
-              : complete && state
-                ? labels[state]
-                : "Download")}
+              ? canReview
+                ? "Opening review…"
+                : "Starting…"
+              : canReview
+                ? "Review release"
+                : complete && state
+                  ? labels[state]
+                  : "Download")}
         </button>
       )}
       {reviewCollection && (
@@ -262,6 +317,11 @@ export default function SourceReleaseDownload({
       {showLabel && failed && message && (
         <p className="error" role="status">
           {message}
+        </p>
+      )}
+      {inspect.error && (
+        <p className="error" role="alert">
+          {inspect.error.message}
         </p>
       )}
     </>

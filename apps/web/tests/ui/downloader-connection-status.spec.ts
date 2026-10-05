@@ -263,3 +263,102 @@ test("advanced mappings browse local volumes, save translations, and fit mobile"
     .locator(".onboarding-card")
     .screenshot({ path: testInfo.outputPath("downloader-onboarding.png") });
 });
+
+test("every download client can be disabled and re-enabled without losing settings", async ({
+  page,
+}) => {
+  const clients = [
+    ["qbittorrent", "qBittorrent"],
+    ["transmission", "Transmission"],
+    ["deluge", "Deluge"],
+    ["sabnzbd", "SABnzbd"],
+    ["nzbget", "NZBGet"],
+  ] as const;
+  let saved = clients.map(([kind, name], index) =>
+    connection({
+      id: `00000000-0000-0000-0000-00000000000${index + 1}`,
+      kind,
+      name,
+      base_url: `http://${kind}:8080`,
+      has_credentials: true,
+      category: "books",
+      status: "connected",
+    }),
+  );
+  let tests = 0;
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (!path.startsWith("/api/")) return route.fallback();
+    let data: unknown = [];
+    if (path === "/api/auth/me")
+      data = {
+        user: {
+          id: "reader",
+          role: "admin",
+          display_name: "Reader",
+          onboarding_status: "complete",
+        },
+        csrf_token: "test",
+      };
+    else if (path === "/api/setup/onboarding") data = { status: "completed" };
+    else if (path === "/api/downloaders") data = saved;
+    else if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON();
+      expect(body.username).toBeNull();
+      expect(body.password).toBeNull();
+      expect(body.api_key).toBeNull();
+      const index = saved.findIndex(
+        (item) => path === `/api/downloaders/${item.id}`,
+      );
+      expect(body.expected_enabled).toBe(saved[index].enabled);
+      saved = saved.map((item, i) =>
+        i === index ? { ...item, enabled: body.enabled } : item,
+      );
+      data = saved[index];
+    } else if (path.endsWith("/test")) {
+      tests++;
+      data = saved.find((item) => path === `/api/downloaders/${item.id}/test`);
+    }
+    return route.fulfill({ json: data });
+  });
+  await page.goto("/settings#downloaders");
+  for (const [, name] of clients) {
+    const card = page.getByRole("article", { name, exact: true });
+    await card.getByRole("button", { name: "Edit downloader" }).click();
+    const form = page.getByRole("form", {
+      name: `${name} connection settings`,
+    });
+    await expect(form.getByLabel("Enabled", { exact: true })).toBeChecked();
+    await form.getByLabel("Enabled", { exact: true }).uncheck();
+    await form
+      .getByRole("button", { name: "Save connection", exact: true })
+      .click();
+    await expect(card.getByText("Disabled", { exact: true })).toBeVisible();
+    await expect(
+      card.getByRole("button", { name: "Test connection" }),
+    ).toBeDisabled();
+  }
+  expect(tests).toBe(0);
+  await page.reload();
+  for (const [, name] of clients) {
+    const card = page.getByRole("article", { name, exact: true });
+    await expect(card.getByText("Disabled", { exact: true })).toBeVisible();
+    await card.getByRole("button", { name: "Edit downloader" }).click();
+    const form = page.getByRole("form", {
+      name: `${name} connection settings`,
+    });
+    await expect(form.getByLabel("Enabled", { exact: true })).not.toBeChecked();
+    await expect(
+      form.getByLabel("Download category", { exact: true }),
+    ).toHaveValue("books");
+    await form.getByLabel("Enabled", { exact: true }).check();
+    await form
+      .getByRole("button", { name: "Save & test connection", exact: true })
+      .click();
+    await expect(
+      card.getByRole("button", { name: "Test connection" }),
+    ).toBeEnabled();
+    await expect(card.getByText("Disabled", { exact: true })).toHaveCount(0);
+  }
+  expect(tests).toBe(clients.length);
+});

@@ -1,7 +1,9 @@
 import asyncio
+import contextvars
 import hashlib
 import hmac
 import json as json_module
+import logging
 import math
 import re
 from copy import deepcopy
@@ -20,6 +22,35 @@ from app.domain.catalog_cache_policy import lifetime
 from app.domain.operations import transaction_lock
 
 REQUEST_INTERVAL = 1.1
+_secret_query = contextvars.ContextVar("catalog_secret_query", default=False)
+
+
+class _CatalogLogFilter(logging.Filter):
+    def filter(self, record):
+        # The Books API authenticates in the query string. HTTPX INFO logs full URLs.
+        return not _secret_query.get()
+
+
+logging.getLogger("httpx").addFilter(_CatalogLogFilter())
+
+
+def catalog_endpoint(provider):
+    settings = get_settings()
+    from app.adapters.audible import MARKETPLACES
+
+    endpoints = {
+        "hardcover": settings.hardcover_url,
+        "openlibrary": settings.openlibrary_url,
+        "audible": f"https://api.audible.{MARKETPLACES[settings.audible_region]}",
+        "audible-storefront": f"https://www.audible.{MARKETPLACES[settings.audible_region]}",
+        "audnexus": "https://api.audnex.us",
+        "nyt": "https://api.nytimes.com",
+        "custom": settings.custom_metadata_url,
+    }
+    endpoint = endpoints.get(provider)
+    if not endpoint:
+        raise AdapterError(FailureKind.UNSUPPORTED, "This metadata source is not configured")
+    return endpoint
 
 
 def retry_delay(headers, now):
@@ -61,13 +92,28 @@ class CatalogGateway:
         request_interval=REQUEST_INTERVAL,
     ):
         settings = get_settings()
-        endpoint = settings.hardcover_url if provider == "hardcover" else settings.openlibrary_url
-        self.http = JsonEndpoint(endpoint, token, transport=transport)
+        endpoint = catalog_endpoint(provider)
+        if provider == "custom" and settings.custom_metadata_token:
+            token = settings.custom_metadata_token.get_secret_value()
+        self.api_key = (
+            settings.nyt_api_key.get_secret_value()
+            if provider == "nyt" and settings.nyt_api_key
+            else None
+        )
+        self.http = JsonEndpoint(
+            endpoint,
+            token,
+            transport=transport,
+            proxy=settings.metadata_proxy_url.get_secret_value()
+            if settings.metadata_proxy_url
+            else None,
+        )
         self.provider, self.scope, self.force = provider, scope, force
         digest = hmac.new(
-            settings.encryption_key(), (token or provider).encode(), hashlib.sha256
+            settings.encryption_key(), (token or self.api_key or provider).encode(), hashlib.sha256
         ).hexdigest()
         self.budget_key = f"{provider}:{digest}"
+        self.credential_scope = digest
         self.stale, self.warning, self.used_keys = False, None, []
         self.observed_values = {}
         self.endpoint = endpoint
@@ -113,14 +159,33 @@ class CatalogGateway:
                 record.blocked_until = max(record.blocked_until or deadline, deadline)
 
     async def request(self, method, path, *, params=None, json=None):
-        material = [self.provider, self.endpoint, self.scope, method, path, params, json]
+        material = [
+            self.provider,
+            self.endpoint,
+            self.scope,
+            self.credential_scope,
+            method,
+            path,
+            params,
+            json,
+        ]
         key = hashlib.sha256(json_module.dumps(material, sort_keys=True).encode()).hexdigest()
         self.used_keys.append(key)
 
         async def load():
             await self.reserve()
+            marker = _secret_query.set(bool(self.api_key))
             try:
-                response = await self.http.request(method, path, params=params, json=json)
+                query = {**(params or {}), **({"api-key": self.api_key} if self.api_key else {})}
+                if self.provider == "audible-storefront":
+                    html = await self.http.request(
+                        method, path, params=query or None, raw_text=True, max_bytes=2 * 1024 * 1024
+                    )
+                    response = {"html": html}
+                else:
+                    response = await self.http.request(
+                        method, path, params=query or None, json=json
+                    )
             except AdapterError as error:
                 delay = retry_delay(self.http.response_headers, datetime.now(UTC))
                 if error.kind == FailureKind.RATE_LIMIT:
@@ -129,6 +194,8 @@ class CatalogGateway:
                 if delay:
                     error.retry_after = max(error.retry_after or 0, math.ceil(delay))
                 raise
+            finally:
+                _secret_query.reset(marker)
             await self.cooldown(retry_delay(self.http.response_headers, datetime.now(UTC)))
             return response
 

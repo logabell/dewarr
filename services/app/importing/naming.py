@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 Text = Annotated[str, StringConstraints(max_length=600)]
 TOKEN = re.compile(r"\{([a-z_]+)\}")
+TEMPLATE_PART = re.compile(r"\{\{|\}\}|\{[a-z_]+\}")
 OPTIONAL = re.compile(r"\[([^\[\]]*)\]")
 TOKENS = {
     "author": "Filing author; Unknown author when absent",
@@ -51,8 +52,16 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def escaped_template(template):
+    # Consume tokens and escapes together: in {{{narrator}}}, the token's
+    # closing brace belongs to the token, not to the following escape.
+    return TEMPLATE_PART.sub(
+        lambda match: {"{{": "\x01", "}}": "\x02"}.get(match[0], match[0]), template
+    )
+
+
 def template_tokens(template):
-    return set(TOKEN.findall(template))
+    return set(TOKEN.findall(escaped_template(template)))
 
 
 def validate_template(template, *, folder):
@@ -66,6 +75,7 @@ def validate_template(template, *, folder):
         raise ValueError("Templates must be relative paths without control characters")
     if not folder and "/" in template:
         raise ValueError("A filename template cannot create folders")
+    template = escaped_template(template)
     if set(template_tokens(template)) - TOKENS.keys():
         raise ValueError("Unknown naming token")
     if folder and template_tokens(template) & FILE_TOKENS:
@@ -77,7 +87,7 @@ def validate_template(template, *, folder):
     if "[" in without_optional or "]" in without_optional:
         raise ValueError("Optional segments cannot be nested")
     if "{" in TOKEN.sub("", template) or "}" in TOKEN.sub("", template):
-        raise ValueError("Use tokens such as {title}; expressions are not supported")
+        raise ValueError("Use tokens such as {title}, or {{ and }} for literal braces")
     if any(segment in {".", ".."} for segment in template.split("/")):
         raise ValueError("Relative traversal is not a naming segment")
     if "title" not in template_tokens(template):
@@ -86,6 +96,7 @@ def validate_template(template, *, folder):
 
 class NamingProfile(StrictModel):
     layout: Literal["conventional", "nested"] = "conventional"
+    ebooks_with_audio: bool = Field(default=False, exclude_if=lambda value: not value)
     rename_files: bool = True
     merge_mp3_chapters: bool = Field(
         default=False,
@@ -287,7 +298,7 @@ def render(template, values):
         block = match.group(1)
         return block if all(values.get(key) for key in TOKEN.findall(block)) else ""
 
-    template = OPTIONAL.sub(optional, template)
+    template = OPTIONAL.sub(optional, escaped_template(template))
 
     def token(match):
         value = values.get(match.group(1))
@@ -295,7 +306,7 @@ def render(template, values):
             raise ValueError(f"Required metadata is missing: {match.group(1)}")
         return value
 
-    rendered = TOKEN.sub(token, template)
+    rendered = TOKEN.sub(token, template).replace("\x01", "{").replace("\x02", "}")
     parts = rendered.split("/")
     if any(part.strip() in {"", ".", ".."} for part in parts):
         raise ValueError("The naming template produces an empty or unsafe folder")
@@ -410,6 +421,11 @@ def plan_import(
             )
             if not group.metadata.authors:
                 item.missing_metadata.append("author")
+            if group.medium == "audio" and "narrator" in item.missing_metadata:
+                item.warnings.append(
+                    "No narrator metadata is available. Enable the MAM source to use its "
+                    "release narrators when file tags do not supply them."
+                )
             shared_library = group.medium in shared_media
             folder = media_folder(
                 render(template, values), group.medium, shared_library=shared_library

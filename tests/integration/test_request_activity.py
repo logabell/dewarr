@@ -1,8 +1,10 @@
 # ruff: noqa: F811
+import json
+import time
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 
 from app.db.models import AcquisitionSelection, DownloadAttempt, LibraryAsset, User, Work
 from app.domain import download_attempts as downloads
@@ -13,6 +15,41 @@ from tests.integration.test_download_attempts import downloader, selected, start
 from tests.integration.test_request_approvals import session_for
 
 pytestmark = pytest.mark.integration
+
+
+async def test_request_page_batches_reasons_and_targets(client, admin, database, tmp_path):
+    async with database() as db, db.begin():
+        works = [Work(title=f"Request book {index}", authors=["Writer"]) for index in range(20)]
+        db.add_all(works)
+        await db.flush()
+        ids = [work.id for work in works]
+    expected = set()
+    for work_id in ids:
+        saved = await request(client, {"work_id": str(work_id), "specification": {"mode": "both"}})
+        expected.add(saved["request"]["id"])
+    async with database() as db:
+        engine = db.bind.sync_engine
+        calls = []
+
+        def count(*args):
+            calls.append(1)
+
+        event.listen(engine, "before_cursor_execute", count)
+        started = time.perf_counter()
+        try:
+            response = await client.get("/api/requests?limit=20")
+        finally:
+            elapsed = time.perf_counter() - started
+            event.remove(engine, "before_cursor_execute", count)
+    assert response.status_code == 200, response.text
+    page = response.json()
+    assert page["total"] == 20 and {item["id"] for item in page["items"]} == expected
+    assert all(len(item["targets"]) == 2 and len(item["reasons"]) == 1 for item in page["items"])
+    assert all(target["state"] == "wanted" for item in page["items"] for target in item["targets"])
+    metrics = {"requests": 20, "sql_statements": len(calls), "elapsed_seconds": elapsed}
+    (tmp_path / "request-page-metrics.json").write_text(json.dumps(metrics))
+    print(metrics)
+    assert len(calls) <= 260, "Request page repeated per-card reason/target reads"
 
 
 async def test_targets_offer_only_appropriate_next_actions(client, admin, catalog, database):

@@ -384,6 +384,15 @@ function Editor({
                 <p className="naming-section-note">
                   A slash gives that field its own folder. A dash or a space
                   joins it to the next field. Parentheses wrap it, as in (1997).
+                  Braces wrap it in literal curly braces, as in{" "}
+                  {"{Stephen Fry}"}.
+                </p>
+              )}
+              {medium === "audio" && draft[folder].includes("{narrator}") && (
+                <p className="naming-section-note">
+                  Narrator names use file or catalog metadata. Enable the MAM
+                  source to use its release narrators when file tags are
+                  missing.
                 </p>
               )}
               {folders.error && (
@@ -479,6 +488,23 @@ function Editor({
           </fieldset>
         </div>
       </div>
+      <label className="check-label">
+        <input
+          type="checkbox"
+          checked={draft.ebooks_with_audio ?? false}
+          disabled={save.isPending}
+          onChange={(event) =>
+            setDraft({ ...draft, ebooks_with_audio: event.target.checked })
+          }
+        />
+        Place ebooks inside matching audiobook version folders
+      </label>
+      <p className="naming-section-note">
+        For shared Audiobookshelf libraries, imports add a tracked ebook copy to
+        each matching audiobook folder. Copies use hardlinks when possible. The
+        original ebook folder stays available, including when no audiobook
+        exists yet.
+      </p>
       <Notice error={save.error || preview.error} />
       <div className="settings-form-footer">
         <div className="button-row">
@@ -536,6 +562,7 @@ const joinLabels: [TokenJoin, string][] = [
   ["dash", "Dash"],
   ["space", "Space"],
   ["parentheses", "Parentheses"],
+  ["braces", "Braces"],
 ];
 function TokenLane({
   template,

@@ -90,6 +90,13 @@ for (const role of ["admin", "member", "viewer"]) {
       categories.getByRole("link", { name: "Download clients" }),
     ).toHaveCount(role === "admin" ? 1 : 0);
     if (role === "admin") {
+      await expect(
+        page.getByRole("checkbox", { name: /Merge MP3 chapters/ }),
+      ).toHaveCount(0);
+      await page.getByLabel("Apply to").selectOption("installation");
+      await expect(
+        page.getByRole("checkbox", { name: /Merge MP3 chapters/ }),
+      ).toBeVisible();
       await categories
         .getByRole("link", { name: "Download clients", exact: true })
         .click();
@@ -149,7 +156,7 @@ for (const role of ["admin", "member", "viewer"]) {
       page.getByText("No downloads yet.", { exact: true }),
     ).toBeVisible();
     await expect(
-      requestFilters.getByRole("link", { name: "Review", exact: true }),
+      requestFilters.getByRole("link", { name: "Download review", exact: true }),
     ).toHaveCount(role === "admin" ? 1 : 0);
     await page.goto("/activity#downloads");
     await expect(page).toHaveURL(/\/requests#downloads$/);
@@ -160,6 +167,37 @@ for (const role of ["admin", "member", "viewer"]) {
     ).toHaveValue("completed");
     await page.screenshot({ path: testInfo.outputPath("logs-desktop.png") });
     await page.setViewportSize({ width: 390, height: 844 });
+    const earlierCategories = page.getByRole("button", {
+      name: "Earlier settings categories",
+    });
+    if (role === "viewer") {
+      await expect(earlierCategories).toHaveCount(0);
+    } else {
+      await expect(earlierCategories).toBeEnabled();
+      await expect
+        .poll(() =>
+          categories.evaluate((nav) => {
+            const selected = nav.querySelector("[aria-current='page']")!;
+            return (
+              selected.getBoundingClientRect().right <=
+              nav.getBoundingClientRect().right + 1
+            );
+          }),
+        )
+        .toBe(true);
+      const initialScroll = await categories.evaluate((nav) => nav.scrollLeft);
+      await earlierCategories.click();
+      await expect
+        .poll(() => categories.evaluate((nav) => nav.scrollLeft))
+        .toBeLessThan(initialScroll);
+      const scrolledBack = await categories.evaluate((nav) => nav.scrollLeft);
+      await page
+        .getByRole("button", { name: "More settings categories" })
+        .click();
+      await expect
+        .poll(() => categories.evaluate((nav) => nav.scrollLeft))
+        .toBeGreaterThan(scrolledBack);
+    }
     await page.screenshot({ path: testInfo.outputPath("logs-mobile.png") });
     expect(
       await page.evaluate(

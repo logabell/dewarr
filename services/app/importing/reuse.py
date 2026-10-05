@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select, text
+from sqlalchemy.orm import load_only
 
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.qbittorrent import verify_association
@@ -268,10 +269,27 @@ async def recheck(db, attempt):
 async def recover(db, identifier):
     """Make stopped continuations actionable without silently renewing retry budgets."""
     await transaction_lock(db, f"automatic-reuse:{identifier}")
-    row = await db.get(AutomaticImportContinuation, identifier, populate_existing=True)
+    row = await db.get(
+        AutomaticImportContinuation,
+        identifier,
+        populate_existing=True,
+        options=[
+            load_only(
+                AutomaticImportContinuation.id,
+                AutomaticImportContinuation.state,
+                AutomaticImportContinuation.operation_id,
+                raiseload=True,
+            )
+        ],
+    )
     if not row or row.state not in {"queued", "inspecting"}:
         return
-    operation = await db.get(Operation, row.operation_id, populate_existing=True)
+    operation = await db.get(
+        Operation,
+        row.operation_id,
+        populate_existing=True,
+        options=[load_only(Operation.id, Operation.job_id, raiseload=True)],
+    )
     status = await db.scalar(
         text("SELECT status::text FROM book_queue.procrastinate_jobs WHERE id=:id"),
         {"id": operation.job_id},

@@ -18,6 +18,32 @@ from app.domain.catalog_display import display_map
 from app.domain.primary_editions import asset_narrators, edition_order, primary_choices
 
 
+def library_work_ids(user, *, library_id=None, medium="any", state="any"):
+    """Origins in accessible inventory, including incomplete and missing copies.
+
+    This bounds library browsing projections; fulfillment still uses the stricter
+    availability_rows() relation to establish complete, verified ownership.
+    """
+    query = (
+        select(AssetContains.work_id)
+        .join(LibraryAsset, LibraryAsset.id == AssetContains.asset_id)
+        .join(Library, Library.id == LibraryAsset.library_id)
+        .join(Integration, Integration.id == Library.integration_id)
+        .where(Library.accessible.is_(True), Integration.enabled.is_(True))
+    )
+    if user.role != "admin":
+        query = query.join(LibraryGrant, LibraryGrant.library_id == Library.id).where(
+            LibraryGrant.user_id == user.id
+        )
+    if library_id is not None:
+        query = query.where(Library.id == library_id)
+    if medium != "any":
+        query = query.where(LibraryAsset.medium == medium)
+    if state != "any":
+        query = query.where(LibraryAsset.state == state)
+    return query
+
+
 class Availability(BaseModel):
     owned: bool = False
     ebook: bool = False
@@ -48,13 +74,15 @@ async def availability_for(
     if not work_ids:
         return result
     # Series membership must never inherit title-based presentation grouping.
-    from app.domain.work_graph import canonical_map
+    from app.domain.work_graph import canonical_families, canonical_map
 
-    mapping = canonical_map() if identity_only else display_map(user, work_ids)
+    mapping = canonical_map(work_ids) if identity_only else display_map(user, work_ids)
     roots = dict((await db.execute(select(mapping).where(mapping.c.origin_id.in_(work_ids)))).all())
     by_root = {}
     for origin, root in roots.items():
         by_root.setdefault(root, []).append(origin)
+    if identity_only:
+        mapping = canonical_families(list(by_root))
     query = (
         availability_rows(user, mapping)
         .with_only_columns(mapping.c.work_id, LibraryAsset, Version.narrators)

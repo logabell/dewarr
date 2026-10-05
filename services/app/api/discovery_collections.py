@@ -1,7 +1,7 @@
 """Public discovery snapshots, reader layouts and independent display/tracking controls."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -12,10 +12,16 @@ from app.adapters.goodreads_discovery import CollectionBook, fetch_collection, i
 from app.api.catalog import WorkView, work_view
 from app.api.dependencies import CurrentUser, Database, Member
 from app.api.metadata import adapter_http_error, current_actor
-from app.db.models import DiscoveryFollow, DiscoveryLayout
+from app.db.models import DiscoveryFollow, DiscoveryLayout, ProviderCache
 from app.domain.availability import availability_for
 from app.domain.catalog_bindings import displayed_provider_works
-from app.domain.discovery_catalog import catalog, coverage
+from app.domain.discovery_catalog import (
+    catalog,
+    coverage,
+    live_catalog,
+    save_snapshot,
+    snapshot_key,
+)
 from app.domain.discovery_pages import collection_page, find_book
 from app.domain.hardcover_matching import MatchResult
 from app.domain.operations import transaction_lock
@@ -37,7 +43,15 @@ class DiscoveryPreferences(BaseModel):
 
 class CollectionCard(BaseModel):
     id: str
-    kind: Literal["award", "listopia"]
+    kind: Literal["award", "listopia", "chart"]
+    provider: str = "goodreads"
+    description: str | None = None
+    audience: str = "all"
+    language: str | None = None
+    medium: str | None = None
+    region: str | None = None
+    edition_date: str | None = None
+    refresh_mode: Literal["live", "app-update"] = "live"
     title: str
     source_url: str
     year: int | None = None
@@ -60,6 +74,9 @@ class CollectionIndex(BaseModel):
     genres: list[str]
     categories: list[str]
     archive_gaps: list[int]
+    providers: list[str] = Field(default_factory=list)
+    audiences: list[str] = Field(default_factory=list)
+    languages: list[str] = Field(default_factory=list)
 
 
 class CollectionEntry(CollectionBook):
@@ -94,13 +111,23 @@ class AddCollection(CollectionURL, CollectionFollowInput):
 
 
 def card(value, followed=None):
+    from app.adapters.catalog_types import cover_url
+
     return CollectionCard(
         **{k: v for k, v in value.items() if k != "books"},
-        covers=[url for b in value["books"] if (url := image_url(b.get("cover_url")))][:4],
+        covers=[
+            url
+            for b in value["books"]
+            if (url := image_url(b.get("cover_url")) or cover_url(b.get("cover_url")))
+        ][:4],
         pinned=followed.pinned if followed else False,
         tracking=followed.tracking if followed else False,
         saved=followed is not None,
-        warning=followed.error if followed else None,
+        warning=followed.error
+        if followed
+        and datetime.fromisoformat(followed.snapshot["updated_at"])
+        >= datetime.fromisoformat(value["updated_at"])
+        else None,
     )
 
 
@@ -109,9 +136,61 @@ async def sources(db, user):
         r.collection_id: r
         for r in await db.scalars(select(DiscoveryFollow).where(DiscoveryFollow.user_id == user.id))
     }
-    values = dict(catalog())
-    values.update({key: row.snapshot for key, row in follows.items()})
+    live = live_catalog()
+    values = {**catalog(), **live}
+    for row in await db.scalars(
+        select(ProviderCache).where(ProviderCache.key.in_([snapshot_key(key) for key in live]))
+    ):
+        if row.value.get("id") in live:
+            values[row.value["id"]] = row.value
+    for key, row in follows.items():
+        current = values.get(key)
+        # A saved layout must not hide a newer app manifest or public chart snapshot.
+        if not current or (
+            current.get("refresh_mode") != "app-update"
+            and (
+                not current["books"]
+                or datetime.fromisoformat(row.snapshot["updated_at"])
+                > datetime.fromisoformat(current["updated_at"])
+            )
+        ):
+            values[key] = row.snapshot
     return values, follows
+
+
+async def collection_works(db, user, books):
+    works = {}
+    for provider in {b.provider for b in books}:
+        works.update(
+            await displayed_provider_works(
+                db, user, provider, [b for b in books if b.provider == provider]
+            )
+        )
+    return works
+
+
+async def load_live(value, user, db):
+    if value.get("provider", "goodreads") not in {"nyt", "audible"}:
+        return user, value, None
+    cached = await db.get(ProviderCache, snapshot_key(value["id"]))
+    if cached and cached.expires_at > datetime.now(UTC):
+        latest = max((value, cached.value), key=lambda v: datetime.fromisoformat(v["updated_at"]))
+        return user, latest, None
+    uid = user.id
+    await db.rollback()
+    from app.domain.curation_sources import fetch
+
+    try:
+        current = await fetch(value)
+        await save_snapshot(current)
+        warning = None
+    except (AdapterError, ValueError):
+        if not value["books"]:
+            raise HTTPException(
+                503, "This collection is temporarily unavailable. Try again later."
+            ) from None
+        current, warning = value, "Source unavailable; showing the last successful snapshot."
+    return await current_actor(db, uid), current, warning
 
 
 @router.get("/layout", response_model=DiscoveryPreferences)
@@ -137,19 +216,30 @@ async def save_layout(body: DiscoveryPreferences, user: CurrentUser, db: Databas
 async def collections(
     user: CurrentUser,
     db: Database,
-    kind: Literal["all", "award", "listopia"] = "all",
+    kind: Literal["all", "award", "listopia", "chart", "collections"] = "all",
+    provider: str = "",
+    audience: str = "",
+    language: str = "",
     q: str = Query(default="", max_length=150),
     genre: str = "",
     category: str = "",
     year: int | None = None,
     saved: bool = False,
+    ids: Annotated[list[str] | None, Query(max_length=200)] = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=24, ge=1, le=100),
 ):
     values, follows = await sources(db, user)
-    rows = list(values.values())
+    rows = [
+        v
+        for v in values.values()
+        if kind == "all" or v["kind"] == kind or (kind == "collections" and v["kind"] != "award")
+    ]
     years = sorted({v["year"] for v in rows if v.get("year")}, reverse=True)
-    genres = sorted({g for v in rows if v["kind"] == "listopia" for g in v["genres"]})
+    genres = sorted({g for v in rows for g in v["genres"]})
+    providers = sorted({v.get("provider", "goodreads") for v in rows})
+    audiences = sorted({v.get("audience", "all") for v in rows})
+    languages = sorted({v["language"] for v in rows if v.get("language")})
     categories = sorted({v["category"] for v in rows if v.get("category")})
     gaps = [
         int(y)
@@ -159,7 +249,11 @@ async def collections(
     rows = [
         v
         for v in rows
-        if (kind == "all" or v["kind"] == kind)
+        if (kind == "all" or v["kind"] == kind or (kind == "collections" and v["kind"] != "award"))
+        and (not provider or v.get("provider", "goodreads") == provider)
+        and (not audience or v.get("audience", "all") == audience)
+        and (not language or v.get("language") == language)
+        and (ids is None or v["id"] in ids)
         and (not saved or v["id"] in follows)
         and (not year or v.get("year") == year)
         and (not genre or genre in v["genres"])
@@ -174,6 +268,9 @@ async def collections(
         genres=genres,
         categories=categories,
         archive_gaps=sorted(gaps),
+        providers=providers,
+        audiences=audiences,
+        languages=languages,
     )
 
 
@@ -208,11 +305,11 @@ async def detail_view(value, user, db, followed=None, page=1, winners=False, q="
             raise HTTPException(409, "Collection changed while loading; refresh it")
         followed = follows.get(value["id"])
         books = [CollectionBook.model_validate(b) for b in raw]
-    works = await displayed_provider_works(db, user, "goodreads", books)
+    works = await collection_works(db, user, books)
     availability = await availability_for(db, user, list({w.id for w in works.values()}))
     items = []
     for book in books:
-        work = works.get(("goodreads", book.external_id))
+        work = works.get((book.provider, book.external_id))
         items.append(
             CollectionEntry(
                 **book.model_dump(), work=work_view(work, availability[work.id]) if work else None
@@ -263,12 +360,22 @@ async def add_collection(body: AddCollection, user: Member, db: Database):
             raise HTTPException(
                 502, "Goodreads could not load this list. Try again later."
             ) from error
+    return await save_follow(value, body, user_id, db)
+
+
+async def save_follow(value, body, user_id, db):
+    key = value["id"]
     await transaction_lock(db, f"discovery-follow:{user_id}:{key}")
-    user = await current_actor(db, user_id, edit=True)
+    await current_actor(db, user_id, edit=True)
     row = await db.get(DiscoveryFollow, (user_id, key))
     if not row:
         row = DiscoveryFollow(user_id=user_id, collection_id=key, snapshot=value, generation=0)
         db.add(row)
+    if datetime.fromisoformat(value["updated_at"]) > datetime.fromisoformat(
+        row.snapshot["updated_at"]
+    ):
+        row.error = None
+    row.snapshot = value
     row.pinned, row.tracking = body.pinned, body.tracking
     row.generation += 1
     row.next_check_at = datetime.now(UTC) + timedelta(hours=24)
@@ -297,9 +404,12 @@ async def collection(
     values, follows = await sources(db, user)
     if collection_id not in values:
         raise HTTPException(404, "Collection not found")
-    return await detail_view(
-        values[collection_id], user, db, follows.get(collection_id), page, winners, q, full
-    )
+    user, value, warning = await load_live(values[collection_id], user, db)
+    _, follows = await sources(db, user)
+    result = await detail_view(value, user, db, follows.get(collection_id), page, winners, q, full)
+    if warning:
+        result.collection.warning = warning
+    return result
 
 
 @router.put("/collections/{collection_id}/follow", response_model=CollectionCard)
@@ -307,9 +417,8 @@ async def follow(collection_id: str, body: CollectionFollowInput, user: Member, 
     values, _ = await sources(db, user)
     if collection_id not in values:
         raise HTTPException(404, "Collection not found")
-    return await add_collection(
-        AddCollection(url=values[collection_id]["source_url"], **body.model_dump()), user, db
-    )
+    user, value, _ = await load_live(values[collection_id], user, db)
+    return await save_follow(value, body, user.id, db)
 
 
 class DiscoveryBookPage(BaseModel):
@@ -323,6 +432,9 @@ class DiscoveryBookPage(BaseModel):
 async def browse_books(
     user: CurrentUser,
     db: Database,
+    provider: str = "",
+    audience: str = "",
+    language: str = "",
     q: str = Query(default="", max_length=150),
     genre: str = "",
     category: str = "",
@@ -336,7 +448,10 @@ async def browse_books(
     books = {}
     for v in selected:
         if (
-            (genre and genre not in v["genres"])
+            (provider and v.get("provider", "goodreads") != provider)
+            or (audience and v.get("audience", "all") != audience)
+            or (language and v.get("language") != language)
+            or (genre and genre not in v["genres"])
             or (year and year != v.get("year"))
             or (category and category != v.get("category"))
         ):
@@ -346,34 +461,30 @@ async def browse_books(
                 continue
             if q and q.casefold() not in (b["title"] + " " + " ".join(b["authors"])).casefold():
                 continue
-            books.setdefault(b["external_id"], b)
+            books.setdefault((b.get("provider", "goodreads"), b["external_id"]), b)
     # Filtering ownership requires projection before paging, not just on the visible sample.
     all_books = [CollectionBook.model_validate(b) for b in books.values()]
     works = {}
     if owned:
         for start in range(0, len(all_books), 200):
-            works.update(
-                await displayed_provider_works(
-                    db, user, "goodreads", all_books[start : start + 200]
-                )
-            )
+            works.update(await collection_works(db, user, all_books[start : start + 200]))
         states = await availability_for(db, user, list({w.id for w in works.values()}))
         all_books = [
             b
             for b in all_books
-            if (w := works.get(("goodreads", b.external_id))) and states[w.id].owned
+            if (w := works.get((b.provider, b.external_id))) and states[w.id].owned
         ]
     total = len(all_books)
     batch = all_books[(page - 1) * 40 : page * 40]
     if not owned:
-        works = await displayed_provider_works(db, user, "goodreads", batch)
+        works = await collection_works(db, user, batch)
         states = await availability_for(db, user, list({w.id for w in works.values()}))
     return DiscoveryBookPage(
         items=[
             CollectionEntry(
                 **b.model_dump(),
                 work=work_view(w, states[w.id])
-                if (w := works.get(("goodreads", b.external_id)))
+                if (w := works.get((b.provider, b.external_id)))
                 else None,
             )
             for b in batch
@@ -629,6 +740,7 @@ class GoodreadsBookResolution(BaseModel):
     match: MatchResult
 
 
+@router.get("/curation/{external_id}", response_model=GoodreadsBookResolution)
 @router.get("/goodreads/{external_id}", response_model=GoodreadsBookResolution)
 async def resolve_goodreads_book(external_id: str, user: CurrentUser, db: Database):
     from app.api.metadata import adapter_http_error, provider_call
@@ -638,8 +750,19 @@ async def resolve_goodreads_book(external_id: str, user: CurrentUser, db: Databa
     values, _ = await sources(db, user)
     raw = await find_book(db, user.id, values, external_id)
     if raw is None:
-        raise HTTPException(404, "This Goodreads book is not in your discovery collections")
+        raise HTTPException(404, "This book is no longer in your discovery collections")
     entry = CollectionEntry.model_validate(raw)
+    if entry.subject != "work":
+        # Awards for a performance or illustrated edition must not resolve straight to
+        # a generic work request. The reader must choose the intended edition.
+        return GoodreadsBookResolution(
+            entry=entry,
+            match=MatchResult(
+                status="needs-review",
+                reason="This selection recognizes a specific edition or performance. "
+                "Choose its edition before requesting.",
+            ),
+        )
     user_id = user.id
     account = await db.get(CatalogAccount, user_id)
     if not account or not account.enabled:

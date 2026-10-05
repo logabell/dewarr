@@ -1,8 +1,10 @@
+import json
+import time
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.adapters.catalog_types import BookData, EditionData
 from app.config import get_settings
@@ -20,6 +22,58 @@ from tests.integration.test_import_inspections import run_worker, submit
 from tests.media_fixtures import audio, epub
 
 pytestmark = pytest.mark.integration
+
+
+async def test_many_editions_reuse_canonical_lookup_but_refresh_the_next_match(
+    client, admin, database, inspected, tmp_path
+):
+    from app.importing.inspection import InspectedGroup
+    from app.importing.matching import match_group
+
+    chosen = await edition(database)
+    for index in range(39):
+        await edition(database, work_id=chosen["work"], identifiers={"asin": f"B{index:09}"})
+    async with database() as db, db.begin():
+        root = Work(title="First Harbor", authors=["Alex Morgan"], language="en")
+        db.add(root)
+        await db.flush()
+        (await db.get(Work, chosen["work"])).redirect_to = root.id
+        root_id = root.id
+    inspection, grouping = inspected
+    group = InspectedGroup.model_validate(grouping["content"]["groups"][0])
+    async with database() as db:
+        calls = []
+
+        def count(*args):
+            calls.append(1)
+
+        engine = db.bind.sync_engine
+        event.listen(engine, "before_cursor_execute", count)
+        started = time.perf_counter()
+        try:
+            match = await match_group(db, inspection["snapshot"], grouping["revision"], group)
+        finally:
+            elapsed = time.perf_counter() - started
+            event.remove(engine, "before_cursor_execute", count)
+        print(f"40 editions: {len(calls)} SQL statements in {elapsed:.4f}s")
+        (tmp_path / "import-metrics.json").write_text(
+            json.dumps(
+                {
+                    "editions": len(match.candidates),
+                    "sql_statements": len(calls),
+                    "elapsed_seconds": elapsed,
+                }
+            )
+        )
+        assert len(match.candidates) == 40
+        assert match.status == "matched" and match.selected_version_id == chosen["version"]
+        assert all(candidate.work_id == root_id for candidate in match.candidates)
+        assert len(calls) <= 3, f"Edition matching issued {len(calls)} SQL statements"
+        async with database() as other, other.begin():
+            (await other.get(Work, root_id)).metadata_fields = {"identity_rejected": True}
+        fresh = await match_group(db, inspection["snapshot"], grouping["revision"], group)
+        assert fresh.status == "review" and fresh.selected_version_id is None
+        assert fresh.revision != match.revision
 
 
 async def edition(
@@ -204,6 +258,28 @@ async def test_duplicate_identifier_and_title_only_candidates_never_auto_select(
     )
 
 
+@pytest.mark.parametrize(
+    "identifier_value", ["  ISBN-13:9781234567897  ", "\turn:isbn-13:9781234567897\n"]
+)
+@pytest.mark.parametrize("identifier_key", ["isbn_13", "ISBN-13", " ISBN_13 "])
+async def test_qualified_duplicate_identifier_cannot_hide_behind_a_different_title(
+    client, admin, database, inspected, identifier_value, identifier_key
+):
+    await edition(database)
+    previous = (await matches(client, inspected))["items"][0]
+    assert previous["status"] == "matched"
+    duplicate = await edition(
+        database, title="An unrelated title", identifiers={identifier_key: identifier_value}
+    )
+    match = (await matches(client, inspected))["items"][0]
+    assert match["status"] == "review" and not match["selected_version_id"]
+    assert {row["version_id"] for row in match["candidates"] if row["identifier_match"]} >= {
+        str(duplicate["version"])
+    }
+    assert "multiple catalog versions" in match["message"]
+    assert (await freeze(client, inspected, previous)).status_code == 409
+
+
 async def test_match_proof_cannot_select_another_version_or_outlive_group_revision(
     client, admin, database, inspected
 ):
@@ -333,6 +409,30 @@ async def ready_inspection(client, monkeypatch, root):
         await client.get(f"/api/organization/inspections/{inspection['id']}/grouping")
     ).json()
     return inspection, grouping
+
+
+async def test_prefixed_asin_duplicate_prevents_unique_recording_match(
+    client, admin, database, tmp_path, monkeypatch
+):
+    audio(tmp_path / "pack/book.mp3", tags={"asin": "B012345678"})
+    inspected = await ready_inspection(client, monkeypatch, tmp_path.resolve())
+    chosen = await edition(database, medium="audio", identifiers={"asin": "B012345678"})
+    async with database() as db, db.begin():
+        (await db.get(Version, chosen["version"])).narrators = ["Jordan Lee"]
+    assert (await matches(client, inspected))["items"][0]["status"] == "matched"
+    other = await edition(
+        database,
+        medium="audio",
+        title="A different recording",
+        identifiers={"ASIN": "\tURN:ASIN:b012345678\n"},
+    )
+    match = (await matches(client, inspected))["items"][0]
+    assert match["status"] == "review" and match["selected_version_id"] is None
+    assert {row["version_id"] for row in match["candidates"]} == {
+        str(chosen["version"]),
+        str(other["version"]),
+    }
+    assert all(row["identifier_match"] for row in match["candidates"])
 
 
 async def test_edition_label_still_matches_an_edition_of_the_same_format(

@@ -322,7 +322,14 @@ def _review_clause():
                     AutomaticImport.state.in_(["queued", "inspecting", "importing", "complete"]),
                 ),
                 ~_import_entries("queued", "publishing", "awaiting-library", "cancelling"),
-                or_(DownloadAttempt.inspection_id.is_(None), active_handoff),
+                or_(
+                    DownloadAttempt.inspection_id.is_(None),
+                    active_handoff,
+                    exists().where(
+                        AutomaticImport.attempt_id == DownloadAttempt.id,
+                        AutomaticImport.state == "held",
+                    ),
+                ),
             ),
         ),
     )
@@ -578,13 +585,7 @@ def _matches_card(card, status: str) -> bool:
     return True
 
 
-async def _decorate_target(db, user, intent, target: TargetView) -> None:
-    row = await db.scalar(
-        select(AcquisitionTarget).where(
-            AcquisitionTarget.intent_id == intent.id,
-            AcquisitionTarget.slot == target.slot,
-        )
-    )
+async def _decorate_target(db, user, intent, target: TargetView, *, row) -> None:
     if not row:
         return
     selection_id = await db.scalar(
@@ -792,6 +793,7 @@ async def _can_repair(db, user, attempt, repair, now) -> bool:
             selection,
             committed=True,
             configuration=await accepted_configuration(db, selection),
+            require_enabled=False,
         )
     except (HTTPException, AttributeError, KeyError, TypeError):
         return False
@@ -827,11 +829,12 @@ async def _projected_page(db, user, listing, counted, order, status, offset, lim
         if not rows:
             exhausted = True
             break
+        related = await _request_relations(db, rows)
         flags: list[bool] = []
         cards: list[RequestView | None] = []
         for intent in rows:
             try:
-                card = await view(db, user, intent)
+                card = await view(db, user, intent, related=related[intent.id])
             except Exception:
                 logger.exception("Skipped request %s while filtering", intent.id)
                 card = None
@@ -866,18 +869,30 @@ async def _projected_page(db, user, listing, counted, order, status, offset, lim
     )
 
 
-async def view(db, user, intent):
+async def _request_relations(db, intents):
+    """Read display-only reasons/targets once for this bounded page, never cache authority."""
+    related = {intent.id: ([], {}) for intent in intents}
+    if not related:
+        return related
+    for reason in await db.scalars(
+        select(AcquisitionReason)
+        .where(AcquisitionReason.intent_id.in_(related))
+        .order_by(AcquisitionReason.created_at, AcquisitionReason.id)
+    ):
+        related[reason.intent_id][0].append(reason)
+    for target in await db.scalars(
+        select(AcquisitionTarget).where(AcquisitionTarget.intent_id.in_(related))
+    ):
+        related[target.intent_id][1][target.slot] = target
+    return related
+
+
+async def view(db, user, intent, *, related=None):
     # Refresh only the display projection here; dispatch must evaluate under the work lock.
     spec = RequestSpec.model_validate(intent.specification)
-    reasons = (
-        await db.scalars(
-            select(AcquisitionReason)
-            .where(
-                AcquisitionReason.intent_id == intent.id,
-            )
-            .order_by(AcquisitionReason.created_at, AcquisitionReason.id)
-        )
-    ).all()
+    reasons, saved_targets = (
+        related if related is not None else (await _request_relations(db, [intent]))[intent.id]
+    )
     active = any(reason.active and reason.approval_status == "approved" for reason in reasons)
     pending = any(reason.active and reason.approval_status == "pending" for reason in reasons)
     declined = any(reason.active and reason.approval_status == "declined" for reason in reasons)
@@ -893,13 +908,15 @@ async def view(db, user, intent):
     can_start_download = (can_dispatch and approval == "pending") or download_followup
     descriptions = []
     work_title = "Unavailable book"
+    work = None
     can_open_book = False
     try:
         if user.role == "viewer":
             raise HTTPException(403, "Read-only account")
-        work_title = (
-            await validate_request(db, user, intent.work_id, spec, check_version_constraints=False)
-        ).title
+        work = await validate_request(
+            db, user, intent.work_id, spec, check_version_constraints=False
+        )
+        work_title = work.title
         can_open_book = True
         for medium in ("ebook", "audio"):
             version_id = getattr(spec, medium + "_version_id")
@@ -1008,17 +1025,11 @@ async def view(db, user, intent):
             TargetView(slot=slot, state="paused", message="Request access needs attention")
             for slot in spec.slots()
         ]
-    saved_targets = {
-        row.slot: row
-        for row in await db.scalars(
-            select(AcquisitionTarget).where(AcquisitionTarget.intent_id == intent.id)
-        )
-    }
     for target in targets:
         saved = saved_targets.get(target.slot)
         if saved and saved.quota_waiting and target.state != "satisfied":
             target.state, target.message, target.next_action = "paused", saved.message, "none"
-        await _decorate_target(db, user, intent, target)
+        await _decorate_target(db, user, intent, target, row=saved)
     from app.domain.request_presentation import series_cover, series_progress
 
     for target in targets:
@@ -1026,10 +1037,11 @@ async def view(db, user, intent):
     work_id = intent.work_id
     cover_url = None
     authors: list[str] = []
-    try:
-        work = await canonical_work(db, intent.work_id)
-    except HTTPException:
-        work = None
+    if work is None:
+        try:
+            work = await canonical_work(db, intent.work_id)
+        except HTTPException:
+            work = None
     if work is not None:
         work_id = work.id
         if can_open_book:
@@ -1292,6 +1304,7 @@ async def all_requests(
     mine: bool = False,
     status: RequestStatus | None = None,
     sort: Literal["newest", "title"] = "newest",
+    q: str = Query(default="", max_length=300),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
 ):
@@ -1324,6 +1337,22 @@ async def all_requests(
         where.append(exists(_active_reasons()))
     if work_id:
         where.append(AcquisitionIntent.work_id.in_(family_ids(work_id)))
+    if q.strip():
+        mapping = canonical_map()
+        searchable = aliased(Work)
+        where.append(
+            exists(
+                select(searchable.id)
+                .join(mapping, mapping.c.work_id == searchable.id)
+                .where(mapping.c.origin_id == AcquisitionIntent.work_id)
+                .where(
+                    or_(
+                        searchable.title.icontains(q.strip(), autoescape=True),
+                        cast(searchable.authors, String).icontains(q.strip(), autoescape=True),
+                    )
+                )
+            )
+        )
     order = (
         [_title_sort().asc(), AcquisitionIntent.id]
         if sort == "title"
@@ -1338,8 +1367,9 @@ async def all_requests(
         return await _projected_page(db, user, listing, counted, order, status, offset, limit)
     intents = (await db.scalars(listing.order_by(*order).offset(offset).limit(limit))).all()
     total = await db.scalar(counted)
+    related = await _request_relations(db, intents)
     return RequestPage(
-        items=[await view(db, user, intent) for intent in intents],
+        items=[await view(db, user, intent, related=related[intent.id]) for intent in intents],
         total=total or 0,
         offset=offset,
         limit=limit,

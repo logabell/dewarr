@@ -11,7 +11,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.config import get_settings
 from app.db.models import (
@@ -241,28 +241,31 @@ async def hold(db, row, message):
 async def history(db, selection):
     rows = (
         await db.execute(
-            select(AcquisitionSelection, DownloadAttempt)
+            select(
+                AcquisitionSelection.id.label("selection_id"),
+                DownloadAttempt.id.label("attempt_id"),
+                AcquisitionSelection.frozen["release"]["title"].astext.label("release_title"),
+                func.coalesce(DownloadRecovery.state, DownloadAttempt.state).label("state"),
+                func.coalesce(DownloadRecovery.reason, DownloadAttempt.message).label("reason"),
+            )
+            .select_from(AcquisitionSelection)
             .join(DownloadMembership, DownloadMembership.selection_id == AcquisitionSelection.id)
             .join(DownloadAttempt, DownloadAttempt.id == DownloadMembership.attempt_id)
+            .outerjoin(DownloadRecovery, DownloadRecovery.selection_id == AcquisitionSelection.id)
             .where(AcquisitionSelection.target_id == selection.target_id)
             .order_by(DownloadAttempt.created_at, DownloadAttempt.id)
         )
     ).all()
-    result = []
-    for member, attempt in rows:
-        recovery = await db.scalar(
-            select(DownloadRecovery).where(DownloadRecovery.selection_id == member.id)
-        )
-        result.append(
-            {
-                "attempt_id": str(attempt.id),
-                "selection_id": str(member.id),
-                "release_title": member.frozen["release"]["title"],
-                "state": recovery.state if recovery else attempt.state,
-                "reason": recovery.reason if recovery else attempt.message,
-            }
-        )
-    return result
+    return [
+        {
+            "attempt_id": str(row.attempt_id),
+            "selection_id": str(row.selection_id),
+            "release_title": row.release_title,
+            "state": row.state,
+            "reason": row.reason,
+        }
+        for row in rows
+    ]
 
 
 async def frozen_context(db, root_id, rule, profile):

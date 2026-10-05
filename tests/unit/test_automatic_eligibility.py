@@ -171,6 +171,14 @@ def test_indexer_descriptive_subtitle_with_exact_author(title, allowed):
         (["Harbor.m4b"], True),
         (["01.mp3", "02.mp3"], True),
         (["Harbor Chapter 01.mp3", "Harbor Chapter 02.mp3"], True),
+        (["01.mp3", "Chapter 01.mp3"], False),
+        (["Track 01.mp3", "Track 1.mp3"], False),
+        (["CD 1 Track 1.mp3", "Disc 01 Chapter 01.mp3"], False),
+        (["CD 1 Track 1.mp3", "CD 2 Track 1.mp3"], True),
+        (["CD1Track1.mp3", "CD2Track1.mp3"], True),
+        (["Disc12.mp3", "Disc13.mp3"], False),
+        (["99999.mp3", "100000.mp3"], False),
+        (["00.mp3", "01.mp3"], False),
         (["01 - Harbor.m4b", "02 - Roads.m4b"], False),
         (["Book 1/01.mp3", "Book 2/02.mp3"], False),
         (["Harbor.m4b", "Harbor.mp3"], False),
@@ -181,6 +189,31 @@ def test_indexer_descriptive_subtitle_with_exact_author(title, allowed):
 )
 def test_single_book_manifests_are_distinct_from_packs_and_alternative_encodings(paths, allowed):
     reasons = eligibility(release(), WORK, RULE, ReleasePreferences(), descriptor=descriptor(paths))
+    assert (not reasons) is allowed, reasons
+
+
+@pytest.mark.parametrize(
+    "prefix,allowed",
+    [
+        ("Angels and Demons", True),
+        ("Angels ＆ Demons", True),
+        ("Angels Demons", False),
+        ("Angels or Demons", False),
+        ("Angels and Demons: Study Guide", False),
+    ],
+)
+def test_numbered_audio_accepts_connector_variants_without_changing_book(prefix, allowed):
+    work = {"title": "Angels & Demons", "authors": ["Dan Brown"]}
+    value = release().model_copy(
+        update={"title": work["title"], "raw_title": work["title"], "authors": work["authors"]}
+    )
+    reasons = eligibility(
+        value,
+        work,
+        RULE,
+        ReleasePreferences(),
+        descriptor=descriptor([f"{prefix} Chapter 01.mp3", f"{prefix} Chapter 02.mp3"]),
+    )
     assert (not reasons) is allowed, reasons
 
 
@@ -389,3 +422,56 @@ def test_reviewed_preparation_can_retain_formats_that_cannot_yet_import_unattend
             value, WORK, RULE, ReleasePreferences(), descriptor=manifest, unattended=True
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("paths", "blocked", "allowed"),
+    [
+        (["Harbor.epub", "Harbor.mobi"], [], True),
+        (["Harbor.epub", "Harbor.MOBI", "cover.jpg"], [], True),
+        (["Harbor.epub", "Harbor.mobi"], ["mobi"], False),
+        (["Harbor.epub", "Other.mobi"], [], False),
+        (["Harbor.epub", "Other/Harbor.mobi"], [], False),
+        (["Harbor.epub", "Harbor.pdf", "Harbor.mobi"], [], False),
+        (["Harbor.mobi"], [], False),
+        (["Harbor.epub", "Harbor.zip"], [], False),
+        (["Harbor.epub", "Harbor.exe"], [], False),
+    ],
+)
+def test_epub_with_mobi_companion_keeps_one_supported_book(paths, blocked, allowed):
+    value = release().model_copy(update={"medium": "ebook", "formats": ["epub", "mobi"]})
+    reasons = eligibility(
+        value,
+        WORK,
+        {**RULE, "medium": "ebook"},
+        ReleasePreferences(blocked_formats=blocked),
+        descriptor=descriptor(paths),
+        unattended=True,
+    )
+    assert (not reasons) is allowed, reasons
+
+
+@pytest.mark.parametrize("postfix,allowed", [(".MP3", False), (".German.Audiobook.MP3", True)])
+def test_language_requirement_uses_catalog_boundary_not_a_title_word(postfix, allowed):
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    title = "Writer - The Good German" + postfix
+    value = ProwlarrRelease(
+        source_id="language-fixture",
+        acquisition_supported=True,
+        title=title,
+        raw_title=title,
+        medium="audio",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+    )
+    reasons = eligibility(
+        value,
+        {"title": "The Good German", "authors": ["Writer"]},
+        {**RULE, "language": "de"},
+        ReleasePreferences(),
+        unattended=True,
+    )
+    assert (not reasons) is allowed, reasons

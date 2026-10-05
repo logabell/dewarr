@@ -1,10 +1,12 @@
 # ruff: noqa: F811
 import base64
+import json
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.adapters.contracts import AdapterError, FailureKind
 from app.adapters.mam import MAMRelease
@@ -14,6 +16,7 @@ from app.db.models import (
     AcquisitionSelection,
     DownloadAttempt,
     Operation,
+    ReleaseBlock,
     SourceArtifact,
     SourceConnection,
     SourceResult,
@@ -21,6 +24,7 @@ from app.db.models import (
     Work,
 )
 from app.domain import automatic_selection as automatic
+from app.domain.release_blocklist import release_keys
 from app.domain.release_profiles import ProfileSnapshot, ReleasePreferences
 from app.jobs.retry import SourceSearchRetry
 from app.security import encrypt_secrets
@@ -29,6 +33,89 @@ from tests.integration.test_acquisition_selections import selection_route  # noq
 from tests.torrent_fixture import torrent_bytes
 
 pytestmark = pytest.mark.integration
+
+
+async def test_large_selection_batches_blocklist_reads_without_losing_scope(
+    client, database, source, catalog, tmp_path
+):
+    operation = await start(client, source)
+    async with database() as db, db.begin():
+        original = await db.get(SourceResult, source["result"])
+        origin = Work(
+            title="Earlier catalog identity", authors=["Writer"], redirect_to=catalog["work"]
+        )
+        unrelated = Work(title="Different book", authors=["Writer"])
+        db.add_all([origin, unrelated])
+        await db.flush()
+        for index in range(120):
+            release = source["release"].model_copy(update={"source_id": f"bulk-{index}"})
+            db.add(
+                SourceResult(
+                    owner_id=original.owner_id,
+                    operation_id=original.operation_id,
+                    source_key=original.source_key,
+                    source_generation=original.source_generation,
+                    expires_at=original.expires_at,
+                    encrypted_reference=original.encrypted_reference,
+                    release_snapshot=release.model_dump(mode="json"),
+                )
+            )
+            if index < 4:
+                source_key, keys = release_keys(release)
+                db.add(
+                    ReleaseBlock(
+                        work_id=unrelated.id if index == 3 else origin.id,
+                        medium="ebook" if index == 2 else "audio",
+                        active=index != 1,
+                        source=source_key,
+                        title=release.title,
+                        identities=keys,
+                        release_key=keys[0].removeprefix("release:"),
+                        reason="Previously rejected",
+                        actor_id=original.owner_id,
+                        automatic=True,
+                    )
+                )
+    async with database() as db:
+        saved = await db.get(Operation, UUID(operation["id"]))
+        work = await db.get(Work, catalog["work"])
+        calls = []
+
+        def count(*args):
+            calls.append(1)
+
+        engine = db.bind.sync_engine
+        event.listen(engine, "before_cursor_execute", count)
+        started = time.perf_counter()
+        try:
+            ranked = await automatic.candidates(
+                db,
+                saved,
+                work,
+                ProfileSnapshot.model_validate(saved.payload["profile"]),
+                saved.payload["requirements"],
+                None,
+            )
+        finally:
+            elapsed = time.perf_counter() - started
+            event.remove(engine, "before_cursor_execute", count)
+        print(f"121 candidates: {len(calls)} SQL statements in {elapsed:.4f}s")
+        (tmp_path / "selection-metrics.json").write_text(
+            json.dumps(
+                {
+                    "candidates": len(ranked),
+                    "sql_statements": len(calls),
+                    "elapsed_seconds": elapsed,
+                }
+            )
+        )
+        assert len(ranked) == 121
+        assert {
+            release.source_id
+            for _, _, release, problems in ranked
+            if "This release is blocklisted for this book and medium" in problems
+        } == {"bulk-0"}
+        assert len(calls) <= 4, f"Candidate ranking issued {len(calls)} SQL statements"
 
 
 @pytest.mark.parametrize("refreshed_count", [100, 0])
@@ -194,6 +281,32 @@ async def detail(client, identifier):
     return result.json()
 
 
+@pytest.mark.parametrize(
+    "filename", ["Chapter 37.mp3", "Harbor Chapter 01.mp3", "Harbor (Part 1 of 3).m4b"]
+)
+async def test_single_chapter_torrent_is_held_before_preparation(
+    client, database, source, filename
+):
+    raw = torrent_bytes(name=b"Harbor", files=[{b"length": 12, b"path": [filename.encode()]}])
+    descriptor = await inspect_torrent(raw)
+    async with database() as db, db.begin():
+        artifact = await db.get(SourceArtifact, source["artifact"])
+        artifact.sha256 = descriptor.artifact_sha256
+        artifact.descriptor = descriptor.model_dump(mode="json")
+        artifact.encrypted_content = encrypt_secrets({"torrent": base64.b64encode(raw).decode()})
+    operation = await start(client, source)
+    await automatic.run(UUID(operation["id"]))
+    await automatic.run(UUID(operation["id"]))
+    value = await detail(client, operation["id"])
+    assert value["status"] == "held", value
+    assert any(
+        "one part" in reason for decision in value["decisions"] for reason in decision["reasons"]
+    )
+    async with database() as db:
+        assert await db.scalar(select(func.count()).select_from(AcquisitionSelection)) == 0
+        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 0
+
+
 async def test_best_eligible_candidate_is_prepared_once_with_frozen_limits_and_provenance(
     client, database, source
 ):
@@ -212,6 +325,32 @@ async def test_best_eligible_candidate_is_prepared_once_with_frozen_limits_and_p
         assert selected.frozen["profile"]["preferences"]["maximum_bytes"] is None
         assert selected.frozen["automatic_selection"]["result_id"] == str(source["result"])
     assert len(source["resolver"].calls) == 1
+
+
+async def test_cancelled_preparation_does_not_keep_release_selected(
+    client, database, source, catalog
+):
+    from app.domain.release_download_status import for_releases, identity
+
+    source["body"] = {**source["body"], "result_id": str(source["result"])}
+    operation = await start(client, source)
+    await automatic.run(UUID(operation["id"]))
+    value = await detail(client, operation["id"])
+    assert value["status"] == "completed" and value["selection_id"]
+    async with database() as db:
+        owner = (await db.get(Operation, UUID(operation["id"]))).owner_id
+        before = await for_releases(db, owner, catalog["work"], [source["release"]])
+        assert before[identity(source["release"])].prevent_download
+    cancelled = await client.delete(f"/api/acquisition/selections/{value['selection_id']}")
+    assert cancelled.status_code == 200, cancelled.text
+    async with database() as db:
+        after = await for_releases(db, owner, catalog["work"], [source["release"]])
+        status = after[identity(source["release"])]
+        assert status.state == "cancelled" and not status.prevent_download
+        assert await db.scalar(select(func.count()).select_from(DownloadAttempt)) == 0
+    retry = await start(client, source, key="select-after-cancellation")
+    await automatic.run(UUID(retry["id"]))
+    assert (await detail(client, retry["id"]))["status"] == "completed"
 
 
 @pytest.mark.parametrize("change", ["author", "unknown-seeds", "language", "pack", "recording"])

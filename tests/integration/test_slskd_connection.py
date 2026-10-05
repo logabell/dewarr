@@ -3,7 +3,7 @@ from uuid import UUID
 import pytest
 
 from app.config import get_settings
-from app.db.models import ImportStorageSettings, Integration
+from app.db.models import ImportStorageSettings, Integration, SourceConnection
 from app.domain import downloaders, slskd_connection
 
 pytestmark = pytest.mark.integration
@@ -47,6 +47,57 @@ async def connect(client):
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+async def test_enable_toggle_preserves_source_and_downloader_configuration(
+    client, admin, database, slskd
+):
+    saved = await connect(client)
+    assert (await client.post("/api/sources/slskd/connection/test")).status_code == 200
+    async with database() as db:
+        before = await db.get(Integration, UUID(saved["downloader_id"]))
+        configuration, secrets = before.config, before.encrypted_secrets
+    for enabled in (False, True):
+        response = await client.put(
+            "/api/sources/slskd/connection",
+            json={
+                "base_url": saved["base_url"],
+                "enabled": enabled,
+                "expected_generation": saved["generation"],
+                "expected_enabled": not enabled,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["generation"] == saved["generation"]
+        assert response.json()["downloader_generation"] == saved["downloader_generation"]
+        assert response.json()["enabled"] is enabled
+        async with database() as db:
+            current = await db.get(Integration, UUID(saved["downloader_id"]))
+            assert current.config == configuration
+            assert current.encrypted_secrets == secrets
+            assert current.enabled is enabled
+        if not enabled:
+            assert (await client.post("/api/sources/slskd/connection/test")).status_code == 409
+            for stale_url in (saved["base_url"], "http://stale-slskd:5030"):
+                stale = await client.put(
+                    "/api/sources/slskd/connection",
+                    json={
+                        "base_url": stale_url,
+                        "api_key": "stale-replacement-api-key",
+                        "enabled": True,
+                        "expected_generation": saved["generation"],
+                        "expected_enabled": True,
+                    },
+                )
+                assert stale.status_code == 409, stale.text
+            async with database() as db:
+                source = await db.get(SourceConnection, "slskd")
+                current = await db.get(Integration, UUID(saved["downloader_id"]))
+                assert not source.enabled and not current.enabled
+                assert source.base_url == saved["base_url"]
+                assert source.generation == saved["generation"]
+                assert current.encrypted_secrets == secrets
+    assert slskd[0]["calls"] == 1
 
 
 @pytest.mark.parametrize("existing", [False, True])

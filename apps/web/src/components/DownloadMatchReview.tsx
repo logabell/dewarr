@@ -271,8 +271,40 @@ export default function DownloadMatchReview({
           <>
             <h3>Do these files contain the whole book?</h3>
             <p>
-              Confirm that every chapter is included. The selected book and
-              library folder are already saved.
+              {download.message ||
+                "Automatic checks could not establish whether these files contain the complete book."}
+            </p>
+            <dl className="import-evidence">
+              <div>
+                <dt>Inspected files</dt>
+                <dd>
+                  {group?.files.length || 0}{" "}
+                  {download.medium === "audio" ? "audio" : "ebook"} files ·
+                  readable files do not establish completeness
+                </dd>
+              </div>
+              <div>
+                <dt>Match evidence</dt>
+                <dd>
+                  {candidate?.reasons?.join(" · ") ||
+                    "No catalog edition was confidently identified. Your confirmation will use the inspected file edition."}
+                </dd>
+              </div>
+              <div>
+                <dt>Library destination</dt>
+                <dd>
+                  {destination?.backend_path || "Choose a library folder below"}
+                </dd>
+              </div>
+              <div>
+                <dt>File handling</dt>
+                <dd>Keep the download and add a library copy.</dd>
+              </div>
+            </dl>
+            <p>
+              Check the file list and recording or edition details before
+              confirming that every chapter is included. Missing chapters cannot
+              be inferred from a successful file read.
             </p>
             <label className="download-complete-check">
               <input

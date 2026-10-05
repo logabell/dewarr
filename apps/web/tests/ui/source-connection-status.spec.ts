@@ -4,6 +4,8 @@ test("source connections keep masked credentials and show verified status beside
   page,
 }) => {
   const checkedAt = "2026-09-23T15:30:00Z";
+  let failSoulseek = false;
+  let soulseekTests = 0;
   const connections = {
     prowlarr: {
       configured: true,
@@ -62,14 +64,29 @@ test("source connections keep masked credentials and show verified status beside
     else if (path === "/api/setup/onboarding") data = { status: "completed" };
     else if (path === "/api/sources/prowlarr/connection")
       data = connections.prowlarr;
-    else if (path === "/api/sources/slskd/connection") data = connections.slskd;
-    else if (path === "/api/sources/audiobookbay/connection")
+    else if (path === "/api/sources/slskd/connection") {
+      if (route.request().method() === "PUT") {
+        const body = route.request().postDataJSON();
+        expect(body.expected_enabled).toBe(connections.slskd.enabled);
+        connections.slskd.enabled = body.enabled;
+        connections.slskd.status = body.enabled ? "untested" : "disabled";
+      }
+      data = connections.slskd;
+    } else if (path === "/api/sources/audiobookbay/connection")
       data = connections.audiobookbay;
     else if (path === "/api/sources/prowlarr/connection/test") {
       connections.prowlarr.status = "connected";
       connections.prowlarr.last_success_at = checkedAt;
       data = connections.prowlarr;
     } else if (path === "/api/sources/slskd/connection/test") {
+      soulseekTests++;
+      if (failSoulseek) {
+        connections.slskd.status = "unavailable";
+        return route.fulfill({
+          status: 502,
+          json: { detail: "Cannot reach Soulseek." },
+        });
+      }
       connections.slskd.status = "connected";
       connections.slskd.last_success_at = checkedAt;
       data = connections.slskd;
@@ -77,7 +94,15 @@ test("source connections keep masked credentials and show verified status beside
       connections.audiobookbay.status = "connected";
       connections.audiobookbay.last_success_at = checkedAt;
       data = connections.audiobookbay;
-    } else if (path === "/api/sources/mam/connection")
+    } else if (path === "/api/health/connections")
+      data = {
+        connections:
+          connections.slskd.enabled &&
+          connections.slskd.status === "unavailable"
+            ? [{ key: "slskd", name: "Soulseek", status: "unavailable" }]
+            : [],
+      };
+    else if (path === "/api/sources/mam/connection")
       data = {
         configured: false,
         enabled: false,
@@ -150,6 +175,46 @@ test("source connections keep masked credentials and show verified status beside
       form.getByRole("status", { name: "Connection test status" }),
     ).toContainText("Verified");
   }
+
+  const soulseek = page.getByRole("form", {
+    name: "Soulseek connection settings",
+  });
+  failSoulseek = true;
+  await soulseek
+    .getByRole("button", { name: "Test connection", exact: true })
+    .click();
+  await expect(soulseek.getByLabel("Connection test status")).toContainText(
+    "Test failed",
+  );
+  await expect(
+    page.getByLabel("1 connection issue", { exact: true }),
+  ).toBeVisible();
+  await soulseek.getByLabel("Enabled", { exact: true }).uncheck();
+  await soulseek
+    .getByRole("button", { name: "Save connection", exact: true })
+    .click();
+  await expect(soulseek.getByLabel("Connection test status")).toContainText(
+    "Disabled",
+  );
+  await expect(
+    soulseek.getByText("Cannot reach Soulseek.", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    soulseek.getByRole("button", { name: "Test connection", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByLabel("1 connection issue", { exact: true }),
+  ).toHaveCount(0);
+  expect(soulseekTests).toBe(2);
+  failSoulseek = false;
+  await soulseek.getByLabel("Enabled", { exact: true }).check();
+  await soulseek
+    .getByRole("button", { name: "Save & test connection", exact: true })
+    .click();
+  await expect(soulseek.getByLabel("Connection test status")).toContainText(
+    "Saved & connected",
+  );
+  expect(soulseekTests).toBe(3);
 
   await page
     .getByRole("region", { name: "AudiobookBay settings" })

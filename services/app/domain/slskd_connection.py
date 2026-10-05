@@ -47,6 +47,8 @@ async def save(db, admin, body):
     current = source.generation if source else 0
     if current != body.expected_generation:
         raise HTTPException(409, "Soulseek settings changed. Reload before saving.")
+    if source and body.expected_enabled is not None and source.enabled != body.expected_enabled:
+        raise HTTPException(409, "Soulseek availability changed. Reload before saving.")
     secrets = decrypt_secrets(source.encrypted_secrets) if source else {}
     if (not source or source.base_url != body.base_url) and not body.api_key:
         raise HTTPException(422, "Enter an API key when connecting slskd")
@@ -54,6 +56,16 @@ async def save(db, admin, body):
         secrets["api_key"] = body.api_key.get_secret_value()
     if "api_key" not in secrets:
         raise HTTPException(422, "Enter an API key when connecting slskd")
+    if (
+        source
+        and client
+        and source.base_url == body.base_url == client.base_url
+        and decrypt_secrets(client.encrypted_secrets) == {"api_key": secrets["api_key"]}
+        and decrypt_secrets(source.encrypted_secrets) == secrets
+    ):
+        source.enabled = client.enabled = body.enabled
+        db.add(AuditEvent(actor_id=admin.id, action="source.slskd.updated", entity_id=client.id))
+        return source, client
     if not source:
         source = SourceConnection(key="slskd", generation=0)
         db.add(source)

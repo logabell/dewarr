@@ -46,6 +46,7 @@ class DownloaderInput(BaseModel):
     mappings: list[DownloadMapping] | None = Field(default=None, max_length=20)
     enabled: bool = True
     expected_generation: int = Field(default=0, ge=0)
+    expected_enabled: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -219,6 +220,8 @@ async def save(body, admin, db, connection_id=None):
     row = await downloaders.connection_or_404(db, connection_id) if connection_id else None
     if (row.credential_generation if row else 0) != body.expected_generation:
         raise HTTPException(409, "Downloader settings changed. Reload before saving.")
+    if row and body.expected_enabled is not None and row.enabled != body.expected_enabled:
+        raise HTTPException(409, "Downloader availability changed. Reload before saving.")
     if row and row.kind != body.kind:
         raise HTTPException(409, "Downloader type cannot be changed")
     duplicate = await db.scalar(
@@ -277,6 +280,21 @@ async def save(body, admin, db, connection_id=None):
                 "username": body.username.get_secret_value() if body.username else "",
                 "password": body.password.get_secret_value() if body.password else "",
             }
+    if (
+        row
+        and same_endpoint
+        and row.name == body.name
+        and row.config.get("category", "") == body.category
+        and body.save_path is None
+        and body.mappings is None
+        and decrypt_secrets(row.encrypted_secrets) == secrets
+    ):
+        # Availability is not a credential or route edit. Keep existing transfers'
+        # frozen configuration valid while new selections/dispatch check enabled.
+        row.enabled = body.enabled
+        db.add(AuditEvent(actor_id=admin.id, action="downloader.saved", entity_id=row.id))
+        await db.commit()
+        return view(row, await import_sources(db))
     if not row:
         row = Integration(kind=body.kind, credential_generation=0)
         db.add(row)

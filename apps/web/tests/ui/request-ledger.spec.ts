@@ -196,26 +196,27 @@ test("requests show transfer telemetry, review actions and counts in compact row
   ).toContainText("3");
   const filters = page.getByRole("navigation", { name: "Request filters" });
   await expect(
-    filters.getByRole("link", { name: "Review", exact: true }),
+    filters.getByRole("link", { name: "Download review", exact: true }),
   ).toContainText("1");
   for (const row of await downloading.getByRole("row").all())
     expect((await row.boundingBox())!.height).toBeLessThan(110);
-  const rechecks = downloading.getByRole("button", { name: /^Recheck/ });
-  await expect(rechecks).toHaveCount(2);
-  const positions = await rechecks.evaluateAll((buttons) =>
-    buttons.map((button) => button.getBoundingClientRect().right),
-  );
-  expect(positions[0]).toBe(positions[1]);
+  await expect(
+    downloading.getByRole("button", { name: /^Recheck/ }),
+  ).toHaveCount(0);
+  await expect(review).toContainText("Download complete");
+  await expect(fulfilled).toContainText("Verified in library");
+  const ledger = await table.boundingBox();
+  expect(ledger!.x + ledger!.width).toBeLessThanOrEqual(1440);
   await expect(table.getByRole("button", { name: /^Actions for/ })).toHaveCount(
     0,
   );
   await expect(table.getByRole("button", { name: /^Details for/ })).toHaveCount(
-    4,
+    0,
   );
   const undo = downloading.getByRole("button", {
     name: "Withdraw your request",
   });
-  await expect(undo).toHaveCount(2);
+  await expect(undo).toHaveCount(1);
   await undo.first().click();
   const dialog = page.getByRole("dialog", { name: "Withdraw request" });
   await expect(dialog).toContainText("audiobook and ebook");

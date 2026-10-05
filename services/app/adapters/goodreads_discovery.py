@@ -2,6 +2,7 @@
 
 import re
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
@@ -14,6 +15,13 @@ BASE = "https://www.goodreads.com"
 
 
 class CollectionBook(BaseModel):
+    provider: str = "goodreads"
+    source_url: str | None = None
+    status: Literal["winner", "finalist", "honor", "longlist", "listed"] = "listed"
+    subject: Literal["work", "recording", "edition"] = "work"
+    language: str | None = None
+    narrators: list[str] = Field(default_factory=list)
+    contributors: list[str] = Field(default_factory=list)
     rating: float | None = Field(default=None, ge=0, le=5, allow_inf_nan=False)
     external_id: str
     title: str
@@ -27,7 +35,9 @@ class CollectionBook(BaseModel):
     @field_validator("cover_url", mode="before")
     @classmethod
     def full_size_cover(cls, value):
-        return image_url(value)
+        from app.adapters.catalog_types import cover_url
+
+        return image_url(value) or cover_url(value)
 
 
 def source(value):

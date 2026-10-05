@@ -122,6 +122,40 @@ def test_contradictory_ebook_formats_cannot_be_silently_matched(tmp_path):
     assert "An embedded edition identifier is invalid" in group_evidence(snapshot, group).issues
 
 
+@pytest.mark.parametrize(
+    "other,conflict",
+    [
+        ("Angels and Demons", False),
+        ("Angels ＆ Demons", False),
+        ("Angels Demons", True),
+        ("Angels or Demons", True),
+        ("Angels & Demons: Study Guide", True),
+        ("Angels & Demons (Abridged)", True),
+        ("Angels & Demons 2", True),
+    ],
+)
+def test_embedded_title_spelling_variants_preserve_distinct_content(other, conflict):
+    snapshot = {
+        "files": [
+            {
+                "path": f"{index}.mp3",
+                "state": "inspected",
+                "technical": {"tags": {"album": title, "artist": "Dan Brown"}},
+            }
+            for index, title in enumerate(["Angels & Demons", other])
+        ]
+    }
+    group = SimpleNamespace(
+        medium="audio",
+        files=[SimpleNamespace(path=file["path"], role="media") for file in snapshot["files"]],
+    )
+    facts = group_evidence(snapshot, group)
+    assert ("Files disagree about title" in facts.issues) is conflict
+    # Keep source spellings as evidence; equivalence never supplies an identifier.
+    assert not facts.identifiers
+    assert facts.authors == [["dan brown"]]
+
+
 def facts_and_version():
     work = SimpleNamespace(
         id=uuid4(), title="First Harbor", authors=["Alex Morgan"], language="en", metadata_fields={}

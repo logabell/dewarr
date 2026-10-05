@@ -14,6 +14,7 @@ from app.domain.catalog_titles import (
     identity_authors,
     parse_title_labels,
 )
+from app.domain.series_identity import position_key
 from app.domain.title_matching import compatible_title
 from app.importing.match_evidence import catalog_identifiers
 
@@ -70,10 +71,7 @@ def series_name(value):
 
 
 def _position(value):
-    try:
-        return float(str(value).strip().lstrip("#"))
-    except (TypeError, ValueError):
-        return None
+    return position_key(str(value).strip().removeprefix("#"))
 
 
 def series_agrees(evidence_series, book_series):
@@ -81,7 +79,10 @@ def series_agrees(evidence_series, book_series):
     for name, sequence in evidence_series:
         for entry in book_series:
             if series_name(name) and series_name(name) == series_name(entry.name):
-                if sequence is None or _position(sequence) == _position(entry.position):
+                if sequence is None or (
+                    (position := _position(sequence)) is not None
+                    and position == _position(entry.position)
+                ):
                     return True
     return False
 
@@ -292,7 +293,10 @@ def _prefix_agrees(prefix, book):
     name, sequence = prefix
     if name:
         return series_agrees([(name, sequence)], book.series)
-    return any(_position(entry.position) == _position(sequence) for entry in book.series)
+    position = _position(sequence)
+    return position is not None and any(
+        _position(entry.position) == position for entry in book.series
+    )
 
 
 async def _title_lookup(evidence, title, authors, prefix, resolve, call):

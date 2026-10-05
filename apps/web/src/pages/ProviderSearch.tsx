@@ -1,9 +1,13 @@
-import { usePagedQuery } from "../hooks/usePagedQuery";
 import InfiniteScroll from "../components/InfiniteScroll";
 import BookLink from "../components/BookLink";
 import BookCover from "../components/BookCover";
-import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Check, Search } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
@@ -12,9 +16,15 @@ import { BookCard, Empty, Loading, Notice } from "../components";
 
 type Book = components["schemas"]["BookData"];
 type Work = components["schemas"]["WorkView"];
-type Provider = "hardcover" | "openlibrary";
+type Provider = Book["provider"];
+const providerNames: Record<string, string> = {
+  hardcover: "Hardcover",
+  openlibrary: "Open Library",
+  audible: "Audible",
+  custom: "Custom metadata",
+};
 export const providerName = (provider: string) =>
-  provider === "hardcover" ? "Hardcover" : "Open Library";
+  providerNames[provider] || provider;
 
 export default function ProviderSearch({
   canEdit,
@@ -43,7 +53,10 @@ export default function ProviderSearch({
   const q = params.get("q") || "";
   const selectedProvider = params.get("provider");
   const provider =
-    selectedProvider === "hardcover" || selectedProvider === "openlibrary"
+    selectedProvider === "hardcover" ||
+    selectedProvider === "openlibrary" ||
+    selectedProvider === "audible" ||
+    selectedProvider === "custom"
       ? selectedProvider
       : "automatic";
   const [input, setInput] = useState(q);
@@ -53,6 +66,11 @@ export default function ProviderSearch({
     setInput(q);
     setSelected(null);
   }, [q, provider]);
+  const capabilities = useQuery({
+    queryKey: ["metadata-capabilities"],
+    queryFn: async () => result(await api.GET("/api/metadata/capabilities")),
+    staleTime: 300_000,
+  });
   const local = useQuery({
     queryKey: ["works", "global-search", q],
     queryFn: async () =>
@@ -63,20 +81,33 @@ export default function ProviderSearch({
       ),
     enabled: !embedded && Boolean(q.trim()),
   });
-  const query = usePagedQuery({
+  const search = useInfiniteQuery({
     queryKey: ["provider-search", q, provider],
-    queryFn: async (page, signal) =>
+    initialPageParam: { page: 1, provider: provider as Provider | "automatic" },
+    queryFn: async ({ pageParam, signal }) =>
       result(
         await api.GET("/api/metadata/search", {
-          params: { query: { q, provider, page } },
+          params: { query: { q, ...pageParam } },
           signal,
         }),
       ),
-    next: (last, pages) =>
-      last.has_more && pages.length < 100 ? pages.length + 1 : undefined,
+    getNextPageParam: (last, pages) =>
+      last.has_more && pages.length < 100
+        ? {
+            page: pages.length + 1,
+            provider: last.provider as Provider | "automatic",
+          }
+        : undefined,
     enabled: Boolean(q.trim()),
     retry: false,
   });
+  const data = useMemo(() => {
+    const first = search.data?.pages[0];
+    return first
+      ? { ...first, items: search.data!.pages.flatMap((page) => page.items) }
+      : undefined;
+  }, [search.data]);
+  const query = { ...search, data, loadedPages: search.data?.pages };
   const knownWorks = Object.assign(
     {},
     ...(query.loadedPages || []).map((p) => p.known_works || {}),
@@ -87,7 +118,9 @@ export default function ProviderSearch({
   const providerItems =
     query.data?.items.filter((book) => {
       const known = knownWorks[book.external_id];
-      if (embedded || !known) return true;
+      // Audible results identify recordings. Several ASINs can belong to the same
+      // work, and a local work result does not replace those edition choices.
+      if (embedded || !known || book.provider === "audible") return true;
       if (localIds.has(known.id)) return false;
       localIds.add(known.id);
       return true;
@@ -143,6 +176,10 @@ export default function ProviderSearch({
             <option value="automatic">Automatic</option>
             <option value="hardcover">Hardcover</option>
             <option value="openlibrary">Open Library</option>
+            <option value="audible">Audiobook recordings</option>
+            {capabilities.data?.custom_metadata && (
+              <option value="custom">Regional / custom catalog</option>
+            )}
           </select>
         </label>
         <button className="primary" disabled={!input.trim()}>
@@ -229,7 +266,7 @@ export default function ProviderSearch({
                     className="provider-result"
                     key={`${book.provider}:${book.external_id}`}
                     to={
-                      known
+                      known && book.provider !== "audible"
                         ? `/books/${known.id}`
                         : `/discover/books/${book.provider}/${encodeURIComponent(book.external_id)}`
                     }

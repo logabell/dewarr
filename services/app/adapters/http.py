@@ -30,7 +30,7 @@ def configured_url(value: str) -> str:
 
 
 class JsonEndpoint:
-    def __init__(self, base_url: str, token: str | None = None, *, transport=None):
+    def __init__(self, base_url: str, token: str | None = None, *, transport=None, proxy=None):
         self.response_headers = {}
         self.client = httpx.AsyncClient(
             base_url=configured_url(base_url) + "/",
@@ -43,6 +43,7 @@ class JsonEndpoint:
             trust_env=False,
             follow_redirects=False,
             transport=transport,
+            proxy=proxy,
         )
 
     async def __aenter__(self):
@@ -63,6 +64,7 @@ class JsonEndpoint:
         timeout_seconds=45,
         max_bytes=16 * 1024 * 1024,
         response_label="Server response",
+        raw_text=False,
     ):
         if callback := getattr(self, "before_request", None):
             await callback()
@@ -75,6 +77,7 @@ class JsonEndpoint:
                     path,
                     params=params,
                     json=json,
+                    headers={"Accept": "text/html"} if raw_text else None,
                 ) as response,
             ):
                 self.response_headers = dict(response.headers)
@@ -114,6 +117,8 @@ class JsonEndpoint:
                 import json as json_module
 
                 try:
+                    if raw_text:
+                        return content.decode("utf-8")
                     value = json_module.loads(content)
                 except (ValueError, UnicodeError) as error:
                     raise AdapterError(

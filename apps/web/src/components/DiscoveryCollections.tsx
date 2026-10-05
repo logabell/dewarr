@@ -4,9 +4,9 @@ import BookSourceIcon from "./BookSourceIcon";
 import ListDownloads from "./ListDownloads";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, Plus, Trophy } from "lucide-react";
-import { Link } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
+import { ContextLink } from "./NavigationContinuity";
 import { Loading, Notice } from "../components";
 import { GoodreadsCard } from "./GoodreadsDiscoveryBook";
 import ShelfPagination from "./ShelfPagination";
@@ -15,12 +15,32 @@ export type Collection = components["schemas"]["CollectionCard"];
 export type Entry = components["schemas"]["CollectionEntry"];
 export const collectionPath = (id: string) =>
   `/discover/collections/${encodeURIComponent(id)}`;
+const sourceNames: Record<string, string> = {
+  goodreads: "Goodreads",
+  nyt: "The New York Times",
+  audible: "Audible",
+  hugo: "Hugo Awards",
+  nebula: "Nebula Awards",
+  ala: "American Library Association",
+  booker: "The Booker Prizes",
+  pulitzer: "The Pulitzer Prizes",
+  audie: "Audie Awards",
+};
+export const collectionSource = (value: string) => sourceNames[value] || value;
+export const collectionCaption = (collection: Collection) =>
+  [
+    collection.year,
+    collectionSource(collection.provider || "goodreads"),
+    collection.region?.toUpperCase(),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 export const genreLabel = (value: string) =>
   value.replaceAll("-", " ").replace(/^./, (s) => s.toUpperCase());
 
 export function useCollections(
   filters: {
-    kind?: "award" | "listopia" | "all";
+    kind?: "award" | "listopia" | "chart" | "collections" | "all";
     saved?: boolean;
     year?: number;
     genre?: string;
@@ -70,12 +90,15 @@ export function useFollow() {
 
 export function CollectionTile({ collection }: { collection: Collection }) {
   return (
-    <Link to={collectionPath(collection.id)} className="explore-collection">
+    <ContextLink
+      to={collectionPath(collection.id)}
+      className="explore-collection"
+    >
       <div className="explore-mosaic">
         {collection.covers.map((cover, i) => (
           <img
             key={i}
-            src={cover}
+            src={`/api/catalog/cover-image?url=${encodeURIComponent(cover)}`}
             alt=""
             loading="lazy"
             referrerPolicy="no-referrer"
@@ -84,20 +107,17 @@ export function CollectionTile({ collection }: { collection: Collection }) {
         {!collection.covers.length && <Trophy size={36} />}
       </div>
       <div className="explore-collection-meta">
-        <span>
-          {collection.kind === "award"
-            ? `${collection.year} · Choice Awards`
-            : "Goodreads · Listopia"}
-        </span>
+        <span>{collectionCaption(collection)}</span>
         {collection.pinned && <Check size={14} aria-label="On For you" />}
       </div>
       <h3>{collection.title}</h3>
       <p>
-        {collection.count.toLocaleString()}{" "}
-        {collection.kind === "award" ? "nominees" : "books"}
+        {collection.count
+          ? `${collection.count.toLocaleString()} ${collection.count === 1 ? "book" : "books"}`
+          : "Explore current selection"}
         <ArrowRight size={16} />
       </p>
-    </Link>
+    </ContextLink>
   );
 }
 
@@ -116,11 +136,30 @@ export function CollectionBooks({
       aria-label="Books"
     >
       {items.map((book) => (
-        <li key={book.external_id}>
+        <li key={`${book.provider}:${book.external_id}`}>
           <GoodreadsCard book={book} />
-          {book.winner && (
+          {(book.winner || (book.status && book.status !== "listed")) && (
             <span className="explore-winner">
-              <Trophy size={12} /> Winner
+              <Trophy size={12} />{" "}
+              {book.winner ? "Winner" : genreLabel(book.status!)}
+            </span>
+          )}
+          {book.rank != null && (
+            <span className="curation-note">#{book.rank} on this list</span>
+          )}
+          {!!book.narrators?.length && (
+            <p className="curation-note">
+              Narrated by {book.narrators.join(", ")}
+            </p>
+          )}
+          {!!book.contributors?.length && (
+            <p className="curation-note">{book.contributors.join(", ")}</p>
+          )}
+          {book.subject && book.subject !== "work" && (
+            <span className="curation-note">
+              {book.subject === "recording"
+                ? "Recording selection"
+                : "Illustrated edition"}
             </span>
           )}
         </li>
@@ -159,25 +198,26 @@ export function CollectionRow({
     >
       <div className="section-heading">
         <div>
-          <p className="explore-kicker">
-            {collection.kind === "award"
-              ? `${collection.year} · Choice Awards`
-              : "Goodreads · Listopia"}
-          </p>
+          <p className="explore-kicker">{collectionCaption(collection)}</p>
           <h2>{collection.title}</h2>
         </div>
         <div className="button-row">
-          {canEdit && (
-            <ListDownloads
-              listId={collection.id}
-              source="goodreads"
-              name={collection.title}
-              disabled={query.isPending || !query.data?.total}
-            />
-          )}
-          <Link className="shelf-action" to={collectionPath(collection.id)}>
+          {canEdit &&
+            collection.medium !== "audio" &&
+            collection.category !== "Illustration" && (
+              <ListDownloads
+                listId={collection.id}
+                source="collection"
+                name={collection.title}
+                disabled={query.isPending || !query.data?.total}
+              />
+            )}
+          <ContextLink
+            className="shelf-action"
+            to={collectionPath(collection.id)}
+          >
             View all <ArrowRight size={15} />
-          </Link>
+          </ContextLink>
           <ShelfPagination
             page={1}
             hasMore={query.hasNextPage}
@@ -222,61 +262,68 @@ export function CollectionActions({
   const pinned =
     collection.pinned && !layout.data?.hidden?.includes(collection.id);
   return (
-    <>
+    <div className="collection-controls">
       <div className="button-row">
         {canEdit && (
           <>
             <button
+              aria-pressed={pinned}
               className={pinned ? "" : "primary"}
               disabled={follow.isPending || layout.isPending || !!layout.error}
               onClick={() =>
                 follow.mutate({
                   collection,
                   pinned: !pinned,
-                  tracking: collection.saved ? collection.tracking : true,
+                  tracking: collection.tracking,
                 })
               }
             >
               {pinned ? <Check size={16} /> : <Plus size={16} />}
               {pinned ? "On For you" : "Show on For you"}
             </button>
-            <ListDownloads
-              listId={collection.id}
-              source="goodreads"
-              name={collection.title}
-              disabled={follow.isPending}
-            />
-            {collection.saved && (
-              <button
-                aria-pressed={collection.tracking}
-                disabled={
-                  follow.isPending || layout.isPending || !!layout.error
-                }
-                onClick={() =>
-                  follow.mutate({
-                    collection,
-                    pinned,
-                    tracking: !collection.tracking,
-                  })
-                }
-              >
-                {collection.tracking ? "Tracking on" : "Tracking paused"}
-              </button>
-            )}
+            {collection.medium !== "audio" &&
+              collection.category !== "Illustration" && (
+                <ListDownloads
+                  listId={collection.id}
+                  source="collection"
+                  name={collection.title}
+                  disabled={follow.isPending}
+                />
+              )}
+            <button
+              aria-pressed={collection.tracking}
+              disabled={follow.isPending || layout.isPending || !!layout.error}
+              onClick={() =>
+                follow.mutate({
+                  collection,
+                  pinned,
+                  tracking: !collection.tracking,
+                })
+              }
+            >
+              {collection.tracking ? "Following updates" : "Follow updates"}
+            </button>
           </>
         )}
         <a
           className="shelf-action shelf-icon"
-          aria-label="Open collection on Goodreads"
-          title="Open collection on Goodreads"
+          aria-label={`Open collection on ${collectionSource(collection.provider || "goodreads")}`}
+          title={`Open collection on ${collectionSource(collection.provider || "goodreads")}`}
           href={collection.source_url}
           target="_blank"
           rel="noopener noreferrer"
         >
-          <BookSourceIcon source="Goodreads" />
+          <BookSourceIcon
+            source={collectionSource(collection.provider || "goodreads")}
+          />
         </a>
       </div>
+      {canEdit && (
+        <p className="curation-note">
+          Follow updates without downloading books.
+        </p>
+      )}
       <Notice error={follow.error} />
-    </>
+    </div>
   );
 }

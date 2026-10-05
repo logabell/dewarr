@@ -47,9 +47,9 @@ class DiscoveryBatch:
         if library_id != self.library_id or self.unsupported:
             return await self.adapter.scan(library_id)
         if not self.scanned:
-            self.scanned = True
             self.rows = None
             await self.adapter.scan(library_id)
+            self.scanned = True
 
     async def page(self, library_id, page):
         if library_id != self.library_id or self.unsupported:

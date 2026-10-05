@@ -21,7 +21,7 @@ from app.db.models import (
     Version,
     Work,
 )
-from app.domain.availability import availability_for
+from app.domain.availability import availability_for, library_work_ids
 from app.domain.catalog_display import display_family, display_map
 from app.domain.catalog_titles import title_narrators
 from app.domain.corrections import asset_state, correct_asset, revision
@@ -222,7 +222,9 @@ def asset_conditions(user, work_id, library_id, needs_review, q, medium, state):
         pattern = (
             "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         )
-        mapping = canonical_map()
+        mapping = canonical_map(
+            library_work_ids(user, library_id=library_id, medium=medium, state=state)
+        )
         catalog_matches = (
             select(AssetContains.asset_id)
             .join(mapping, mapping.c.origin_id == AssetContains.work_id)
@@ -263,7 +265,9 @@ async def library_books(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=40, ge=1, le=100),
 ):
-    mapping = display_map(user)
+    mapping = display_map(
+        user, library_work_ids(user, library_id=library_id, medium=medium, state=state)
+    )
     matching = (
         select(mapping.c.work_id, func.max(LibraryAsset.created_at).label("observed_at"))
         .select_from(LibraryAsset)
@@ -377,7 +381,7 @@ async def asset_views(db, user, rows) -> list[AssetView]:
             ).where(AssetContains.asset_id.in_([row[0].id for row in rows]))
         )
     ).all()
-    mapping = canonical_map()
+    mapping = canonical_map([row.work_id for row in coverage])
     roots = dict(
         (
             await db.execute(

@@ -1,10 +1,12 @@
 # ruff: noqa: F811
 import asyncio
+import json
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text, update
 
 from app.adapters.contracts import AdapterError, DownloadFile, FailureKind, SubmissionReceipt
 from app.adapters.qbittorrent import QbitState
@@ -17,6 +19,8 @@ from app.db.models import (
     DownloadAttempt,
     DownloadIdentityClaim,
     DownloadInspection,
+    DownloadMembership,
+    DownloadRecovery,
     Integration,
     Operation,
     User,
@@ -45,6 +49,112 @@ async def start(client, selected, key="download-fixture-command"):
         json={"selection_id": selected["id"]},
         headers={"Idempotency-Key": key},
     )
+
+
+async def test_retry_history_reads_only_summary_fields_in_one_query(database, selected, tmp_path):
+    from app.domain.download_recovery import history
+
+    now = datetime.now(UTC)
+    payload = {"files": [{"path": f"chapter-{n}.mp3", "metadata": "x" * 250} for n in range(500)]}
+    expected = []
+    async with database() as db, db.begin():
+        original = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        for n in range(20):
+            member = AcquisitionSelection(
+                owner_id=original.owner_id,
+                intent_id=original.intent_id,
+                target_id=original.target_id,
+                reservation_id=original.reservation_id,
+                artifact_id=original.artifact_id,
+                downloader_id=original.downloader_id,
+                destination_id=original.destination_id,
+                command_key=f"retry-{n}",
+                command=payload,
+                frozen={**original.frozen, **payload, "release": {"title": f"Release {n}"}},
+                state="cancelled",
+            )
+            operation = Operation(
+                owner_id=original.owner_id,
+                kind="acquisition.download",
+                idempotency_key=f"retry-{n}",
+            )
+            db.add_all([member, operation])
+            await db.flush()
+            attempt = DownloadAttempt(
+                owner_id=original.owner_id,
+                selection_id=member.id,
+                operation_id=operation.id,
+                endpoint_key="fixture",
+                state="held",
+                message="Transfer held",
+                observation=payload,
+                receipt=payload,
+                recovery_observation=payload,
+                created_at=now + timedelta(seconds=n),
+            )
+            db.add(attempt)
+            await db.flush()
+            db.add(DownloadMembership(selection_id=member.id, attempt_id=attempt.id))
+            if n % 2 == 0:
+                db.add(
+                    DownloadRecovery(
+                        selection_id=member.id,
+                        attempt_id=attempt.id,
+                        root_selection_id=original.id,
+                        state="retried",
+                        reason="Replacement selected",
+                        message="Trying another release",
+                        evidence=payload,
+                    )
+                )
+            expected.append(
+                {
+                    "attempt_id": str(attempt.id),
+                    "selection_id": str(member.id),
+                    "release_title": f"Release {n}",
+                    "state": "retried" if n % 2 == 0 else "held",
+                    "reason": "Replacement selected" if n % 2 == 0 else "Transfer held",
+                }
+            )
+    calls, loaded = [], []
+    engine = database.kw["bind"].sync_engine
+
+    def count(*args):
+        calls.append(1)
+
+    def capture(row, context):
+        loaded.append(
+            len(
+                json.dumps(
+                    {key: value for key, value in vars(row).items() if not key.startswith("_")},
+                    default=str,
+                )
+            )
+        )
+
+    async with database() as db:
+        original = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        event.listen(engine, "before_cursor_execute", count)
+        for model in (AcquisitionSelection, DownloadAttempt, DownloadRecovery):
+            event.listen(model, "load", capture)
+        started = time.perf_counter()
+        try:
+            observed = await history(db, original)
+        finally:
+            elapsed = time.perf_counter() - started
+            event.remove(engine, "before_cursor_execute", count)
+            for model in (AcquisitionSelection, DownloadAttempt, DownloadRecovery):
+                event.remove(model, "load", capture)
+    assert observed == expected
+    metrics = {
+        "attempts": 20,
+        "sql_statements": len(calls),
+        "orm_materialized_bytes": sum(loaded),
+        "elapsed_seconds": elapsed,
+    }
+    (tmp_path / "retry-history-metrics.json").write_text(json.dumps(metrics))
+    assert len(calls) == 1, "Retry history issued a recovery lookup for each attempt"
+    assert sum(loaded) < 50000, "Retry history loaded full manifests and download observations"
 
 
 class Client:
@@ -183,6 +293,121 @@ async def test_lost_response_reconciles_without_second_add(client, database, sel
     await downloads.run(UUID(saved["id"]))
     assert (await row(database, saved["id"])).state == "downloading"
     assert downloader.calls.count("submit") == 1
+
+
+@pytest.mark.parametrize("submitted", [False, True])
+async def test_disabled_downloader_blocks_new_dispatch_but_observes_existing_transfer(
+    client, database, selected, selection_route, downloader, submitted
+):
+    from app.db.models import ImportDestination
+
+    async with database() as db, db.begin():
+        selection = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        destination = await db.get(ImportDestination, selection.destination_id)
+        destination.probe = {
+            **destination.probe,
+            "setup_downloader": {
+                "id": str(selection.downloader_id),
+                "generation": 1,
+                "mapping": selection.frozen["mapping"],
+            },
+        }
+    saved = (await start(client, selected)).json()
+    identifier = UUID(saved["id"])
+    if submitted:
+        await downloads.run(identifier)
+        assert downloader.calls.count("submit") == 1
+    connection = (await client.get("/api/downloaders")).json()[0]
+    disabled = await client.put(
+        f"/api/downloaders/{connection['id']}",
+        json={
+            "name": connection["name"],
+            "base_url": connection["base_url"],
+            "category": connection["category"],
+            "enabled": False,
+            "expected_generation": connection["generation"],
+        },
+    )
+    assert disabled.status_code == 200, disabled.text
+    options = (await client.get("/api/acquisition/selections/options")).json()
+    assert not any(item["id"] == connection["id"] for item in options["downloaders"])
+    assert (await prepare(client, selection_route, "disabled-selection")).status_code == 409
+    previous_calls = len(downloader.calls)
+    await downloads.run(identifier)
+    observed = await row(database, saved["id"])
+    if submitted:
+        assert observed.state == "downloading"
+        assert downloader.calls[previous_calls:] == ["find"]
+        assert downloader.calls.count("submit") == 1
+        assert not (await client.get(f"/api/acquisition/downloads/{identifier}")).json()[
+            "can_repair"
+        ]
+        request = (await client.get(f"/api/requests/{selection_route['intent_id']}")).json()
+        assert not any(target["can_repair"] for target in request["targets"])
+        # Credential edits still invalidate the frozen route while disabled.
+        async with database() as db, db.begin():
+            current = await db.get(Integration, UUID(connection["id"]))
+            current.credential_generation += 1
+        await downloads.run(identifier)
+        assert (await row(database, saved["id"])).state == "held"
+        assert (await client.get(f"/api/acquisition/downloads/{identifier}")).json()["can_repair"]
+        request = (await client.get(f"/api/requests/{selection_route['intent_id']}")).json()
+        assert any(target["can_repair"] for target in request["targets"])
+    else:
+        assert observed.state == "held"
+        assert not downloader.calls
+
+
+@pytest.mark.parametrize("automatic_import", [False, True])
+async def test_disabled_downloader_completion_continues_existing_import_approval(
+    client, database, selected, selection_route, downloader, automatic_import
+):
+    from app.db.models import AutomaticImport, ImportDestination
+    from app.importing import automatic
+    from tests.integration.test_automatic_imports import policy
+
+    async with database() as db, db.begin():
+        selection = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        destination = await db.get(ImportDestination, selection.destination_id)
+        destination.probe = {
+            **destination.probe,
+            "setup_downloader": {
+                "id": str(selection.downloader_id),
+                "generation": 1,
+                "mapping": selection.frozen["mapping"],
+            },
+        }
+    if automatic_import:
+        approved = await policy(client, selection_route)
+        assert approved.status_code == 200, approved.text
+    saved = (await start(client, selected)).json()
+    await downloads.run(UUID(saved["id"]))
+    connection = (await client.get("/api/downloaders")).json()[0]
+    disabled = await client.put(
+        f"/api/downloaders/{connection['id']}",
+        json={
+            "name": connection["name"],
+            "base_url": connection["base_url"],
+            "category": connection["category"],
+            "enabled": False,
+            "expected_generation": connection["generation"],
+        },
+    )
+    assert disabled.status_code == 200, disabled.text
+    downloader.states[0].completed = True
+    downloader.states[0].state = "uploading"
+    for file in downloader.states[0].files:
+        file.complete = True
+    await downloads.run(UUID(saved["id"]))
+    assert (await row(database, saved["id"])).state == "complete"
+    assert downloader.calls.count("submit") == 1
+    async with database() as db:
+        if automatic_import:
+            job = await db.scalar(select(AutomaticImport))
+            assert job and job.state == "queued"
+            await automatic.check_policy(db, job)
+        else:
+            assert (await db.get(DownloadAttempt, UUID(saved["id"]))).inspection_id
 
 
 async def test_missing_uncertain_transfer_never_resubmits(client, database, selected, downloader):
@@ -389,6 +614,125 @@ async def test_due_monitor_scheduler_does_not_duplicate_live_job(client, databas
     await schedule_downloads(0)
     async with database() as db:
         assert (await db.get(Operation, attempt.operation_id)).job_id != original
+
+
+@pytest.mark.parametrize("busy", [False, True])
+async def test_download_scheduler_skips_busy_window_and_avoids_manifest_reads(
+    database, selected, tmp_path, busy
+):
+    from app.jobs.queue import enqueue
+
+    payload = {"files": [{"path": f"chapter-{n}.mp3", "metadata": "x" * 250} for n in range(500)]}
+    due = datetime.now(UTC) - timedelta(minutes=2)
+    queued, eligible = {}, {}
+    async with database() as db, db.begin():
+        original = await db.get(AcquisitionSelection, UUID(selected["id"]))
+        for n in range(21 if busy else 20):
+            member = AcquisitionSelection(
+                owner_id=original.owner_id,
+                intent_id=original.intent_id,
+                target_id=original.target_id,
+                reservation_id=original.reservation_id,
+                artifact_id=original.artifact_id,
+                downloader_id=original.downloader_id,
+                destination_id=original.destination_id,
+                command_key=f"scheduler-{n}",
+                command={},
+                frozen=original.frozen,
+                state="cancelled",
+            )
+            operation = Operation(
+                owner_id=original.owner_id,
+                kind="acquisition.download",
+                idempotency_key=f"scheduler-{n}",
+                payload=payload,
+            )
+            db.add_all([member, operation])
+            await db.flush()
+            attempt = DownloadAttempt(
+                owner_id=original.owner_id,
+                selection_id=member.id,
+                operation_id=operation.id,
+                endpoint_key="fixture",
+                state="held",
+                next_check_at=due + timedelta(seconds=n),
+                observation=payload,
+                receipt=payload,
+                recovery_observation=payload,
+            )
+            db.add(attempt)
+            await db.flush()
+            if busy and n < 20:
+                operation.job_id = await enqueue(
+                    db, "acquisition.download", attempt_id=str(attempt.id)
+                )
+                queued[operation.id] = operation.job_id
+            else:
+                eligible[operation.id] = attempt.id
+        if queued:
+            await db.execute(
+                text("UPDATE book_queue.procrastinate_jobs SET status='doing' WHERE id=:id"),
+                {"id": next(iter(queued.values()))},
+            )
+    calls, loaded = [], []
+    engine = database.kw["bind"].sync_engine
+
+    def count(*args):
+        calls.append(1)
+
+    def capture(row, context):
+        # Retain loaded state for measuring after the timed scheduler has finished.
+        loaded.append({key: value for key, value in vars(row).items() if not key.startswith("_")})
+
+    event.listen(engine, "before_cursor_execute", count)
+    for model in (DownloadAttempt, Operation):
+        event.listen(model, "load", capture)
+    started = time.perf_counter()
+    try:
+        await schedule_downloads(0)
+    finally:
+        elapsed = time.perf_counter() - started
+        event.remove(engine, "before_cursor_execute", count)
+        for model in (DownloadAttempt, Operation):
+            event.remove(model, "load", capture)
+    metrics = {
+        "busy_window": busy,
+        "eligible": len(eligible),
+        "sql_statements": len(calls),
+        "orm_materialized_bytes": len(json.dumps(loaded, default=str)),
+        "elapsed_seconds": elapsed,
+    }
+    (tmp_path / "download-scheduler-metrics.json").write_text(json.dumps(metrics))
+    async with database() as db:
+        for operation_id, previous in queued.items():
+            assert (await db.get(Operation, operation_id)).job_id == previous
+        for operation_id, attempt_id in eligible.items():
+            assert (await db.get(Operation, operation_id)).job_id is not None, (
+                "Busy jobs starved a later eligible download"
+            )
+            assert (await db.get(DownloadAttempt, attempt_id)).next_check_at > datetime.now(UTC)
+    assert metrics["orm_materialized_bytes"] < 50000, "Scheduler loaded full download evidence"
+    # When those monitor jobs finish, concurrent scheduler ticks must enqueue
+    # each due attempt once, while leaving queued/running neighbors alone.
+    async with database() as db, db.begin():
+        for job_id in await db.scalars(select(Operation.job_id).where(Operation.id.in_(eligible))):
+            await db.execute(
+                text("UPDATE book_queue.procrastinate_jobs SET status='succeeded' WHERE id=:id"),
+                {"id": job_id},
+            )
+        await db.execute(
+            update(DownloadAttempt)
+            .where(DownloadAttempt.id.in_(eligible.values()))
+            .values(next_check_at=due)
+        )
+    await asyncio.gather(schedule_downloads(1), schedule_downloads(2))
+    async with database() as db:
+        assert await db.scalar(
+            text(
+                "SELECT count(*) FROM book_queue.procrastinate_jobs "
+                "WHERE task_name='acquisition.download'"
+            )
+        ) == len(queued) + 2 * len(eligible)
 
 
 async def test_same_torrent_for_another_work_and_connection_alias_is_claimed_once(

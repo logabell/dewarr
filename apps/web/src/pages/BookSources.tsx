@@ -7,7 +7,7 @@ import SourceReleaseDetails, {
 import { transferSize } from "./DownloadConstraints";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { api, result, type Auth } from "../api/client";
 import { canStartDownload } from "../permissions";
 import type { components } from "../api/schema";
@@ -255,6 +255,46 @@ function Results({
   onRefresh: () => void;
 }) {
   const [now, setNow] = useState(Date.now);
+  const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const currentParams = useRef(params);
+  const [view, setView] = useState(params);
+  useEffect(() => {
+    currentParams.current = params;
+    setView(params);
+  }, [params]);
+  const updateView = (values: Record<string, string | null>) => {
+    const next = new URLSearchParams(currentParams.current);
+    for (const [key, value] of Object.entries(values)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    currentParams.current = next;
+    setView(next);
+    setParams(next, {
+      replace: true,
+      preventScrollReset: true,
+      state: location.state,
+    });
+  };
+  const reviewContext = (item: Search["items"][number]) => {
+    if (item.release.source === "slskd") return undefined;
+    const context = new URLSearchParams({
+      work: data.work_id,
+      search: data.id,
+    });
+    if (data.request_id) context.set("request", data.request_id);
+    const slot = params.get("slot") || item.release.medium;
+    if (slot) context.set("slot", slot);
+    if (data.profile.id) context.set("profile", data.profile.id);
+    context.set("profile_generation", String(data.profile.generation));
+    if (data.profile.effective_revision)
+      context.set(
+        "profile_effective_revision",
+        data.profile.effective_revision,
+      );
+    return context.toString();
+  };
   useEffect(() => {
     const next = Math.min(
       ...[data.expires_at, ...data.items.map((item) => item.expires_at)]
@@ -279,15 +319,31 @@ function Results({
   const expired = Date.parse(data.expires_at) <= now;
   const needsRefresh =
     expired || data.items.some((item) => unavailableReason(item));
-  const [pageIndex, setPageIndex] = useState(0);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const pageIndex = Math.max(
+    0,
+    Math.min(10000, Number(view.get("releasePage")) || 0),
+  );
+  const setPageIndex = (value: number | ((n: number) => number)) =>
+    updateView({
+      releasePage: String(
+        typeof value === "function" ? value(pageIndex) : value,
+      ),
+    });
+  const detailId = view.get("release");
+  const setDetailId = (value: string | null) => updateView({ release: value });
   const detailIndex = data.items.findIndex((item) => item.id === detailId);
   const detailItem = data.items[detailIndex];
-  const [sort, setSort] = useState("profile");
-  const [text, setText] = useState("");
-  const [source, setSource] = useState("");
-  const [format, setFormat] = useState("");
-  const [hideBlocked, setHideBlocked] = useState(false);
+  const sort = view.get("releaseSort") || "profile";
+  const text = view.get("releaseFilter") || "";
+  const source = view.get("releaseSource") || "";
+  const format = view.get("releaseFormat") || "";
+  const hideBlocked = view.get("releaseAvailable") === "1";
+  const setSort = (v: string) => updateView({ releaseSort: v });
+  const setText = (v: string) => updateView({ releaseFilter: v });
+  const setSource = (v: string) => updateView({ releaseSource: v });
+  const setFormat = (v: string) => updateView({ releaseFormat: v });
+  const setHideBlocked = (v: boolean) =>
+    updateView({ releaseAvailable: v ? "1" : null });
   const resultsHeading = useRef<HTMLParagraphElement>(null);
   const origins = new Map(
     data.items.map(({ release }) => [sourceKey(release), sourceName(release)]),
@@ -299,18 +355,48 @@ function Results({
       ),
     ),
   ].sort();
+  const hasUnknownFormat = data.items.some(
+    ({ release }) => !release.formats?.length,
+  );
+  const showSources = origins.size > 1;
+  const showFormats = formats.length + Number(hasUnknownFormat) > 1;
+  const showSort = data.items.length > 1;
+  const hasSeeders = data.items.some(({ release }) => release.seeders != null);
+  const hasSize = data.items.some(({ release }) => release.size_bytes != null);
+  const sourceValid = !source || (showSources && origins.has(source));
+  const formatValid =
+    !format ||
+    (showFormats &&
+      (format === "unknown" ? hasUnknownFormat : formats.includes(format)));
+  const sortValid =
+    sort === "profile" ||
+    (showSort &&
+      (sort === "seeds"
+        ? hasSeeders
+        : sort === "smallest" || sort === "largest"
+          ? hasSize
+          : true));
+  const activeSource = sourceValid ? source : "";
+  const activeFormat = formatValid ? format : "";
+  const activeSort = sortValid ? sort : "profile";
+  useEffect(() => {
+    if (!sourceValid) setSource("");
+    if (!formatValid) setFormat("");
+    if (!sortValid) setSort("profile");
+    if (!sourceValid || !formatValid || !sortValid) setPageIndex(0);
+  }, [sourceValid, formatValid, sortValid]);
   const needle = text.trim().toLowerCase();
   const filtered = data.items
     .map((item, rank) => ({ item, rank }))
     .filter(({ item }) => {
       const release = item.release;
       return (
-        (!source || sourceKey(release) === source) &&
-        (!format ||
-          (format === "unknown"
+        (!activeSource || sourceKey(release) === activeSource) &&
+        (!activeFormat ||
+          (activeFormat === "unknown"
             ? !release.formats?.length
             : release.formats?.some(
-                (value) => value.toLowerCase() === format,
+                (value) => value.toLowerCase() === activeFormat,
               ))) &&
         (!hideBlocked ||
           (!unavailableReason(item) && !item.assessment.blocked.length)) &&
@@ -325,23 +411,28 @@ function Results({
     });
   filtered.sort((a, b) => {
     let order = 0;
-    if (sort === "seeds")
+    if (activeSort === "seeds")
       order = compareKnown(
         a.item.release.seeders,
         b.item.release.seeders,
         true,
       );
-    else if (sort === "smallest" || sort === "largest")
+    else if (activeSort === "smallest" || activeSort === "largest")
       order = compareKnown(
         a.item.release.size_bytes,
         b.item.release.size_bytes,
-        sort === "largest",
+        activeSort === "largest",
       );
-    else if (sort === "title")
+    else if (activeSort === "title")
       order = a.item.release.title.localeCompare(b.item.release.title);
     return order || a.rank - b.rank;
   });
-  const filteredView = !!(needle || source || format || hideBlocked);
+  const filteredView = !!(
+    needle ||
+    activeSource ||
+    activeFormat ||
+    hideBlocked
+  );
   const visibleCount = (pageIndex + 1) * 50;
   return (
     <>
@@ -357,14 +448,38 @@ function Results({
             {source.name}: {source.message}
           </p>
         ))}
+      {!!data.sources.length && (
+        <details className="source-coverage" open={data.items.length === 0}>
+          <summary>
+            Source coverage ·{" "}
+            {data.sources.some((source) => source.count === 0)
+              ? `${data.sources
+                  .filter((source) => source.count === 0)
+                  .map((source) => source.name)
+                  .join(", ")} returned no releases`
+              : `${data.sources.length} checked`}
+          </summary>
+          <ul>
+            {data.sources.map((source) => (
+              <li key={source.key}>
+                <strong>{source.name}</strong> · {source.state} · {source.count}{" "}
+                releases<p>{source.message}</p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {!data.sources.length && (
         <p className="notice">
           Connect a download source in Settings to find releases.
         </p>
       )}
-      {data.status === "completed" && !data.items.length && !expired && (
-        <p className="notice">No releases found. Try a different search.</p>
-      )}
+      {data.status === "completed" &&
+        !!data.sources.length &&
+        !data.items.length &&
+        !expired && (
+          <p className="notice">No releases found. Try a different search.</p>
+        )}
       {data.stale_identity && (
         <p className="notice error">
           The catalog identity or series evidence changed. Refresh the search
@@ -408,58 +523,68 @@ function Results({
                 }}
               />
             </label>
-            <label>
-              <span className="sr-only">Sort this view</span>
-              <select
-                value={sort}
-                onChange={(event) => {
-                  setSort(event.target.value);
-                  setPageIndex(0);
-                }}
-              >
-                <option value="profile">Preferred order</option>
-                <option value="seeds">Most seeders</option>
-                <option value="smallest">Smallest download</option>
-                <option value="largest">Largest download</option>
-                <option value="title">Title A–Z</option>
-              </select>
-            </label>
+            {showSort && (
+              <label>
+                <span className="sr-only">Sort this view</span>
+                <select
+                  value={activeSort}
+                  onChange={(event) => {
+                    setSort(event.target.value);
+                    setPageIndex(0);
+                  }}
+                >
+                  <option value="profile">Preferred order</option>
+                  {hasSeeders && <option value="seeds">Most seeders</option>}
+                  {hasSize && (
+                    <option value="smallest">Smallest download</option>
+                  )}
+                  {hasSize && <option value="largest">Largest download</option>}
+                  <option value="title">Title A–Z</option>
+                </select>
+              </label>
+            )}
 
-            <label>
-              <span className="sr-only">Result source</span>
-              <select
-                value={source}
-                onChange={(event) => {
-                  setSource(event.target.value);
-                  setPageIndex(0);
-                }}
-              >
-                <option value="">All sources</option>
-                {[...origins].map(([key, name]) => (
-                  <option key={key} value={key}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="sr-only">Reported format</span>
-              <select
-                value={format}
-                onChange={(event) => {
-                  setFormat(event.target.value);
-                  setPageIndex(0);
-                }}
-              >
-                <option value="">All formats</option>
-                {formats.map((value) => (
-                  <option key={value} value={value}>
-                    {value.toUpperCase()}
-                  </option>
-                ))}
-                <option value="unknown">Unknown format</option>
-              </select>
-            </label>
+            {showSources && (
+              <label>
+                <span className="sr-only">Result source</span>
+                <select
+                  value={activeSource}
+                  onChange={(event) => {
+                    setSource(event.target.value);
+                    setPageIndex(0);
+                  }}
+                >
+                  <option value="">All sources</option>
+                  {[...origins].map(([key, name]) => (
+                    <option key={key} value={key}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {showFormats && (
+              <label>
+                <span className="sr-only">Reported format</span>
+                <select
+                  value={activeFormat}
+                  onChange={(event) => {
+                    setFormat(event.target.value);
+                    setPageIndex(0);
+                  }}
+                >
+                  <option value="">All formats</option>
+                  {formats.map((value) => (
+                    <option key={value} value={value}>
+                      {value.toUpperCase()}
+                    </option>
+                  ))}
+                  {hasUnknownFormat && (
+                    <option value="unknown">Unknown format</option>
+                  )}
+                </select>
+              </label>
+            )}
             <label className="check-label">
               <input
                 type="checkbox"
@@ -473,7 +598,7 @@ function Results({
             </label>
           </div>
 
-          {(filteredView || sort !== "profile") && (
+          {(filteredView || activeSort !== "profile") && (
             <button
               onClick={() => {
                 setText("");
@@ -550,14 +675,18 @@ function Results({
                           : ""}
                     </small>
                   </td>
-                  <td>{item.release.authors?.join(", ") || "—"}</td>
-                  <td>{item.release.narrators?.join(", ") || "—"}</td>
-                  <td className="release-numeric">
+                  <td data-label="Authors">
+                    {item.release.authors?.join(", ") || "—"}
+                  </td>
+                  <td data-label="Narrators">
+                    {item.release.narrators?.join(", ") || "—"}
+                  </td>
+                  <td data-label="Size" className="release-numeric">
                     {item.release.size_bytes == null
                       ? "Unknown"
                       : transferSize(item.release.size_bytes)}
                   </td>
-                  <td>
+                  <td data-label="Format">
                     <span className="release-format">
                       {item.release.formats?.join(", ").toUpperCase() ||
                         "Unknown"}
@@ -570,12 +699,15 @@ function Results({
                           : "Unknown medium"}
                     </small>
                   </td>
-                  <td className="release-numeric release-seeds">
+                  <td
+                    data-label="Availability"
+                    className="release-numeric release-seeds"
+                  >
                     {item.release.protocol === "soulseek"
                       ? "Peer online"
                       : (item.release.seeders?.toLocaleString() ?? "Unknown")}
                   </td>
-                  <td>
+                  <td data-label="Tags">
                     <ReleaseTags release={item.release} />
                     {item.release.source === "mam" &&
                       !item.release.freeleech &&
@@ -593,7 +725,10 @@ function Results({
                       </button>
                       {canAcquire && canDownload(item.release.medium) && (
                         <SourceReleaseDownload
+                          showLabel
+                          row
                           possibleCollection={item.possible_collection}
+                          reviewContext={reviewContext(item)}
                           key={item.download?.operation_id || "unselected"}
                           searchId={data.id}
                           resultId={item.id}
@@ -627,6 +762,7 @@ function Results({
       {detailItem && (
         <SourceReleaseDetails
           item={detailItem}
+          reviewContext={reviewContext(detailItem)}
           rank={detailIndex}
           searchId={data.id}
           close={() => setDetailId(null)}

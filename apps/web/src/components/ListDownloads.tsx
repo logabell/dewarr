@@ -14,7 +14,7 @@ export default function ListDownloads({
   disabled,
 }: {
   listId: string;
-  source?: "list" | "goodreads" | "hardcover" | "shelf";
+  source?: "list" | "goodreads" | "collection" | "hardcover" | "shelf";
   name: string;
   disabled: boolean;
 }) {
@@ -39,7 +39,7 @@ export default function ListDownloads({
           ),
         ).id;
       }
-      if (source === "goodreads") {
+      if (source === "goodreads" || source === "collection") {
         let page = 1;
         while (true) {
           const batch = result(
@@ -52,9 +52,13 @@ export default function ListDownloads({
           );
           for (const book of batch.items)
             books.set(book.external_id, async () => {
+              if (book.subject && book.subject !== "work")
+                throw new Error(
+                  `Choose the recognized edition for ${book.title} before requesting.`,
+                );
               if (book.work) return book.work.id;
               const resolved = result(
-                await api.GET("/api/discovery/goodreads/{external_id}", {
+                await api.GET("/api/discovery/curation/{external_id}", {
                   params: { path: { external_id: book.external_id } },
                 }),
               );

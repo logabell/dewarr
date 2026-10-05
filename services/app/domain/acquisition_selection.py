@@ -42,7 +42,7 @@ from app.domain.downloaders import (
     transfer_connection,
 )
 from app.domain.operations import transaction_lock
-from app.domain.release_profiles import enforce_profile
+from app.domain.release_profiles import catalog_language_release, enforce_profile
 from app.domain.request_constraints import constrained_preferences
 from app.domain.request_preferences import for_selection
 from app.domain.source_artifacts import artifact_bytes, member
@@ -82,12 +82,12 @@ async def owned_selection(db, user, identifier):
     return row
 
 
-async def verified_probe(db, destination, configuration, mapping):
+async def verified_probe(db, destination, configuration, mapping, *, require_enabled=True):
     for probe in receipts(destination.probe):
         binding = probe.get("setup_downloader")
         if (
             destination.enabled
-            and await setup_route_current(db, probe)
+            and await setup_route_current(db, probe, require_enabled=require_enabled)
             and (
                 not binding
                 or mapping.get("relative_path", binding["mapping"]["relative_path"])
@@ -248,6 +248,7 @@ async def prepare(db, user, body, key, *, automatic_evidence=None, recovery_sele
     if descriptor.artifact_sha256 != artifact.sha256:
         raise HTTPException(409, "The saved release descriptor needs inspection again")
     release = parse_release(artifact.source_key, artifact.release_snapshot)
+    release = catalog_language_release(release, {"title": work.title, "authors": work.authors})
     profile = await for_selection(db, user, intent, body)
     spec = RequestSpec.model_validate(intent.specification)
     if (
@@ -476,7 +477,13 @@ async def cancel(db, user, selection):
 
 
 async def configuration_current(
-    db, selection, *, committed=False, configuration=None, version_identity_required=True
+    db,
+    selection,
+    *,
+    committed=False,
+    configuration=None,
+    version_identity_required=True,
+    require_enabled=True,
 ):
     """Validate routes and frozen identity before effects.
 
@@ -521,10 +528,12 @@ async def configuration_current(
     try:
         return bool(
             source
-            and source.enabled
+            and not source.deleted_at
+            and (source.enabled or (not require_enabled and source.key == "slskd"))
             and source.generation == frozen["source_generation"]
             and downloader
-            and downloader.enabled
+            and not downloader.deleted_at
+            and (downloader.enabled or not require_enabled)
             and downloader.credential_generation == frozen["downloader"]["generation"]
             and destination
             and (not version_identity_required or version_evidence(version) == frozen["version"])
@@ -545,6 +554,7 @@ async def configuration_current(
                 destination,
                 frozen["destination"],
                 frozen.get("route_mapping", frozen["mapping"]),
+                require_enabled=require_enabled,
             )
         )
     except HTTPException:

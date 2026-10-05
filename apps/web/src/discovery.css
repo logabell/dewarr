@@ -1418,3 +1418,32 @@ button.release-day[aria-expanded="true"] {
     scroll-behavior: auto;
   }
 }
+
+/* Selection context belongs beside the book, without competing with its title. */
+.curation-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0.3rem 0 0;
+}
+.curation-description {
+  max-width: 65ch;
+  line-height: 1.45;
+}
+.collection-controls {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 30rem;
+}
+.collection-controls .button-row {
+  flex-wrap: wrap;
+}
+.collection-controls .curation-note {
+  margin: 0;
+}
+.explore-books .curation-note,
+.discovery-shelf .curation-note {
+  max-width: 25ch;
+}

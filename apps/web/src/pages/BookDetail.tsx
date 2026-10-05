@@ -1,3 +1,5 @@
+import { ReturnLink } from "../components/NavigationContinuity";
+import ContentSkeleton from "../components/ContentSkeleton";
 import { AuthorFollows } from "../components/FollowCatalog";
 import BookSourceIcon from "../components/BookSourceIcon";
 import QuickAdd from "../components/QuickAdd";
@@ -6,7 +8,7 @@ import LibraryFormatBadges from "../components/LibraryFormatBadges";
 import PartSets from "../components/CombineParts";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Settings2 } from "lucide-react";
+import { Check, Settings2 } from "lucide-react";
 import {
   Link,
   Navigate,
@@ -93,7 +95,7 @@ function BookDetailContent({
         }),
       ),
     staleTime: 0,
-    gcTime: 0,
+    gcTime: 10 * 60_000,
     refetchInterval: 15_000,
   });
   const metadata = useLocalBookMetadata(id);
@@ -166,7 +168,7 @@ function BookDetailContent({
   );
   const watching =
     watch.data?.state === "waiting" || watch.data?.state === "wanted";
-  if (book.isPending) return <Loading />;
+  if (book.isPending) return <ContentSkeleton kind="book" />;
   if (book.error || !book.data) return <Notice error={book.error} />;
   const work = book.data;
   if (work.id !== id)
@@ -199,13 +201,17 @@ function BookDetailContent({
     setWantedVersion(version);
     setAction("request");
   };
-  const href = (value: string) => `/books/${id}?tab=${value}`;
+  const href = (value: string) => {
+    const next = new URLSearchParams(params);
+    next.set("tab", value);
+    return `/books/${id}?${next}`;
+  };
   return (
-    <article className="reader-page catalog-reader catalog-workspace">
+    <article
+      className={`reader-page catalog-reader catalog-workspace ${["sources", "downloads", "manage"].includes(tab) ? "reader-operational" : ""}`}
+    >
       <div className="book-topbar">
-        <Link to="/library" className="back-link">
-          <ArrowLeft size={16} /> Back to My Library
-        </Link>
+        <ReturnLink fallback="/library" label="My Library" />
         <Link
           className={`book-manage-link ${tab === "manage" ? "active" : ""}`}
           to={href("manage")}
@@ -277,7 +283,11 @@ function BookDetailContent({
         </div>
         <div className="reader-actions">
           {work.availability.owned && (
-            <Link className="reader-action-link" to={href("library")}>
+            <Link
+              className="reader-action-link"
+              to={href("library")}
+              state={location.state}
+            >
               View library copies
             </Link>
           )}
@@ -307,6 +317,7 @@ function BookDetailContent({
             <Link
               className="reader-action-link source-search-action"
               to={href("sources")}
+              state={location.state}
             >
               Search sources
             </Link>
@@ -448,6 +459,7 @@ function BookDetailContent({
             }
             aria-controls="book-tab-panel"
             to={href(key)}
+            state={location.state}
           >
             {label}
           </Link>
@@ -486,7 +498,9 @@ function BookDetailContent({
               <h2>Library copies</h2>
             </div>
             <div className="button-row" aria-label="Library formats">
-              <Link to={href("library")}>All formats</Link>
+              <Link to={href("library")} state={location.state}>
+                All formats
+              </Link>
               {work.availability.ebook && (
                 <Link to={`${href("library")}&format=ebook`}>Ebooks</Link>
               )}

@@ -35,6 +35,40 @@ def test_unlabelled_author_and_narrator_remain_unknown():
     assert release.title == release.raw_title and release.abridged is None
 
 
+def encoded_post(markup):
+    payload = base64.b64encode(markup.encode()).decode()
+    return f'<div class="post re-ab" style="display:none;">{payload}</div>'
+
+
+def test_search_decodes_marked_postings_without_losing_other_results_or_pagination():
+    # The site wraps the inner post markup in base64, expanding it in main.js.
+    markup = """<div class="postTitle"><h2>
+      <a href="/abss/harbor-lights/">Harbor Lights - René Morgan</a>
+      </h2></div><div class="postInfo">Language: French</div>
+      <div class="postContent">Format: MP3</div>"""
+    html = search(more=True).replace(post(), post() + encoded_post(markup))
+    page = parse_search(html, ORIGIN, 1)
+    assert page.has_more
+    assert [item.raw_title for item in page.items] == [
+        "Harbor - Alex Morgan",
+        "Harbor Lights - René Morgan",
+    ]
+    assert page.items[1].detail_path == "/abss/harbor-lights/"
+    assert page.items[1].language == "fr" and page.items[1].formats == ["mp3"]
+
+
+@pytest.mark.parametrize("payload", ["not base64!", "/w=="])
+def test_malformed_encoded_postings_fail_explicitly(payload):
+    with pytest.raises(AdapterError, match="encoded posting could not be read"):
+        parse_search(f'<div class="post re-ab">{payload}</div>', ORIGIN, 1)
+
+
+@pytest.mark.parametrize("path", ["https://other.test/abss/book/", "/abss/%2e%2e/"])
+def test_encoded_postings_retain_posting_link_validation(path):
+    with pytest.raises(AdapterError, match="invalid posting link"):
+        parse_search(encoded_post(post(path=path)), ORIGIN, 1)
+
+
 @pytest.mark.parametrize(
     "body,expected",
     [

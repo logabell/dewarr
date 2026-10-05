@@ -607,6 +607,161 @@
         }
       }
     },
+    "/api/auth/users/{user_id}/sign-in": {
+      "get": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "User Sign In",
+        "operationId": "user_sign_in_api_auth_users__user_id__sign_in_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountSignInView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/users/{user_id}/providers/{provider}": {
+      "delete": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Unlink User Provider",
+        "operationId": "unlink_user_provider_api_auth_users__user_id__providers__provider__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "oidc",
+                "plex"
+              ],
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRemovalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountSignInView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/users/{user_id}": {
+      "delete": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Delete User",
+        "operationId": "delete_user_api_auth_users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRemovalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/users/{user_id}/profile": {
       "put": {
         "tags": [
@@ -3880,11 +4035,43 @@
               "enum": [
                 "all",
                 "award",
-                "listopia"
+                "listopia",
+                "chart",
+                "collections"
               ],
               "type": "string",
               "default": "all",
               "title": "Kind"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Audience"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Language"
             }
           },
           {
@@ -3942,6 +4129,26 @@
               "type": "boolean",
               "default": false,
               "title": "Saved"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
             }
           },
           {
@@ -4217,6 +4424,36 @@
         "operationId": "browse_books_api_discovery_browse_get",
         "parameters": [
           {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Audience"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Language"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -4450,6 +4687,48 @@
         ],
         "summary": "Resolve Goodreads Book",
         "operationId": "resolve_goodreads_book_api_discovery_goodreads__external_id__get",
+        "parameters": [
+          {
+            "name": "external_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "External Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoodreadsBookResolution"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discovery/curation/{external_id}": {
+      "get": {
+        "tags": [
+          "discovery-collections"
+        ],
+        "summary": "Resolve Goodreads Book",
+        "operationId": "resolve_goodreads_book_api_discovery_curation__external_id__get",
         "parameters": [
           {
             "name": "external_id",
@@ -10275,6 +10554,27 @@
         }
       }
     },
+    "/api/metadata/capabilities": {
+      "get": {
+        "tags": [
+          "metadata"
+        ],
+        "summary": "Capabilities",
+        "operationId": "capabilities_api_metadata_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCapabilities"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/metadata/search": {
       "get": {
         "tags": [
@@ -10302,7 +10602,9 @@
               "enum": [
                 "automatic",
                 "hardcover",
-                "openlibrary"
+                "openlibrary",
+                "audible",
+                "custom"
               ],
               "type": "string",
               "default": "automatic",
@@ -10361,7 +10663,9 @@
             "schema": {
               "enum": [
                 "hardcover",
-                "openlibrary"
+                "openlibrary",
+                "audible",
+                "custom"
               ],
               "type": "string",
               "title": "Provider"
@@ -10512,7 +10816,9 @@
             "schema": {
               "enum": [
                 "hardcover",
-                "openlibrary"
+                "openlibrary",
+                "audible",
+                "custom"
               ],
               "type": "string",
               "title": "Provider"
@@ -11661,6 +11967,17 @@
               "type": "string",
               "default": "newest",
               "title": "Sort"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 300,
+              "default": "",
+              "title": "Q"
             }
           },
           {
@@ -12814,6 +13131,60 @@
                   },
                   "type": "array",
                   "title": "Response Download Roots Api Organization Download Roots Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/organization/download-files": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "summary": "Download Files",
+        "operationId": "download_files_api_organization_download_files_get",
+        "parameters": [
+          {
+            "name": "source_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9_-]{1,60}$",
+              "title": "Source Key"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "default": "",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadBrowseView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -15349,6 +15720,16 @@
               "type": "string",
               "format": "uuid",
               "title": "Result Id"
+            }
+          },
+          {
+            "name": "use_wedge",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Use Wedge"
             }
           }
         ],
@@ -18441,6 +18822,55 @@
         ],
         "title": "AccountProfileInput"
       },
+      "AccountRemovalInput": {
+        "properties": {
+          "confirm_username": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 3,
+            "title": "Confirm Username"
+          },
+          "expected_revision": {
+            "type": "string",
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "confirm_username",
+          "expected_revision"
+        ],
+        "title": "AccountRemovalInput"
+      },
+      "AccountSignInView": {
+        "properties": {
+          "local_password": {
+            "type": "boolean",
+            "title": "Local Password"
+          },
+          "oidc": {
+            "type": "boolean",
+            "title": "Oidc"
+          },
+          "plex": {
+            "type": "boolean",
+            "title": "Plex"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "local_password",
+          "oidc",
+          "plex",
+          "revision"
+        ],
+        "title": "AccountSignInView"
+      },
       "AccountView": {
         "properties": {
           "configured": {
@@ -20286,7 +20716,9 @@
             "type": "string",
             "enum": [
               "hardcover",
-              "openlibrary"
+              "openlibrary",
+              "audible",
+              "custom"
             ],
             "title": "Provider"
           },
@@ -20395,6 +20827,17 @@
               }
             ],
             "title": "Canonical Id"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
           }
         },
         "type": "object",
@@ -21254,9 +21697,84 @@
             "type": "string",
             "enum": [
               "award",
-              "listopia"
+              "listopia",
+              "chart"
             ],
             "title": "Kind"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": "goodreads"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "audience": {
+            "type": "string",
+            "title": "Audience",
+            "default": "all"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "medium": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Medium"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "edition_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition Date"
+          },
+          "refresh_mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "app-update"
+            ],
+            "title": "Refresh Mode",
+            "default": "live"
           },
           "title": {
             "type": "string",
@@ -21466,6 +21984,69 @@
       },
       "CollectionEntry": {
         "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": "goodreads"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "winner",
+              "finalist",
+              "honor",
+              "longlist",
+              "listed"
+            ],
+            "title": "Status",
+            "default": "listed"
+          },
+          "subject": {
+            "type": "string",
+            "enum": [
+              "work",
+              "recording",
+              "edition"
+            ],
+            "title": "Subject",
+            "default": "work"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "narrators": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Narrators"
+          },
+          "contributors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Contributors"
+          },
           "rating": {
             "anyOf": [
               {
@@ -21631,6 +22212,27 @@
             },
             "type": "array",
             "title": "Archive Gaps"
+          },
+          "providers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Providers"
+          },
+          "audiences": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Audiences"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languages"
           }
         },
         "type": "object",
@@ -24010,6 +24612,82 @@
         ],
         "title": "DiscoveryView"
       },
+      "DownloadBrowseEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "directory"
+            ],
+            "title": "Kind"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "kind"
+        ],
+        "title": "DownloadBrowseEntry"
+      },
+      "DownloadBrowseView": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadBrowseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "parent",
+          "entries",
+          "truncated"
+        ],
+        "title": "DownloadBrowseView"
+      },
       "DownloadConstraints": {
         "properties": {
           "blocked_formats": {
@@ -24519,6 +25197,17 @@
             "minimum": 0.0,
             "title": "Expected Generation",
             "default": 0
+          },
+          "expected_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Enabled"
           }
         },
         "additionalProperties": false,
@@ -24890,6 +25579,37 @@
               }
             ],
             "title": "Abridged"
+          },
+          "runtime_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Minutes"
+          },
+          "release_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Date"
+          },
+          "field_sources": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Field Sources"
           }
         },
         "type": "object",
@@ -30160,6 +30880,34 @@
         ],
         "title": "MergePreview"
       },
+      "MetadataCapabilities": {
+        "properties": {
+          "custom_metadata": {
+            "type": "boolean",
+            "title": "Custom Metadata"
+          },
+          "audible_region": {
+            "type": "string",
+            "title": "Audible Region"
+          },
+          "proxy_configured": {
+            "type": "boolean",
+            "title": "Proxy Configured"
+          },
+          "nyt_configured": {
+            "type": "boolean",
+            "title": "Nyt Configured"
+          }
+        },
+        "type": "object",
+        "required": [
+          "custom_metadata",
+          "audible_region",
+          "proxy_configured",
+          "nyt_configured"
+        ],
+        "title": "MetadataCapabilities"
+      },
       "MetadataEdit": {
         "properties": {
           "values": {
@@ -30199,6 +30947,11 @@
           "automatic_enrichment": {
             "type": "boolean",
             "title": "Automatic Enrichment",
+            "default": true
+          },
+          "recording_enrichment": {
+            "type": "boolean",
+            "title": "Recording Enrichment",
             "default": true
           },
           "automatic_edition_lookup": {
@@ -30264,7 +31017,9 @@
             "type": "string",
             "enum": [
               "hardcover",
-              "openlibrary"
+              "openlibrary",
+              "audible",
+              "custom"
             ],
             "title": "Provider"
           },
@@ -30814,6 +31569,11 @@
             ],
             "title": "Layout",
             "default": "conventional"
+          },
+          "ebooks_with_audio": {
+            "type": "boolean",
+            "title": "Ebooks With Audio",
+            "default": false
           },
           "rename_files": {
             "type": "boolean",
@@ -39584,6 +40344,17 @@
             "minimum": 0.0,
             "title": "Expected Generation",
             "default": 0
+          },
+          "expected_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Enabled"
           }
         },
         "type": "object",
@@ -40392,7 +41163,9 @@
             "type": "string",
             "enum": [
               "hardcover",
-              "openlibrary"
+              "openlibrary",
+              "audible",
+              "custom"
             ],
             "title": "Provider"
           },
@@ -41613,6 +42386,17 @@
             "type": "object",
             "title": "Identifiers"
           },
+          "runtime_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Minutes"
+          },
           "owned": {
             "type": "boolean",
             "title": "Owned"
@@ -42556,7 +43340,9 @@
             "type": "string",
             "enum": [
               "hardcover",
-              "openlibrary"
+              "openlibrary",
+              "audible",
+              "custom"
             ],
             "title": "Provider"
           },

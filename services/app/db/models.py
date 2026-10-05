@@ -280,6 +280,7 @@ class Version(Identity, Base):
     __tablename__ = "versions"
     __table_args__ = (
         CheckConstraint("medium IN ('ebook', 'audio', 'print', 'unknown')", name="version_medium"),
+        CheckConstraint("runtime_minutes > 0", name="version_runtime_positive"),
         CheckConstraint(
             "recording_kind IS NULL OR recording_kind IN ('narrated', 'dramatized', 'full_cast')",
             name="version_recording_kind",
@@ -293,6 +294,7 @@ class Version(Identity, Base):
     abridged: Mapped[bool | None] = mapped_column(Boolean)
     publication_year: Mapped[int | None] = mapped_column(Integer)
     identifiers: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    runtime_minutes: Mapped[int | None] = mapped_column(Integer)
     # How an audio version was recorded. Parts of one dramatization share a version.
     recording_kind: Mapped[str | None] = mapped_column(String(20))
 
@@ -467,6 +469,23 @@ class LibraryAsset(Identity, Base):
     read_issues: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
 
 
+class EbookCompanion(Identity, Base):
+    """An explicitly published ebook copy in an existing audiobook item."""
+
+    __tablename__ = "ebook_companions"
+    __table_args__ = (UniqueConstraint("target_asset_id", "target_path"),)
+    library_id: Mapped[UUID] = mapped_column(ForeignKey("libraries.id"), index=True)
+    source_asset_id: Mapped[UUID] = mapped_column(ForeignKey("library_assets.id"))
+    target_asset_id: Mapped[UUID] = mapped_column(ForeignKey("library_assets.id"), index=True)
+    version_id: Mapped[UUID] = mapped_column(ForeignKey("versions.id"))
+    source_path: Mapped[str] = mapped_column(String(1024))
+    target_path: Mapped[str] = mapped_column(String(1024))
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    receipt: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    message: Mapped[str] = mapped_column(String(500), default="Waiting to place ebook")
+
+
 class LibraryReadIssue(Identity, Base):
     """A backend item Dewarr could not read well enough to record as a library asset."""
 
@@ -494,7 +513,7 @@ class AssetContains(Base):
         ),
     )
     asset_id: Mapped[UUID] = mapped_column(ForeignKey("library_assets.id"), primary_key=True)
-    work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"), primary_key=True)
+    work_id: Mapped[UUID] = mapped_column(ForeignKey("works.id"), primary_key=True, index=True)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     # This item is part N of M of the book, not the whole book.
     part_index: Mapped[int | None] = mapped_column(Integer)

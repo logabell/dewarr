@@ -1,7 +1,13 @@
+import { safeReturn } from "../components/NavigationContinuity";
 import InfiniteScroll from "../components/InfiniteScroll";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
@@ -18,6 +24,7 @@ function isNzb(
 export default function SourceArtifact() {
   const { id = "" } = useParams();
   const [params] = useSearchParams();
+  const location = useLocation();
   const workId = params.get("work");
   const bookContext = new URLSearchParams(params);
   bookContext.set("tab", "sources");
@@ -51,11 +58,16 @@ export default function SourceArtifact() {
           <h1>{usenet ? "NZB manifest" : "Torrent manifest"}</h1>
           <p>{release.title}</p>
           <Link
-            to={
+            state={{
+              returnTo: location.state?.bookOrigin,
+              restoreScroll: true,
+            }}
+            to={safeReturn(
+              location.state?.returnTo,
               workId
                 ? `/books/${encodeURIComponent(workId)}?${bookContext}`
-                : `/search?q=${encodeURIComponent(release.title)}`
-            }
+                : `/search?q=${encodeURIComponent(release.title)}`,
+            )}
           >
             {workId ? "Return to book sources" : "Find book"}
           </Link>

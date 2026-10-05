@@ -1,3 +1,4 @@
+import { ReturnLink, safeReturn } from "../components/NavigationContinuity";
 import { AuthorFollows } from "../components/FollowCatalog";
 import BookPagination from "../components/BookPagination";
 import { browseCache, refreshPending } from "../queryPolicies";
@@ -15,7 +16,7 @@ import {
 import FollowRelease, { useReleaseWatch } from "../components/FollowRelease";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, Check } from "lucide-react";
+import { BookOpen, Check } from "lucide-react";
 import {
   Link,
   useLocation,
@@ -32,12 +33,18 @@ import BookReaderDetails, {
 import ListChoice from "./ListChoice";
 import Wanted from "./Wanted";
 
-type Provider = "hardcover" | "openlibrary";
-type Action = "catalog" | "request" | "list" | "sources";
+type Provider = "hardcover" | "openlibrary" | "audible" | "custom";
+type Action = "catalog" | "request" | "list" | "sources" | "editions";
 export default function DiscoverBook({ canEdit }: { canEdit: boolean }) {
   const { provider, externalId = "" } = useParams();
-  if (provider === "goodreads") return <GoodreadsBook />;
-  if (provider !== "hardcover" && provider !== "openlibrary")
+  if (provider === "goodreads" || provider === "curation")
+    return <GoodreadsBook />;
+  if (
+    provider !== "hardcover" &&
+    provider !== "openlibrary" &&
+    provider !== "audible" &&
+    provider !== "custom"
+  )
     return (
       <p className="notice">
         Unknown book provider. <Link to="/discover">Return to Discover</Link>
@@ -165,13 +172,29 @@ function BookPage({
         "provider-book",
       ])
         cache.invalidateQueries({ queryKey: [key] });
-      if (action === "sources") navigate(`/books/${value.id}?tab=sources`);
+      if (action === "sources" || action === "editions")
+        navigate(`/books/${value.id}?tab=${action}`, {
+          state: {
+            returnTo: safeReturn(
+              location.state?.returnTo,
+              location.pathname + location.search,
+            ),
+          },
+        });
     },
   });
   function choose(next: Action) {
     setAction(next);
     if (work) {
-      if (next === "sources") navigate(`/books/${work.id}?tab=sources`);
+      if (next === "sources" || next === "editions")
+        navigate(`/books/${work.id}?tab=${next}`, {
+          state: {
+            returnTo: safeReturn(
+              location.state?.returnTo,
+              location.pathname + location.search,
+            ),
+          },
+        });
     } else save.mutate();
   }
   const addToList = useMutation({
@@ -186,21 +209,32 @@ function BookPage({
       cache.invalidateQueries({ queryKey: ["lists"] });
     },
   });
-  const sourceName = provider === "hardcover" ? "Hardcover" : "Open Library";
+  const sourceName = {
+    hardcover: "Hardcover",
+    openlibrary: "Open Library",
+    audible: "Audible",
+    custom: "Custom metadata",
+  }[provider];
   const externalUrl =
-    provider === "hardcover"
+    book?.source_url ||
+    (provider === "hardcover"
       ? `https://hardcover.app/books/${encodeURIComponent(community.data?.slug || externalId)}`
-      : `https://openlibrary.org/works/${encodeURIComponent(externalId)}`;
+      : provider === "openlibrary"
+        ? `https://openlibrary.org/works/${encodeURIComponent(externalId)}`
+        : provider === "audible"
+          ? `https://www.audible.com/pd/${encodeURIComponent(externalId)}`
+          : undefined);
   const editions = book?.editions || [];
+  const recording = provider === "audible";
   const shown = editions.filter(
     (edition) => format === "all" || edition.medium === format,
   );
   return (
     <article className="reader-page">
-      <Link to={fromSearch ? searchReturn : "/discover"} className="back-link">
-        <ArrowLeft size={16} />{" "}
-        {fromSearch ? "Back to search results" : "Back to Discover"}
-      </Link>
+      <ReturnLink
+        fallback={fromSearch ? searchReturn : "/discover"}
+        label="Discover"
+      />
       <Notice error={preview.error} />
       {preview.isPending && (
         <Loading label={`Finding book details on ${sourceName}…`} />
@@ -281,7 +315,15 @@ function BookPage({
             <div className="reader-actions">
               {canEdit && (
                 <>
-                  {unreleased ? (
+                  {recording ? (
+                    <button
+                      className="primary"
+                      disabled={save.isPending}
+                      onClick={() => choose("editions")}
+                    >
+                      Review recording
+                    </button>
+                  ) : unreleased ? (
                     <FollowRelease
                       canEdit={canEdit}
                       workId={work?.id}
@@ -315,12 +357,12 @@ function BookPage({
                     disabled={save.isPending}
                     onClick={() => choose("list")}
                   >
-                    Add to list
+                    Add to reading list
                   </button>
                   {!!community.data?.authors?.length && (
                     <AuthorFollows authors={community.data.authors} />
                   )}
-                  {!unreleased && (
+                  {!unreleased && !recording && (
                     <button
                       disabled={save.isPending}
                       className="source-search-action"
@@ -329,12 +371,12 @@ function BookPage({
                       Search sources
                     </button>
                   )}
-                  {!work && !unreleased && (
+                  {!work && !unreleased && !recording && (
                     <button
                       disabled={save.isPending}
                       onClick={() => choose("catalog")}
                     >
-                      Add to catalog
+                      Save catalog entry
                     </button>
                   )}
                 </>
@@ -345,9 +387,11 @@ function BookPage({
                 </Link>
               )}
               <div className="reader-outbound">
-                <a href={externalUrl} target="_blank" rel="noreferrer">
-                  <BookSourceIcon source={sourceName} />
-                </a>
+                {externalUrl && (
+                  <a href={externalUrl} target="_blank" rel="noreferrer">
+                    <BookSourceIcon source={sourceName} />
+                  </a>
+                )}
                 <a
                   href={`https://www.goodreads.com/search?q=${encodeURIComponent(`${book.title} ${book.authors?.[0] || ""}`)}`}
                   target="_blank"
@@ -388,7 +432,13 @@ function BookPage({
                 )}
               </p>
             )}
-            {canEdit && !work && canQuickAdd && !unreleased && (
+            {canEdit && recording && (
+              <p className="muted reader-action-note">
+                Review the narrator and edition before requesting this
+                recording.
+              </p>
+            )}
+            {canEdit && !work && canQuickAdd && !unreleased && !recording && (
               <p className="muted reader-action-note">
                 Quick add downloads using your saved preferences and adds this
                 title to your catalog.
@@ -512,7 +562,7 @@ function BookPage({
                       >
                         {edition.cover_url ? (
                           <img
-                            src={edition.cover_url}
+                            src={`/api/catalog/cover-image?url=${encodeURIComponent(edition.cover_url)}`}
                             alt=""
                             loading="lazy"
                             referrerPolicy="no-referrer"
@@ -535,7 +585,10 @@ function BookPage({
                           <p className="muted">
                             {[
                               edition.publisher,
-                              edition.publication_year,
+                              edition.release_date || edition.publication_year,
+                              edition.runtime_minutes
+                                ? `${edition.runtime_minutes} min`
+                                : null,
                               languageName(edition.language),
                             ]
                               .filter(Boolean)

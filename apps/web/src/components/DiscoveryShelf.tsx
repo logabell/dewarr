@@ -31,16 +31,17 @@ export default function DiscoveryShelf({
           <h2 title={shelf.attribution}>{shelf.title}</h2>
           <span className="sr-only">{shelf.attribution}</span>
         </div>
-        {controls ||
-          (items.length > 0 && (
-            <ShelfPagination
-              page={1}
-              hasMore={false}
-              busy={false}
-              onPage={() => {}}
-              label={shelf.title}
-            />
-          ))}
+        {items.length > 0 &&
+          (controls ||
+            (items.length > 0 && (
+              <ShelfPagination
+                page={1}
+                hasMore={false}
+                busy={false}
+                onPage={() => {}}
+                label={shelf.title}
+              />
+            )))}
         {shelf.stale && <span className="count">Cached shelf</span>}
       </div>
       {shelf.warning && (
@@ -107,7 +108,7 @@ export default function DiscoveryShelf({
               )}
             </li>
           ))}
-          {viewAll && <ShelfViewAll to={viewAll} />}
+          {viewAll && !controls && <ShelfViewAll to={viewAll} />}
         </ul>
       )}
     </>

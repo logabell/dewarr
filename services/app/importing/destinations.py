@@ -133,7 +133,7 @@ async def route_unchanged(db, destination, payload):
     )
 
 
-async def setup_route_current(db, evidence):
+async def setup_route_current(db, evidence, *, require_enabled=True):
     binding = evidence.get("setup_downloader")
     if not binding:
         return True
@@ -143,7 +143,7 @@ async def setup_route_current(db, evidence):
         or row.deleted_at
         or row.kind not in TRANSFER_KINDS
         or row.owner_id is not None
-        or not row.enabled
+        or (require_enabled and not row.enabled)
     ):
         return False
     if row.credential_generation != binding["generation"] or row.status != "connected":
@@ -163,7 +163,8 @@ async def current_receipts(db, probe, revision):
         if item.get("configuration_revision") == revision
         and item.get("status") == "verified"
         and str(sources.get(item.get("source_key"))) == item.get("source_path")
-        and await setup_route_current(db, item)
+        # Disabling new downloads does not revoke verified access to completed files.
+        and await setup_route_current(db, item, require_enabled=False)
     ]
 
 

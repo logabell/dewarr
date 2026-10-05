@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 
 export default function DetailTabs({
   tabs,
@@ -10,6 +10,7 @@ export default function DetailTabs({
   label: string;
 }) {
   const [params] = useSearchParams();
+  const location = useLocation();
   return (
     <nav
       className="reader-nav book-tabs"
@@ -52,6 +53,7 @@ export default function DetailTabs({
             tabIndex={selected === key ? 0 : -1}
             aria-controls="detail-tab-panel"
             to={`?${search}`}
+            state={location.state}
           >
             {title}
           </Link>

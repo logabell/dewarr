@@ -2,7 +2,8 @@ import BookLink from "./BookLink";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate, useLocation, useParams } from "react-router-dom";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
+import { ContextLink, ReturnLink } from "./NavigationContinuity";
 import { api, result } from "../api/client";
 import { BookCard, Loading, Notice } from "../components";
 import BookCover from "./BookCover";
@@ -12,16 +13,21 @@ import type { Entry } from "./DiscoveryCollections";
 // also cached server-side under the reader's Hardcover connection generation.
 let active = 0;
 const waiting: (() => void)[] = [];
-async function resolve(id: string, signal: AbortSignal) {
+async function resolve(id: string, signal: AbortSignal, source = "goodreads") {
   if (active >= 2) await new Promise<void>((done) => waiting.push(done));
   else active++;
   try {
     signal.throwIfAborted();
     return result(
-      await api.GET("/api/discovery/goodreads/{external_id}", {
-        params: { path: { external_id: id } },
-        signal,
-      }),
+      await api.GET(
+        source === "goodreads"
+          ? "/api/discovery/goodreads/{external_id}"
+          : "/api/discovery/curation/{external_id}",
+        {
+          params: { path: { external_id: id } },
+          signal,
+        },
+      ),
     );
   } finally {
     const next = waiting.shift();
@@ -29,10 +35,14 @@ async function resolve(id: string, signal: AbortSignal) {
     else active--;
   }
 }
-export function useGoodreadsBook(id: string, enabled = true) {
+export function useGoodreadsBook(
+  id: string,
+  enabled = true,
+  source = "goodreads",
+) {
   return useQuery({
-    queryKey: ["goodreads-discovery-book", id],
-    queryFn: ({ signal }) => resolve(id, signal),
+    queryKey: ["goodreads-discovery-book", source, id],
+    queryFn: ({ signal }) => resolve(id, signal, source),
     enabled,
     staleTime: (query) =>
       query.state.data?.match.status === "disabled" ? 0 : 30 * 60_000,
@@ -58,10 +68,16 @@ export function GoodreadsCard({ book }: { book: Entry }) {
   }, []);
   const resolved = useGoodreadsBook(
     book.external_id,
-    visible && !!account.data?.enabled,
+    visible &&
+      !!account.data?.enabled &&
+      (!book.subject || book.subject === "work"),
+    book.provider || "goodreads",
   );
   const match = resolved.data?.match.book;
-  const work = resolved.data?.entry.work || book.work;
+  const work =
+    !book.subject || book.subject === "work"
+      ? resolved.data?.entry.work || book.work
+      : null;
   const cover = match?.cover_url || book.cover_url;
   return (
     <div ref={node}>
@@ -81,15 +97,20 @@ export function GoodreadsCard({ book }: { book: Entry }) {
           to={
             match
               ? `/discover/books/hardcover/${match.external_id}`
-              : `/discover/books/goodreads/${book.external_id}`
+              : `/discover/books/${book.provider === "audible" ? "audible" : !book.provider || book.provider === "goodreads" ? "goodreads" : "curation"}/${book.external_id}`
           }
         >
           <BookCover
+            actions={!book.subject || book.subject === "work"}
             title={match?.title || book.title}
             rating={match?.rating ?? book.rating}
             cover={cover}
             providerBook={{
-              provider: match ? "hardcover" : "goodreads",
+              provider: match
+                ? "hardcover"
+                : !book.provider || book.provider === "goodreads"
+                  ? "goodreads"
+                  : "curation",
               external_id: match?.external_id || book.external_id,
             }}
           />
@@ -104,8 +125,8 @@ export function GoodreadsCard({ book }: { book: Entry }) {
 }
 
 export default function GoodreadsBook() {
-  const { externalId = "" } = useParams();
-  const query = useGoodreadsBook(externalId);
+  const { externalId = "", provider = "goodreads" } = useParams();
+  const query = useGoodreadsBook(externalId, true, provider);
   const location = useLocation();
   const fallback = location.state?.goodreads as Entry | undefined;
   const value =
@@ -122,19 +143,24 @@ export default function GoodreadsBook() {
         }
       : undefined);
   if (value?.entry.work)
-    return <Navigate replace to={`/books/${value.entry.work.id}`} />;
+    return (
+      <Navigate
+        replace
+        state={location.state}
+        to={`/books/${value.entry.work.id}`}
+      />
+    );
   if (value?.match.book)
     return (
       <Navigate
         replace
+        state={location.state}
         to={`/discover/books/hardcover/${value.match.book.external_id}`}
       />
     );
   return (
     <article className="reader-page">
-      <Link className="back-link" to="/discover">
-        <ArrowLeft size={16} /> Back to Discover
-      </Link>
+      <ReturnLink fallback="/discover" label="Discover" />
       <Notice error={query.error} />
       {query.isPending && (
         <Loading label="Finding book details on Hardcover…" />
@@ -155,25 +181,34 @@ export default function GoodreadsBook() {
               <h1>{value.entry.title}</h1>
               <p>{(value.entry.authors || []).join(", ")}</p>
               <p>{value.match.reason}</p>
+              {!!value.entry.narrators?.length && (
+                <p>Narrated by {value.entry.narrators.join(", ")}</p>
+              )}
+              {!!value.entry.contributors?.length && (
+                <p>{value.entry.contributors.join(", ")}</p>
+              )}
               <div className="button-row">
                 {value.match.status === "disabled" && (
                   <Link className="primary" to="/settings#reading">
                     Connect Hardcover
                   </Link>
                 )}
-                <Link
+                <ContextLink
                   className="primary"
-                  to={`/search?q=${encodeURIComponent(`${value.entry.title} ${value.entry.authors?.[0] || ""}`)}`}
+                  to={`/search?q=${encodeURIComponent(`${value.entry.title} ${value.entry.authors?.[0] || ""}`)}${value.entry.subject === "recording" ? "&provider=audible" : ""}`}
                 >
                   Find editions
-                </Link>
+                </ContextLink>
                 <a
                   className="back-link"
-                  href={`https://www.goodreads.com/book/show/${externalId}`}
+                  href={
+                    value.entry.source_url ||
+                    `https://www.goodreads.com/book/show/${externalId}`
+                  }
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Goodreads <ExternalLink size={14} />
+                  Original selection <ExternalLink size={14} />
                 </a>
               </div>
             </div>

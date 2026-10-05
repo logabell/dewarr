@@ -1,0 +1,701 @@
+/* Shared reading/acquisition workflows: predictable sizing, compact context and
+   responsive comparison cards. Kept in the controls layer to avoid page overrides. */
+.mobile-menu-button {
+  display: none;
+}
+.workspace-title {
+  margin: 0 0 18px;
+  font-size: 26px;
+  letter-spacing: -0.025em;
+}
+.content-skeleton {
+  display: flex;
+  gap: 24px;
+  min-height: 250px;
+  padding: 24px 0;
+}
+.skeleton-cover,
+.skeleton-lines > div {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.skeleton-book .skeleton-cover {
+  width: 150px;
+  height: 225px;
+  flex-shrink: 0;
+}
+.skeleton-rows .skeleton-cover {
+  display: none;
+}
+.skeleton-lines {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  width: 100%;
+}
+.skeleton-lines > div {
+  height: 58px;
+}
+.skeleton-book .skeleton-lines > div:nth-child(2) {
+  width: 70%;
+}
+.request-search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 20px;
+}
+.request-search input {
+  max-width: 480px;
+  min-width: 0;
+}
+.request-ledger {
+  min-width: 0;
+  table-layout: fixed;
+}
+.request-ledger th {
+  padding: 12px 10px;
+}
+.request-ledger th:first-child {
+  width: 26%;
+}
+.request-ledger th:nth-child(2) {
+  width: 10%;
+}
+.request-ledger th:nth-child(3) {
+  width: 19%;
+}
+.request-ledger th:nth-child(4) {
+  width: 15%;
+}
+.request-ledger th:nth-child(5),
+.request-ledger th:nth-child(6) {
+  width: 8%;
+}
+.request-ledger th:last-child {
+  width: 14%;
+}
+.request-ledger td {
+  padding: 12px 10px;
+  overflow-wrap: anywhere;
+}
+.request-book-cell {
+  min-width: 0;
+  gap: 8px;
+}
+.request-book-cell h2 {
+  font-size: 13px;
+}
+.request-book-cell[data-continuation] {
+  position: relative;
+  height: 24px;
+}
+.request-book-cell[data-continuation] > * {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.request-book-cell[data-continuation]::after {
+  content: "↳ Same request";
+  color: var(--muted);
+  font-size: 12px;
+}
+.request-ledger .request-row-tools {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.request-ledger :is(.control-action, button) {
+  white-space: normal;
+}
+.request-ledger button.request-status {
+  min-height: 36px;
+  padding: 6px 8px;
+  text-align: left;
+  white-space: normal;
+}
+.request-status[aria-expanded="true"] .request-details-chevron {
+  transform: rotate(90deg);
+}
+.request-transfer-progress {
+  min-width: 0;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.request-transfer-progress progress {
+  max-width: 100%;
+}
+.reader-operational .book-detail-hero {
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 18px;
+}
+.reader-operational .book-detail-hero .reader-cover-wrap {
+  width: 72px;
+}
+.reader-operational .book-detail-hero h1:not(.reader-title-long),
+.reader-operational .book-detail-hero .reader-title-long {
+  font-size: 25px;
+  margin: 0 0 6px;
+}
+.reader-operational .book-detail-hero .author-line {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.reader-operational
+  .book-detail-hero
+  :is(
+    .reader-cover-caption,
+    .reader-facts,
+    .reader-outbound,
+    .reader-actions,
+    .reader-action-note,
+    .status-row,
+    .reader-subtitle,
+    .eyebrow
+  ) {
+  display: none;
+}
+.reader-editions {
+  max-height: none;
+  overflow: visible;
+}
+.book-cover .type-cover {
+  padding: 40px 14px 42px;
+  justify-content: flex-start;
+  gap: 12px;
+}
+.book-cover .type-cover span {
+  font-size: clamp(13px, 1.5vw, 19px);
+  -webkit-line-clamp: 4;
+}
+.book-cover .type-cover small {
+  display: none;
+}
+.source-coverage {
+  padding: 10px 0;
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.source-coverage summary {
+  cursor: pointer;
+  min-height: 32px;
+}
+.source-coverage ul {
+  padding-left: 20px;
+}
+.source-coverage p {
+  margin: 4px 0 12px;
+}
+.release-decision-facts,
+.import-evidence {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.release-decision-facts dt,
+.import-evidence dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.release-decision-facts dd,
+.import-evidence dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.download-review-book {
+  padding: 20px;
+  gap: 18px;
+}
+.download-review-cover {
+  width: 64px;
+  flex-basis: 64px;
+}
+.download-review-identity h2 {
+  font-size: 24px;
+  margin: 4px 0 8px;
+}
+.download-review-author {
+  margin: 0;
+  font-size: 14px;
+}
+.download-review .book-cover .type-cover {
+  padding: 10px;
+}
+.download-review .book-cover .type-cover span {
+  font-size: 10px;
+}
+.download-file-list li {
+  display: block;
+  padding: 14px 0;
+  overflow-wrap: anywhere;
+}
+.download-file-list li > p {
+  margin: 6px 0;
+  font-size: 13px;
+}
+.import-source-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.download-browser-list {
+  list-style: none;
+  padding: 0;
+  margin: 18px 0;
+}
+.download-browser-list button {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  gap: 12px;
+  text-align: left;
+  padding: 12px;
+}
+.download-browser-list button svg {
+  flex-shrink: 0;
+}
+.download-browser-list button span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.download-browser-list button small {
+  margin-left: auto;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.asset-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 24px;
+}
+.review-evidence summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+  min-height: 36px;
+}
+.review-evidence .review-report {
+  border: 0;
+  padding-inline: 0;
+}
+.review-next-control {
+  margin: 0 0 20px;
+}
+.match-candidates {
+  border: 0;
+  padding: 0;
+  margin: 8px 0;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.match-candidates legend {
+  margin-bottom: 10px;
+}
+.match-candidates .match-candidate {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.match-candidate:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.match-candidate input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+.match-candidate small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+:is(.requests-page, .book-sources, .download-review, .review-dialog)
+  :is(button, .button, .control-action) {
+  min-height: 36px;
+}
+:is(.book-sources, .download-review, .review-dialog)
+  :is(a, button, input, select, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1200px) {
+  .source-table-scroll {
+    overflow: visible;
+  }
+  .source-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+  .source-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    overflow: hidden;
+  }
+  .source-table tbody {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .source-table .source-release {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    background: var(--surface);
+  }
+  .source-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+  .source-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .source-table :is(.release-title-cell, .source-actions-cell) {
+    grid-column: 1 / -1;
+  }
+  .source-table .release-title-button {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+  }
+  .source-table .source-row-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .source-table .release-info-button {
+    display: none;
+  }
+}
+@media (max-width: 850px) {
+  .source-table tbody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .sidebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    min-height: 60px;
+  }
+  .sidebar .brand {
+    order: -1;
+    margin-right: auto;
+  }
+  .mobile-menu-button {
+    display: inline-flex;
+    margin-right: 40px;
+    min-height: 40px;
+  }
+  .sidebar .mobile-signout {
+    top: 10px;
+  }
+  .sidebar #main-navigation {
+    display: none;
+    flex: 1 0 100%;
+    margin: 0;
+  }
+  .sidebar[data-menu-open="true"] #main-navigation {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .sidebar #main-navigation a {
+    min-height: 44px;
+  }
+  .topbar {
+    padding-inline: 16px;
+    height: auto;
+    min-height: 60px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-block: 8px;
+  }
+  .topbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .main-content {
+    padding: 20px 16px;
+  }
+  .workspace-title {
+    font-size: 23px;
+    margin-bottom: 12px;
+  }
+  .page-tabs {
+    scroll-padding-inline: 12px;
+  }
+  .request-search {
+    flex-wrap: wrap;
+  }
+  .request-search input {
+    flex: 1 1 100%;
+  }
+  .reader-operational .book-detail-hero {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .reader-operational .book-detail-hero .reader-cover-wrap {
+    width: 56px;
+    grid-row: auto;
+  }
+  .reader-operational .book-detail-hero .reader-hero-copy {
+    display: block;
+  }
+  .reader-operational .book-detail-hero h1:not(.reader-title-long),
+  .reader-operational .book-detail-hero .reader-title-long {
+    font-size: 21px;
+  }
+  .reader-operational .book-detail-hero .author-line {
+    font-size: 13px;
+  }
+  .reader-operational .book-detail-hero .reader-series {
+    display: none;
+  }
+  .asset-review-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .asset-review-layout .review-find {
+    order: -1;
+  }
+  .review-evidence {
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+  .release-decision-facts,
+  .import-evidence {
+    padding: 12px;
+    gap: 14px;
+  }
+  .import-evidence {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .download-review-book {
+    padding: 16px;
+  }
+  .download-review-identity h2 {
+    font-size: 21px;
+  }
+  .download-attention,
+  .download-review-status {
+    padding: 16px;
+  }
+  .download-attention h3 {
+    font-size: 19px;
+  }
+  .download-view-files {
+    margin-left: 0;
+  }
+  :is(.requests-page, .book-sources, .download-review, .review-dialog)
+    :is(button, .button, .control-action, summary),
+  .request-ledger .request-icon-action {
+    min-height: 44px;
+  }
+  .request-ledger .request-icon-action {
+    min-width: 44px;
+  }
+  .skeleton-book .skeleton-cover {
+    width: 90px;
+    height: 135px;
+  }
+  .download-browser-list button {
+    flex-wrap: wrap;
+  }
+  .download-browser-list button small {
+    flex-basis: 100%;
+    margin-left: 30px;
+  }
+}
+
+.download-review-next {
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 1100px) {
+  .request-ledger {
+    display: block;
+  }
+  .request-ledger thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .request-ledger tbody {
+    display: block;
+  }
+  .request-ledger-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px 12px;
+    padding: 16px;
+    border-top: 1px solid var(--line);
+  }
+  .request-ledger-row > td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+  .request-ledger-row > td:first-child,
+  .request-ledger-row > td:last-child {
+    grid-column: 1 / -1;
+  }
+  .request-ledger-row > td:nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+  .request-ledger-row > td:nth-child(4) {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
+  .request-ledger-row > td:nth-child(5)::before {
+    content: "Speed · ";
+  }
+  .request-ledger-row > td:nth-child(6)::before {
+    content: "Time left · ";
+  }
+  .request-book-cell h2 {
+    font-size: 15px;
+  }
+  .request-detail-row,
+  .request-detail-row > td {
+    display: block;
+  }
+  .request-detail-content {
+    padding: 8px 4px;
+  }
+  .request-transfer-progress {
+    justify-content: flex-end;
+  }
+}
+
+.deferred-shelf {
+  min-height: 330px;
+  padding-top: 24px;
+}
+.deferred-shelf h2 {
+  color: var(--muted);
+  font-size: 20px;
+}
+.request-cover span {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+@media (max-width: 720px) {
+  .sidebar {
+    flex-direction: row;
+  }
+  .sidebar .application-release {
+    display: none;
+  }
+  .sidebar[data-menu-open="true"] .application-release {
+    display: flex;
+    flex-basis: 100%;
+  }
+  .request-search input {
+    flex: 1 1 160px;
+    width: 0;
+  }
+  .request-search button {
+    flex-shrink: 0;
+  }
+}
+
+.reader-operational .book-cover .type-cover {
+  padding: 8px;
+}
+.reader-operational .book-cover .type-cover span {
+  font-size: 10px;
+  -webkit-line-clamp: 4;
+}
+:is(.reader-operational, .download-review-cover)
+  :is(.cover-formats, .cover-owned, .cover-rating) {
+  display: none;
+}
+@media (max-width: 720px) {
+  .release-comparison .library-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .release-comparison .library-filters > :is(.grow, .check-label) {
+    grid-column: 1 / -1;
+  }
+  .release-comparison .library-filters label {
+    min-width: 0;
+    width: auto;
+  }
+}
+
+@media (max-width: 1200px) {
+  .source-table td.source-actions-cell {
+    width: auto;
+  }
+  .source-table .source-release td {
+    background: transparent;
+  }
+  .source-row-actions .wedge-choice {
+    padding-left: 0;
+    white-space: normal;
+  }
+}
+
+.review-item-context {
+  color: var(--muted);
+  margin: 0 0 14px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .mobile-menu-button,
+  .sidebar .mobile-signout {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

@@ -15,7 +15,7 @@ from sqlalchemy import and_, func, select
 from app.adapters.catalog_types import cover_url
 from app.db.models import BookList, ListAcquisitionPolicy, ListObservation, ListSubscription
 from app.domain.availability import availability_rows
-from app.domain.work_graph import canonical_map
+from app.domain.work_graph import canonical_families, canonical_map
 from app.security import decrypt_secrets
 
 BookFilter = Literal["all", "library", "upcoming", "recent", "missing"]
@@ -120,16 +120,23 @@ async def sources(db, user):
 
 
 def catalog(user, source_rows):
-    mapping = canonical_map()
-    availability = availability_rows(user, mapping)
+    observed = select(ListObservation.work_id).where(
+        ListObservation.subscription_id.in_([row.id for row, _ in source_rows]),
+        ListObservation.present.is_(True),
+    )
+    mapping = canonical_map(observed)
+    # The catalog needs only observed identities, but ownership must include
+    # every alias of those roots, including library copies outside the follow.
+    families = canonical_families(select(mapping.c.work_id))
+    availability = availability_rows(user, families)
     holdings = (
         availability.with_only_columns(
-            mapping.c.work_id,
+            families.c.work_id,
             func.bool_or(availability.selected_columns.medium == "ebook").label("ebook"),
             func.bool_or(availability.selected_columns.medium == "audio").label("audio"),
             func.bool_and(availability.selected_columns.state == "stale").label("stale"),
         )
-        .group_by(mapping.c.work_id)
+        .group_by(families.c.work_id)
         .subquery()
     )
     # Snapshots are only replaced when the complete two-pass observation commits.

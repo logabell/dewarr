@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     hardcover_url: str = "https://api.hardcover.app"
     openlibrary_url: str = "https://openlibrary.org"
+    audible_region: str = "us"
+    metadata_proxy_url: SecretStr | None = None
+    custom_metadata_url: str | None = None
+    custom_metadata_token: SecretStr | None = None
+    nyt_api_key: SecretStr | None = None
     plex_api_origin: str = "https://plex.tv"
     plex_auth_origin: str = "https://app.plex.tv"
     proxy_token: SecretStr | None = None
@@ -53,6 +58,30 @@ class Settings(BaseSettings):
         default_factory=lambda: Path(".local/import-journals").absolute()
     )
     import_storage_routes: dict[str, ImportStorageRoute] = {}
+
+    @field_validator("audible_region")
+    @classmethod
+    def validate_audible_region(cls, value):
+        if value not in {"us", "uk", "au", "ca", "de", "es", "fr", "in", "it", "jp"}:
+            raise ValueError("Unsupported Audible marketplace")
+        return value
+
+    @field_validator("custom_metadata_url")
+    @classmethod
+    def validate_custom_metadata_url(cls, value):
+        from app.adapters.http import configured_url
+
+        return configured_url(value) if value else None
+
+    @field_validator("metadata_proxy_url")
+    @classmethod
+    def validate_metadata_proxy(cls, value):
+        if value:
+            parts = urlsplit(value.get_secret_value())
+            if parts.scheme not in {"http", "https"} or not parts.hostname or parts.fragment:
+                raise ValueError("Use an HTTP(S) metadata proxy URL")
+            _ = parts.port
+        return value
 
     @field_validator("import_sources", "import_destinations")
     @classmethod

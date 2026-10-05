@@ -18,6 +18,7 @@ from defusedxml import ElementTree
 from pydantic import Field
 
 from app.domain.catalog_titles import parse_title_labels
+from app.domain.title_matching import exact_title_key
 from app.importing.audio_order import inferred_tracks
 from app.importing.book_containers import check_zip_directory
 from app.importing.filesystem import (
@@ -341,7 +342,14 @@ def suggest_groups(files):
             narrator = tags.get("narrator") or tags.get("composer")
             authors = [tags.get("album_artist") or tags.get("artist")]
             authors = [author for author in authors if author]
-            key = ("audio", str(folder), title, narrator, tuple(authors), file["extension"])
+            key = (
+                "audio",
+                str(folder),
+                exact_title_key(title) if title else None,
+                narrator,
+                tuple(authors),
+                file["extension"],
+            )
             disc = number(tags.get("disc"), 999)
             folder_disc = int(disc_match[1]) if disc_match else part
             if part and disc in (1, part):
@@ -369,7 +377,7 @@ def suggest_groups(files):
         group["files"].append({"path": str(path), "disc": disc, "track": track})
     for group in groups.values():
         if group["medium"] == "audio":
-            group["files"] = inferred_tracks(group["files"])
+            group["files"] = inferred_tracks(group["files"], title=group["title"])
     return list(groups.values())
 
 

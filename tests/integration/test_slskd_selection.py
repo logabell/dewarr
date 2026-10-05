@@ -17,11 +17,13 @@ from app.db.models import (
     DownloadAttempt,
     Integration,
     Operation,
+    SourceArtifact,
     SourceConnection,
     SourceResult,
 )
 from app.domain import acquisition, automatic_selection, slskd_transfers
-from app.domain.source_artifacts import persist_file_list
+from app.domain.automatic_selection import resolve_candidate
+from app.domain.slskd_transfers import queue_folder as queue_soulseek_folder
 from app.security import encrypt_secrets
 from tests.integration.test_acquisition import body, catalog, request
 from tests.integration.test_acquisition_defaults import save
@@ -55,11 +57,10 @@ async def soulseek(client, database, authorized, monkeypatch):
         result = await db.get(SourceResult, authorized["result"])
         result.source_key = "slskd"
         result.release_snapshot = release.model_dump(mode="json")
-        owner_id = result.owner_id
-    artifact_id = await persist_file_list(owner_id, release, 1)
-    monkeypatch.setattr(
-        automatic_selection, "resolve_candidate", AsyncMock(return_value=(artifact_id, release))
-    )
+        result.encrypted_reference = encrypt_secrets({})
+    # The shared MAM fixture stubs resolution. Exercise Soulseek's real resolver
+    # here, including file-list persistence, and mock only the network handoff.
+    monkeypatch.setattr(automatic_selection, "resolve_candidate", resolve_candidate)
     enqueue = AsyncMock()
     monkeypatch.setattr(slskd_transfers, "queue_folder", enqueue)
     return {**authorized, "enqueue": enqueue}
@@ -85,6 +86,63 @@ async def any_language_search(client, database, catalog, soulseek, *, bound=None
             "command": {"request_id": bound},
         }
     return f"/api/source-searches/{soulseek['search']}/results/{soulseek['result']}/download"
+
+
+@pytest.mark.parametrize("change", ["disabled", "credentials", "endpoint", "deleted"])
+async def test_unaccepted_soulseek_batch_cleans_up_only_the_same_client_after_disable(
+    client, database, catalog, soulseek, monkeypatch, change
+):
+    queued = []
+    cancelled = []
+    endpoints = []
+
+    class SoulseekClient:
+        def __init__(self, endpoint, api_key):
+            endpoints.append(endpoint)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def enqueue(self, release, *, attempt_id):
+            queued.append((release.username, attempt_id))
+            # Settings can change while the remote enqueue is in flight, before
+            # prepare obtains the source/settings locks and accepts this batch.
+            async with database() as db, db.begin():
+                source = await db.get(SourceConnection, "slskd")
+                source.enabled = False
+                downloader = await db.get(Integration, UUID(soulseek["body"]["downloader_id"]))
+                downloader.enabled = False
+                if change == "credentials":
+                    downloader.credential_generation += 1
+                    downloader.encrypted_secrets = encrypt_secrets({"api_key": "replacement"})
+                elif change == "endpoint":
+                    downloader.base_url = "http://replacement.test"
+                elif change == "deleted":
+                    downloader.deleted_at = datetime.now(UTC)
+
+        async def cancel(self, username, attempt_id):
+            cancelled.append((username, attempt_id))
+
+    monkeypatch.setattr(slskd_transfers, "SlskdClient", SoulseekClient)
+    monkeypatch.setattr(slskd_transfers, "queue_folder", queue_soulseek_folder)
+    url = await any_language_search(client, database, catalog, soulseek)
+    response = await client.post(url, headers={"Idempotency-Key": "soulseek-disabled-cleanup"})
+    assert response.status_code == 202, response.text
+    identifier = UUID(response.json()["id"])
+    await automatic_selection.run(identifier)
+    async with database() as db:
+        operation = await db.get(Operation, identifier)
+        assert operation.status == "held", operation.message
+        assert "source connection changed" in operation.message
+        assert not await db.scalar(select(DownloadAttempt.id))
+    assert len(queued) == 1
+    assert cancelled == (queued if change == "disabled" else [])
+    assert len(endpoints) == (2 if change == "disabled" else 1)
+    if change == "disabled":
+        assert endpoints[0] == endpoints[1]
 
 
 @pytest.mark.parametrize("older_language", [None, "en", "edition"])
@@ -122,6 +180,9 @@ async def test_any_language_soulseek_selection_does_not_inherit_another_requests
         )
         assert operation.payload["requirements"]["language"] is None
         selected = await db.get(AcquisitionSelection, UUID(operation.payload["selection_id"]))
+        artifact = await db.get(SourceArtifact, selected.artifact_id)
+        assert artifact.source_key == "slskd"
+        assert artifact.descriptor["parser"] == "slskd-file-list"
         assert selected.frozen["requirements"]["language"] is None
         assert selected.frozen["requirements"]["version_id"] is None
         if older_language:

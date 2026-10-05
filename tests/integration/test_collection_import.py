@@ -1,8 +1,11 @@
 # ruff: noqa: F811
-from uuid import UUID
+import json
+import time
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from fastapi import HTTPException
+from sqlalchemy import event, func, select
 
 from app.db.models import ImportEntry, Library, LibraryAsset, Version, Work
 from app.domain.inventory import apply_item
@@ -15,6 +18,48 @@ from tests.integration.test_single_file_acquisition import prepare_audio_route
 from tests.media_fixtures import audio
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("lock", [False, True])
+async def test_collection_revalidation_batches_books_and_rechecks_later_changes(
+    database, tmp_path, lock
+):
+    from app.importing.collection_contents import freeze, verify
+
+    async with database() as db, db.begin():
+        books = [Work(title=f"Collected book {n}", authors=["Writer"]) for n in range(100)]
+        db.add_all(books)
+        await db.flush()
+        contents = await freeze(db, [book.id for book in books], uuid4())
+        changed_id = books[0].id
+    async with database() as db:
+        calls = []
+        engine = db.bind.sync_engine
+
+        def count(*args):
+            calls.append(1)
+
+        event.listen(engine, "before_cursor_execute", count)
+        started = time.perf_counter()
+        try:
+            await verify(db, contents, lock=lock)
+        finally:
+            elapsed = time.perf_counter() - started
+            event.remove(engine, "before_cursor_execute", count)
+        metrics = {
+            "books": 100,
+            "locked": lock,
+            "sql_statements": len(calls),
+            "elapsed_seconds": elapsed,
+        }
+        (tmp_path / "collection-metrics.json").write_text(json.dumps(metrics))
+        print(metrics)
+        assert len(calls) == 1, "Collection revalidation issued per-book reads"
+        await db.commit()
+        async with database() as other, other.begin():
+            (await other.get(Work, changed_id)).title = "Corrected title"
+        with pytest.raises(HTTPException, match="Contained book identity changed"):
+            await verify(db, contents, lock=lock)
 
 
 async def start(client, route, key="import-fixture"):

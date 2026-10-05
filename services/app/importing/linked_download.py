@@ -14,6 +14,9 @@ from app.domain.work_graph import canonical_work
 from app.importing.file_editions import attach_file_edition
 from app.importing.match_evidence import group_evidence, language_key
 
+MULTIPLE_IDENTIFIERS = "Multiple edition identifiers require review"
+UNSUPPORTED_IDENTIFIERS = "Catalog identifiers do not support all embedded assertions"
+
 
 def request_file_conflicts(work, release, facts, *, series=(), reviewed_collection=False):
     """Absent tags are neutral; contradictory tags need a different download or correction."""
@@ -26,6 +29,10 @@ def request_file_conflicts(work, release, facts, *, series=(), reviewed_collecti
     )
     authors = sorted(normalized(name) for name in work.authors)
     conflicts = list(facts.issues)
+    # Several ISBNs can describe formats of the same book. Independent title
+    # and author tags can confirm a book request without selecting an edition.
+    if title_agrees and authors and facts.authors == [authors]:
+        conflicts = [issue for issue in conflicts if issue != MULTIPLE_IDENTIFIERS]
     if facts.titles and not title_agrees:
         conflicts.append("The files name a different book")
     if any(
@@ -108,6 +115,19 @@ async def linked_version(db, approver, selection, inspection, group, grouping_re
         return None
     identified = [candidate for candidate in match.candidates if candidate.identifier_match]
     if identified:
+        if MULTIPLE_IDENTIFIERS in facts.issues:
+            # Preserve the assertions in the file-edition evidence, but do not
+            # arbitrarily pick one ISBN's edition. Known identity or recording
+            # conflicts still block the saved-book fallback.
+            if any(
+                candidate.work_id != work.id or set(candidate.conflicts) - {UNSUPPORTED_IDENTIFIERS}
+                for candidate in identified
+            ):
+                return None
+            version, _ = await attach_file_edition(
+                db, approver, inspection.id, work.id, group.key, grouping_revision
+            )
+            return version
         # Missing tags do not undo the saved book selection. Keep the edition
         # when its identifier uniquely belongs to that book, but never erase
         # contradictory tags, another work, or an ambiguous identifier.

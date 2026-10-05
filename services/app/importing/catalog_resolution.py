@@ -91,6 +91,7 @@ async def context(db, row, group_key, *, lock=False):
         "account_generation": account.generation if account and account.enabled else None,
         "settings": settings.model_dump(mode="json"),
         "endpoints": [get_settings().hardcover_url, get_settings().openlibrary_url],
+        "audible_region": get_settings().audible_region,
         "sources": [
             {
                 "provider": source.provider,
@@ -203,6 +204,27 @@ def matching_editions(book, facts, medium):
 
 
 async def provider_lookup(provider, inputs, facts, medium, token):
+    if provider == "audible":
+        from app.adapters.audible import recording
+
+        ids = {item.value for item in facts.identifiers if item.namespace == "asin"}
+        if len(ids) != 1:
+            return None, "needs-review", "Conflicting recording identifiers need review"
+        if any(
+            source["provider"] == "audible" and not source["accepted"]
+            for source in inputs["sources"]
+        ):
+            return None, "needs-review", "This recording source was previously rejected"
+        book = await recording(next(iter(ids)))
+        if not compatible(BookEvidence(title=inputs["title"], authors=inputs["authors"]), book):
+            return (
+                None,
+                "needs-review",
+                "Recording title or author conflicts with the requested book",
+            )
+        if len(matching_editions(book, facts, medium)) != 1:
+            return None, "needs-review", "Recording evidence needs review"
+        return book, "completed", "Exact recording resolved from its ASIN and file evidence"
     scope = (
         f"{inputs['requester_id']}:{inputs['account_generation']}"
         if provider == "hardcover"
@@ -304,6 +326,8 @@ async def provider_lookup(provider, inputs, facts, medium, token):
 
 async def lookup(inputs, facts, medium, token):
     available = (["hardcover"] if token else []) + (["openlibrary"] if medium == "ebook" else [])
+    if medium == "audio" and any(item.namespace == "asin" for item in facts.identifiers):
+        available.append("audible")
     available.sort(key=lambda provider: provider != inputs["settings"]["primary"])
     last_error = None
     for provider in available:

@@ -22,6 +22,7 @@ class SlskdConnectionInput(BaseModel):
     api_key: SecretStr | None = Field(default=None, min_length=16, max_length=255)
     enabled: bool = True
     expected_generation: int = Field(default=0, ge=0)
+    expected_enabled: bool | None = None
 
     @field_validator("base_url")
     @classmethod

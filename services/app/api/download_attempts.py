@@ -178,6 +178,7 @@ async def view(db, user, row, selection):
         selection,
         committed=True,
         configuration=await repairs.accepted_configuration(db, selection),
+        require_enabled=False,
     )
     members = []
     memberships = {

@@ -244,8 +244,39 @@ async def source_target(db, source_id, *, lock=False):
     return work, source
 
 
-def source_state(work, source):
+async def source_state(db, work, source):
+    editions = {}
+    links = (
+        await db.scalars(
+            select(ProviderObject).where(
+                ProviderObject.metadata_source_id == source.id,
+                ProviderObject.version_id.is_not(None),
+                ProviderObject.snapshot.has_key("filled_fields"),
+            )
+        )
+        if source.provider == "audible"
+        else []
+    )
+    for link in links:
+        version = await db.get(Version, link.version_id)
+        if version:
+            editions[str(version.id)] = {
+                "fields": {
+                    name: getattr(version, name)
+                    for name in ("narrators", "language", "abridged", "runtime_minutes")
+                },
+                "locks": sorted(
+                    str(value)
+                    for value in await db.scalars(
+                        select(ProviderObject.id).where(
+                            ProviderObject.version_id == version.id,
+                            ProviderObject.manual_lock.is_(True),
+                        )
+                    )
+                ),
+            }
     return {
+        "editions": editions,
         "accepted": source.accepted,
         "manual_match": source.manual_match,
         "snapshot": source.snapshot,
@@ -261,11 +292,23 @@ def source_state(work, source):
 
 async def detach_source(db, actor_id, source_id, expected_revision):
     work, source = await source_target(db, source_id, lock=True)
-    before = source_state(work, source)
+    before = await source_state(db, work, source)
     check_revision(before, expected_revision)
     if not source.accepted:
         return None
     source.accepted, source.manual_match = False, True
+    for link in await db.scalars(
+        select(ProviderObject).where(ProviderObject.metadata_source_id == source.id)
+    ):
+        version = await db.get(Version, link.version_id) if link.version_id else None
+        if not version or before["editions"].get(str(version.id), {}).get("locks"):
+            continue
+        for name, receipt in link.snapshot.get("filled_fields", {}).items():
+            if (
+                name in {"narrators", "language", "abridged", "runtime_minutes"}
+                and getattr(version, name) == receipt["after"]
+            ):
+                setattr(version, name, receipt["before"])
     fields = dict(work.metadata_fields.get("fields", {}))
     for name, provenance in list(fields.items()):
         if (
@@ -304,7 +347,7 @@ async def detach_source(db, actor_id, source_id, expected_revision):
         source.id,
         work.id,
         before,
-        source_state(work, source),
+        await source_state(db, work, source),
         f"Stopped using {source.provider} record {source.external_id}",
     )
 
@@ -351,6 +394,7 @@ async def review_version(db, actor_id, link_id, decision, expected_revision):
             abridged=proposed.abridged,
             publication_year=proposed.publication_year,
             identifiers=proposed.identifiers,
+            runtime_minutes=proposed.runtime_minutes,
         )
         db.add(version)
         await db.flush()
@@ -392,7 +436,10 @@ async def change_state(db, change, *, lock=False):
         return current, (asset, link)
     if change.kind == "source_detach":
         work, source = await source_target(db, change.entity_id, lock=lock)
-        return source_state(work, source), (work, source)
+        current = await source_state(db, work, source)
+        if "editions" not in change.after:
+            current.pop("editions", None)  # Compatibility with existing correction journals.
+        return current, (work, source)
     work, link = await version_target(db, change.entity_id, lock=lock)
     return version_state(link), (work, link)
 
@@ -461,6 +508,12 @@ async def undo_change(db, actor_id, change_id):
         )
     elif change.kind == "source_detach":
         work, source = targets
+        for version_id, state in before.get("editions", {}).items():
+            version = await db.get(Version, UUID(version_id))
+            if not version:
+                raise HTTPException(409, "This edition is no longer available for undo")
+            for name, value in state["fields"].items():
+                setattr(version, name, value)
         source.accepted, source.manual_match = before["accepted"], before["manual_match"]
         source.snapshot, source.fetched_at = (
             before["snapshot"],

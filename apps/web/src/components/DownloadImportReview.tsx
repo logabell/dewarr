@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { Check, CircleAlert, LoaderCircle } from "lucide-react";
-import { Link } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import { Loading, Notice } from "../components";
 import ImportExecution from "./ImportExecution";
 import DownloadMatchReview from "./DownloadMatchReview";
+import { ContextLink } from "./NavigationContinuity";
+import { transferSize } from "../pages/DownloadConstraints";
 import BookCover from "./BookCover";
 import BookDialog from "./BookDialog";
 
@@ -50,6 +52,23 @@ export default function DownloadImportReview({
     },
   });
   const done = download.state === "complete";
+  const queue = useQuery({
+    queryKey: ["requests", "next-review", inspection.id],
+    enabled: done,
+    queryFn: async ({ signal }) =>
+      result(
+        await api.GET("/api/requests", {
+          params: { query: { status: "review", limit: 20 } },
+          signal,
+        }),
+      ),
+  });
+  const nextInspection = queue.data?.items
+    .flatMap((request) => request.targets)
+    .find(
+      (target) =>
+        target.inspection_id && target.inspection_id !== inspection.id,
+    )?.inspection_id;
   const blocked = ["held", "review", "cancelled", "cancel-held"].includes(
     download.state,
   );
@@ -74,18 +93,12 @@ export default function DownloadImportReview({
             {download.medium === "audio" ? "Audiobook" : "Ebook"}
           </p>
           <h2>
-            <Link to={`/books/${download.work_id}`}>{title}</Link>
+            <ContextLink to={`/books/${download.work_id}`}>{title}</ContextLink>
           </h2>
           {subtitle && <p className="download-review-subtitle">{subtitle}</p>}
           <p className="download-review-author">
             {download.authors.join(", ")}
           </p>
-          <Link
-            className="download-review-book-link"
-            to={`/books/${download.work_id}`}
-          >
-            View book details →
-          </Link>
         </div>
       </header>
       <div className="download-review-status">
@@ -151,6 +164,22 @@ export default function DownloadImportReview({
       ) : (
         <Loading />
       )}
+      {done && (
+        <div className="download-review-next">
+          {nextInspection ? (
+            <Link
+              className="button primary"
+              to={`/organization/inspections?inspection=${nextInspection}`}
+            >
+              Review next download →
+            </Link>
+          ) : (
+            <Link to="/requests?status=review">Return to download review</Link>
+          )}
+          {queue.isFetching && <p role="status">Checking remaining reviews…</p>}
+          <Notice error={queue.error} />
+        </div>
+      )}
       <Notice error={retry.error || plan.error} />
       {showFiles && (
         <BookDialog title="Downloaded files" close={() => setShowFiles(false)}>
@@ -160,18 +189,42 @@ export default function DownloadImportReview({
           <ul className="download-file-list">
             {files.map((file) => (
               <li key={file.path}>
-                <span>{file.path.split("/").pop()}</span>
+                <span>{file.path}</span>
+                <p className="muted">
+                  {(
+                    file.extension ||
+                    file.path.split(".").pop() ||
+                    "File"
+                  ).toUpperCase()}{" "}
+                  ·{" "}
+                  {typeof file.identity?.size === "number"
+                    ? transferSize(file.identity.size)
+                    : "Size not available"}
+                  {typeof file.technical?.duration === "number"
+                    ? ` · ${Math.round(file.technical.duration / 60)} min`
+                    : ""}
+                  {typeof file.technical?.codec === "string"
+                    ? ` · ${file.technical.codec}`
+                    : ""}
+                </p>
+                {!!file.technical?.tags &&
+                  typeof file.technical.tags === "object" &&
+                  "track" in file.technical.tags && (
+                    <p className="muted">
+                      Track: {String(file.technical.tags.track)}
+                    </p>
+                  )}
                 <small>
                   {file.medium ||
                   /\.(epub|pdf|cbz|m4b|m4a|mp3|flac|ogg|opus|aac|wav|wma)$/i.test(
                     file.path,
                   )
                     ? file.state === "inspected"
-                      ? "Ready"
+                      ? "Readable · completeness still requires verification"
                       : "Needs attention"
                     : "Extra file"}
                 </small>
-                {file.state === "held" && file.reason && (
+                {file.reason && (
                   <p className="download-file-reason">{file.reason}</p>
                 )}
               </li>

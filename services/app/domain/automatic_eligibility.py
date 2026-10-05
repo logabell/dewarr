@@ -5,9 +5,11 @@ from pathlib import PurePosixPath
 
 from app.domain import pack_coverage
 from app.domain.acquisition import language_accepts
-from app.domain.release_profiles import assess_release, normalized
+from app.domain.audio_manifest import distinct_numbered_tracks, single_part_name
+from app.domain.release_profiles import assess_release, catalog_language_release
 from app.domain.release_versions import abridgment, version_reasons
 from app.domain.request_constraints import constrained_preferences
+from app.domain.title_matching import compatible_title
 
 EBOOKS = {"epub", "pdf", "cbz"}
 AUDIO = {"m4b", "mp3", "flac", "aac", "ogg", "opus"}
@@ -34,8 +36,9 @@ def collection_candidate(release, work, catalog=None):
         )
         or (
             pack_coverage.source_series(release, work, catalog)
-            and normalized(getattr(release, "title", release.raw_title))
-            != normalized(work["title"])
+            # Series membership alone does not make a single book a collection.
+            # Use the same title equivalence as source identity (e.g. & / and).
+            and not compatible_title(getattr(release, "title", release.raw_title), work["title"])
         )
     )
 
@@ -51,6 +54,7 @@ def eligibility(
     unattended=False,
     catalog=None,
 ):
+    release = catalog_language_release(release, work)
     preferences = constrained_preferences(preferences, rule)
     assessment = assess_release(release, work, preferences, rule["medium"])
     reasons = list(assessment.blocked)
@@ -152,7 +156,25 @@ def eligibility(
             if PurePosixPath(f.path).suffix.lower().lstrip(".") in supported
         ]
         allowed = supported | SIDECARS | ({"pdf"} if rule["medium"] == "audio" else set())
-        if formats - allowed:
+        # A same-name MOBI is an alternate copy of the one selected EPUB, not
+        # another importable book. Its bytes never establish identity and are
+        # left out by the importer. Keep unrelated files and multiple supported
+        # editions behind review, and retain the blocked-format check above.
+        companions = set()
+        if rule["medium"] == "ebook" and len(primary) == 1:
+            epub = PurePosixPath(primary[0].path)
+            if epub.suffix.lower() == ".epub" and "epub" in preferences.ebook_formats:
+                companions = {
+                    f.path
+                    for f in descriptor.files
+                    if PurePosixPath(f.path).suffix.lower() == ".mobi"
+                    and PurePosixPath(f.path).with_suffix("") == epub.with_suffix("")
+                }
+        if any(
+            PurePosixPath(f.path).suffix.lower().lstrip(".") not in allowed
+            and f.path not in companions
+            for f in descriptor.files
+        ):
             reasons.append("The torrent contains unsupported or ambiguous file types")
         if not primary:
             reasons.append("No supported primary media files were found")
@@ -167,6 +189,10 @@ def eligibility(
         elif not proof and rule["medium"] == "ebook" and len(primary) != 1:
             reasons.append("Multiple ebook files need edition or collection review")
         elif not proof and rule["medium"] == "audio":
+            if len(primary) == 1 and single_part_name(
+                PurePosixPath(primary[0].path).stem, work["title"]
+            ):
+                reasons.append("Audio filename identifies one part of a larger recording")
             if len(primary) > 500 or len({str(PurePosixPath(f.path).parent) for f in primary}) != 1:
                 reasons.append(
                     "Audio files span multiple book folders or exceed the automatic track limit"
@@ -174,14 +200,8 @@ def eligibility(
             if len({PurePosixPath(f.path).suffix.lower() for f in primary}) != 1:
                 reasons.append("Alternative audio encodings need recording review")
             if len(primary) > 1:
-                stems = [normalized(PurePosixPath(f.path).stem) for f in primary]
-                book_title = normalized(work["title"])
-                if any(
-                    not re.fullmatch(
-                        r"(?:(?:disc|cd|part)\s*\d+\s*)?(?:(?:track|chapter)\s*)?\d+",
-                        stem.removeprefix(book_title).strip(),
-                    )
-                    for stem in stems
+                if not distinct_numbered_tracks(
+                    (PurePosixPath(f.path).stem for f in primary), work["title"]
                 ):
                     reasons.append("Audio filenames do not establish one numbered track sequence")
         if not proof and (

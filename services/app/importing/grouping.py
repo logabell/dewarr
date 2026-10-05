@@ -38,7 +38,7 @@ def proposed(snapshot):
     assigned = {file["path"] for group in snapshot["groups"] for file in group["files"]}
     return GroupingContent(
         groups=[
-            {**group, "files": inferred_tracks(group["files"])}
+            {**group, "files": inferred_tracks(group["files"], title=group.get("title"))}
             if group["medium"] == "audio"
             else group
             for group in snapshot["groups"]

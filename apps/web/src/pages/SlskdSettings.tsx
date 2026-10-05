@@ -27,6 +27,7 @@ export function SlskdConnectionForm({
     Promise.all([
       cache.invalidateQueries({ queryKey: ["slskd-connection"] }),
       cache.invalidateQueries({ queryKey: ["downloaders"] }),
+      cache.invalidateQueries({ queryKey: ["connection-health"] }),
       cache.invalidateQueries({ queryKey: ["setup-readiness"] }),
       cache.invalidateQueries({ queryKey: ["library-folder-options"] }),
     ]);
@@ -39,11 +40,13 @@ export function SlskdConnectionForm({
             api_key: apiKey || null,
             enabled,
             expected_generation: value.generation,
+            expected_enabled: value.configured ? value.enabled : null,
           },
         }),
       ),
     onSuccess: (connection) => {
       setApiKey("");
+      test.reset();
       cache.setQueryData(["slskd-connection"], connection);
       if (connection.enabled) test.mutate();
       else refresh();
@@ -110,6 +113,29 @@ export function SlskdConnectionForm({
       </label>
       <div className="connection-action-bar">
         <div className="button-row">
+          <button
+            className="primary"
+            type="submit"
+            disabled={save.isPending || test.isPending}
+          >
+            {save.isPending
+              ? "Saving…"
+              : enabled
+                ? "Save & test connection"
+                : "Save connection"}
+          </button>
+          <button
+            type="button"
+            disabled={
+              test.isPending ||
+              save.isPending ||
+              !value.configured ||
+              !value.enabled
+            }
+            onClick={() => test.mutate()}
+          >
+            {test.isPending ? "Testing…" : "Test connection"}
+          </button>
           {value.configured && (
             <DeleteSourceConnection
               source="slskd"
@@ -118,17 +144,6 @@ export function SlskdConnectionForm({
               disabled={save.isPending || test.isPending}
             />
           )}
-
-          <button type="submit" disabled={save.isPending || test.isPending}>
-            {save.isPending ? "Saving…" : "Save & test connection"}
-          </button>
-          <button
-            type="button"
-            disabled={test.isPending || save.isPending || !value.configured}
-            onClick={() => test.mutate()}
-          >
-            {test.isPending ? "Testing…" : "Test connection"}
-          </button>
         </div>
         <ConnectionTestStatus
           configured={value.configured}
@@ -138,7 +153,7 @@ export function SlskdConnectionForm({
           error={test.error}
         />
       </div>
-      <Notice error={save.error || test.error} />
+      <Notice error={save.error || (value.enabled ? test.error : null)} />
       {value.download_root && (
         <div className="slskd-folder-status">
           <p>
@@ -175,7 +190,7 @@ export default function SlskdSettings({
       ) : (
         query.data && (
           <SlskdConnectionForm
-            key={query.data.generation}
+            key={`${query.data.generation}:${query.data.enabled}`}
             value={query.data}
             onConfigureFolder={onConfigureFolder}
           />

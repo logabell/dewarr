@@ -95,7 +95,7 @@ async def activity_contexts(db, user, rows):
         if any(list_ids.values())
         else {}
     )
-    mapping = canonical_map()
+    mapping = canonical_map([value for value in work_ids.values() if value])
     works = (
         {
             origin: (identifier, title)

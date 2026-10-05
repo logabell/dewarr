@@ -6,6 +6,15 @@ folder the worker can read. Torrent and Usenet sources use their respective defa
 client; Soulseek uses slskd. A sole enabled client of a type is the automatic default.
 With multiple clients of the same type, choose the default in Settings → Download clients.
 
+To disable any client, choose **Edit downloader**, clear **Enabled**, and save.
+Dewarr retains its address, credentials, category, and folder mappings, but excludes
+it from new download choices and stops queued transfers from being submitted.
+Transfers already submitted continue to be monitored and imported using their existing
+approvals, including approved qBittorrent seeding renames. Disabling Soulseek also stops
+new Soulseek searches. Check **Enabled** and save to use the client again; Dewarr tests
+the saved connection. Changes to credentials, paths, or import approvals still require
+the usual verification before existing transfers can continue.
+
 Download clients do not supply search results. For qBittorrent, configure torrent
 sources in Prowlarr (or connect a supported native torrent source). Replacing
 SABnzbd with qBittorrent leaves Prowlarr's indexers unchanged, and NZB releases

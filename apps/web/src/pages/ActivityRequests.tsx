@@ -1,3 +1,5 @@
+import { ContextLink } from "../components/NavigationContinuity";
+import ContentSkeleton from "../components/ContentSkeleton";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,10 +20,10 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
-import { Loading, Notice } from "../components";
+import { Notice } from "../components";
 import InfiniteScroll from "../components/InfiniteScroll";
 import BookDialog from "../components/BookDialog";
 import { usePagedQuery } from "../hooks/usePagedQuery";
@@ -155,16 +157,18 @@ export default function ActivityRequests({
   canManage,
   status,
   sort,
+  q = "",
 }: {
   canManage: boolean;
   status: RequestFilter;
   sort: "newest" | "title";
+  q?: string;
 }) {
   const cache = useQueryClient();
   const navigate = useNavigate();
   const claimKeys = useRef(new Map<string, string>());
   const requests = usePagedQuery({
-    queryKey: ["requests", "board", status, sort],
+    queryKey: ["requests", "board", status, sort, q],
     queryFn: async (offset, signal) =>
       result(
         await api.GET("/api/requests", {
@@ -174,6 +178,7 @@ export default function ActivityRequests({
               offset,
               limit: 10,
               sort,
+              q: q || undefined,
               ...(status === "all" ? { active_only: true } : { status }),
             },
           },
@@ -184,7 +189,7 @@ export default function ActivityRequests({
         ? 3000
         : 15000,
     staleTime: 0,
-    gcTime: 0,
+    gcTime: 10 * 60_000,
     retry: false,
     initial: 0,
     next: (page, pages, requested) => nextRequestOffset(page, pages, requested),
@@ -292,7 +297,7 @@ export default function ActivityRequests({
           claim.error
         }
       />
-      {requests.isPending && <Loading />}
+      {requests.isPending && <ContentSkeleton />}
       {requests.error && (
         <button
           type="button"
@@ -405,7 +410,13 @@ function RequestCover({ title, url }: { title: string; url?: string | null }) {
           onError={() => setFailed(true)}
         />
       ) : (
-        <span>{title}</span>
+        <span>
+          {title
+            .split(/\s+/)
+            .slice(0, 2)
+            .map((word) => word[0])
+            .join("")}
+        </span>
       )}
     </div>
   );
@@ -495,7 +506,7 @@ function ActionButton({
   const Icon = action.icon;
   if (action.href)
     return (
-      <Link
+      <ContextLink
         className={compact ? "request-icon-action" : "control-action"}
         to={action.href}
         aria-label={action.label}
@@ -503,7 +514,7 @@ function ActionButton({
       >
         <Icon size={14} aria-hidden />
         {!compact && action.label}
-      </Link>
+      </ContextLink>
     );
   return (
     <button
@@ -575,7 +586,9 @@ function RequestCard({
       onTransfer,
       onClaim,
     );
-    const primary = actions.find((action) => !action.danger);
+    const primary = actions.find(
+      (action) => !action.danger && !action.label.startsWith("Recheck"),
+    );
     const secondary = actions.filter((action) => action !== primary);
     return { target, primary, secondary };
   });
@@ -609,7 +622,10 @@ function RequestCard({
               data-expanded={isExpanded || undefined}
             >
               <td>
-                <div className="request-book-cell">
+                <div
+                  className="request-book-cell"
+                  data-continuation={index > 0 || undefined}
+                >
                   <RequestCover
                     key={request.cover_url}
                     title={request.work_title}
@@ -618,9 +634,9 @@ function RequestCard({
                   <div className="request-row-identity">
                     <h2>
                       {request.can_open_book ? (
-                        <Link to={`/books/${request.work_id}`}>
+                        <ContextLink to={`/books/${request.work_id}`}>
                           {request.work_title}
-                        </Link>
+                        </ContextLink>
                       ) : (
                         request.work_title
                       )}
@@ -665,6 +681,11 @@ function RequestCard({
                     <CircleAlert size={14} aria-hidden />
                   ) : null}
                   {label}
+                  <ChevronRight
+                    size={14}
+                    className="request-details-chevron"
+                    aria-hidden
+                  />
                 </button>
                 {[
                   "Needs review",
@@ -690,7 +711,11 @@ function RequestCard({
               </td>
               <td>
                 <div className="request-transfer-progress">
-                  {progress !== null ? (
+                  {target.state === "satisfied" ? (
+                    <span className="muted">Verified in library</span>
+                  ) : progress === 1 ? (
+                    <span className="muted">Download complete</span>
+                  ) : progress !== null ? (
                     <>
                       <span className="request-percent">
                         {Math.round(progress * 100)}%
@@ -736,7 +761,7 @@ function RequestCard({
                     </button>
                   )}
                   {primary && <ActionButton action={primary} busy={busy} />}
-                  {target.state !== "satisfied" &&
+                  {index === 0 &&
                     requestActions.map((action) => (
                       <ActionButton
                         key={action.key}
@@ -755,21 +780,6 @@ function RequestCard({
                         compact
                       />
                     ))}
-                  <button
-                    type="button"
-                    className="request-icon-action"
-                    aria-label={`Details for ${request.work_title} ${mediumLabel(target.slot).toLowerCase()}`}
-                    title="Request details"
-                    aria-expanded={isExpanded}
-                    aria-controls={detailsId}
-                    onClick={() => setExpanded(isExpanded ? null : target.slot)}
-                  >
-                    <ChevronRight
-                      size={16}
-                      className="request-details-chevron"
-                      aria-hidden
-                    />
-                  </button>
                 </div>
               </td>
             </tr>

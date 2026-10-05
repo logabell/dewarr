@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
@@ -31,8 +31,18 @@ export function useAssetMatch(
         }),
       ),
     onSuccess: async (_, { id }) => {
-      await cache.invalidateQueries();
       done(id);
+      await Promise.all(
+        [
+          "library-books",
+          "library-review",
+          "work",
+          "works",
+          "requests",
+          "assets",
+          "identity-history",
+        ].map((key) => cache.invalidateQueries({ queryKey: [key] })),
+      );
     },
   });
 }
@@ -42,11 +52,13 @@ export default function AssetMatchForm({
   close,
   onMatched = close,
   heading = true,
+  continueReview = false,
 }: {
   asset: Asset;
   close: () => void;
   onMatched?: (workId: string | null) => void;
   heading?: boolean;
+  continueReview?: boolean;
 }) {
   const [search, setSearch] = useState(searchTitle(asset.title));
   const [workId, setWorkId] = useState(asset.work_ids[0] || "");
@@ -55,15 +67,22 @@ export default function AssetMatchForm({
       ? [asset.part_index, asset.part_total]
       : titlePart(asset.title),
   );
+  const [query, setQuery] = useState(search);
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const works = useQuery({
-    queryKey: ["match-search", search],
-    queryFn: async () =>
+    queryKey: ["match-search", query],
+    queryFn: async ({ signal }) =>
       result(
         await api.GET("/api/catalog/works", {
-          params: { query: { q: search, limit: 100 } },
+          params: { query: { q: query, limit: 30 } },
+          signal,
         }),
       ),
-    enabled: search.trim().length > 1,
+    enabled: query.length > 1,
+    staleTime: 30_000,
   });
   const match = useAssetMatch(asset, onMatched);
   return (
@@ -90,27 +109,45 @@ export default function AssetMatchForm({
         Search catalog
         <input
           value={search}
+          maxLength={300}
           onChange={(event) => {
             setSearch(event.target.value);
             setWorkId("");
           }}
         />
       </label>
-      <label>
-        Book
-        <select
-          value={workId}
-          onChange={(event) => setWorkId(event.target.value)}
-          required
-        >
-          <option value="">Choose the correct book</option>
-          {works.data?.items.map((work) => (
-            <option key={work.id} value={work.id}>
-              {work.title} — {work.authors.join(", ") || "Unknown author"}
-            </option>
-          ))}
-        </select>
-      </label>
+      <fieldset
+        className="match-candidates"
+        disabled={match.isPending || query !== search.trim()}
+      >
+        <legend>Choose the correct book</legend>
+        {works.isFetching && <p role="status">Searching catalog…</p>}
+        {works.data?.items.map((work) => (
+          <label key={work.id} className="match-candidate">
+            <input
+              type="radio"
+              name="matched-book"
+              value={work.id}
+              checked={workId === work.id}
+              onChange={() => setWorkId(work.id)}
+              required
+            />
+            <span>
+              <strong>{work.title}</strong>
+              <small>{work.authors.join(", ") || "Unknown author"}</small>
+            </span>
+          </label>
+        ))}
+        {!!works.data && works.data.total > works.data.items.length && (
+          <p className="muted">
+            Showing {works.data.items.length} of {works.data.total} matches.
+            Refine the title or author to narrow the choices.
+          </p>
+        )}
+        {works.isSuccess && !works.data.items.length && (
+          <p>No catalog matches. Try another title or search Hardcover.</p>
+        )}
+      </fieldset>
       <label className="check-label">
         <input
           type="checkbox"
@@ -154,8 +191,11 @@ export default function AssetMatchForm({
         </fieldset>
       )}
       <div className="button-row">
-        <button className="primary" disabled={!workId || match.isPending}>
-          Confirm match
+        <button
+          className="primary"
+          disabled={!workId || match.isPending || query !== search.trim()}
+        >
+          {continueReview ? "Save and review next" : "Confirm match"}
         </button>
         <button
           type="button"

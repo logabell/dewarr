@@ -49,12 +49,11 @@ async def proposal(db, work, settings):
         if getattr(work, field) in (None, "") and not fields.get(field, {}).get("locked")
     ]
     if (
-        not settings.automatic_enrichment
+        not (settings.automatic_enrichment or settings.recording_enrichment)
         or settings.primary != "hardcover"
         or work.redirect_to
         or work.metadata_fields.get("identity_rejected")
         or not work_key(work.title, work.authors)
-        or not missing
     ):
         return None
     sources = (
@@ -63,12 +62,30 @@ async def proposal(db, work, settings):
         )
     ).all()
     # A rejected secondary match is a durable decision, not a prompt to try another alias.
-    if any(source.provider == "openlibrary" for source in sources):
-        return None
     primary = [source for source in sources if source.provider == "hardcover" and source.accepted]
     if len(primary) != 1:
         return None
     source = primary[0]
+    provider, recording_id = "openlibrary", None
+    identifiers = set()
+    if settings.recording_enrichment and not any(s.provider == "audible" for s in sources):
+        # Only explicit primary-catalog ASINs can trigger automatic recording lookup.
+        from app.adapters.audible import asin
+
+        for edition in source.snapshot.get("editions", []):
+            if edition.get("medium") == "audio" and edition.get("identifiers", {}).get("asin"):
+                try:
+                    identifiers.add(asin(edition["identifiers"]["asin"]))
+                except AdapterError:
+                    continue
+    if len(identifiers) == 1:
+        provider, recording_id = "audible", next(iter(identifiers))
+    elif (
+        not settings.automatic_enrichment
+        or not missing
+        or any(s.provider == "openlibrary" for s in sources)
+    ):
+        return None
     return {
         "work_id": str(work.id),
         "source_id": str(source.id),
@@ -76,6 +93,9 @@ async def proposal(db, work, settings):
         "identity": work_key(work.title, work.authors),
         "settings": settings.model_dump(mode="json"),
         "missing": missing,
+        "provider": provider,
+        "recording_id": recording_id,
+        "audible_region": get_settings().audible_region if provider == "audible" else None,
     }
 
 
@@ -110,7 +130,7 @@ async def schedule_enrichment(db, user, work, *, retry=False):
         kind="metadata.enrich",
         idempotency_key=key + (":" + uuid4().hex if retry else ""),
         payload={**plan, "plan_key": key},
-        message="Waiting to check Open Library for missing book details",
+        message="Waiting to check missing metadata",
     )
     db.add(operation)
     await db.flush()
@@ -118,6 +138,14 @@ async def schedule_enrichment(db, user, work, *, retry=False):
     await db.flush()
     await db.refresh(operation)
     return operation
+
+
+async def schedule_recording(db, user, work):
+    """Library matching queues only the new recording-specific enrichment behavior."""
+    plan = await proposal(db, work, await preferences(db))
+    if plan and plan["provider"] == "audible":
+        return await schedule_enrichment(db, user, work)
+    return None
 
 
 async def lookup(title, authors, language):
@@ -178,8 +206,18 @@ async def valid_target(db, operation):
         return None
     # Manual description/cover edits may reduce missing fields without invalidating the
     # identity decision. The resolver preserves those locks when the lookup completes.
-    for field in ("source_id", "source_revision", "identity", "settings"):
-        if current[field] != operation.payload[field]:
+    for field in (
+        "source_id",
+        "source_revision",
+        "identity",
+        "settings",
+        "provider",
+        "recording_id",
+        "audible_region",
+    ):
+        if current.get(field) != operation.payload.get(
+            field, "openlibrary" if field == "provider" else None
+        ):
             return None
     return work
 
@@ -208,12 +246,24 @@ async def enrich(operation_id):
             )
             return
         operation.payload = {**operation.payload, "run_token": token, "attempts": attempts}
-        operation.status, operation.message = "running", "Checking Open Library for missing details"
+        operation.status, operation.message = "running", "Checking missing metadata"
         title, authors, language = work.title, work.authors, work.language
+        provider = operation.payload.get("provider", "openlibrary")
+        recording_id = operation.payload.get("recording_id")
 
     error = None
     try:
-        book, status, message = await lookup(title, authors, language)
+        if provider == "audible":
+            from app.adapters.audible import recording
+
+            async with asyncio.timeout(60):
+                book = await recording(recording_id)
+            if not compatible(MatchEvidence(title=title, authors=authors), book, identified=True):
+                book, status, message = None, "needs-review", "Recording identity needs review"
+            else:
+                status, message = "completed", "Missing recording details checked against Audible"
+        else:
+            book, status, message = await lookup(title, authors, language)
     except Exception as failure:
         error, book = failure, None
         retryable = not isinstance(failure, AdapterError) or failure.kind in {
@@ -258,6 +308,9 @@ async def enrich(operation_id):
                     )
                 )
         operation.status, operation.message = status, message
+        if book and status == "completed":
+            user = await db.get(User, operation.owner_id)
+            await schedule_enrichment(db, user, work)
     if error and status == "retrying":
         # Do not include provider payloads or arbitrary exception text in worker logs.
         raise CatalogRetry(getattr(error, "retry_after", None)) from None

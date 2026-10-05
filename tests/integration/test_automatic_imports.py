@@ -126,9 +126,38 @@ async def test_policy_requires_current_certified_route(
         assert not await db.scalar(select(AutomaticImportPolicy.id))
 
 
+@pytest.mark.parametrize("disabled_client", [False, True])
 async def test_duplicate_workers_create_one_inspection_and_never_submit_again(
-    database, automatic_job, downloader
+    client, database, automatic_job, downloader, disabled_client
 ):
+    if disabled_client:
+        from app.db.models import AcquisitionSelection
+
+        async with database() as db, db.begin():
+            job = await db.get(AutomaticImport, automatic_job)
+            attempt = await db.get(DownloadAttempt, job.attempt_id)
+            selection = await db.get(AcquisitionSelection, attempt.selection_id)
+            destination = await db.get(ImportDestination, selection.destination_id)
+            destination.probe = {
+                **destination.probe,
+                "setup_downloader": {
+                    "id": str(selection.downloader_id),
+                    "generation": selection.frozen["downloader"]["generation"],
+                    "mapping": selection.frozen["mapping"],
+                },
+            }
+        connection = (await client.get("/api/downloaders")).json()[0]
+        response = await client.put(
+            f"/api/downloaders/{connection['id']}",
+            json={
+                "name": connection["name"],
+                "base_url": connection["base_url"],
+                "category": connection["category"],
+                "enabled": False,
+                "expected_generation": connection["generation"],
+            },
+        )
+        assert response.status_code == 200, response.text
     await asyncio.gather(*(automatic.run(automatic_job) for _ in range(3)))
     async with database() as db:
         row = await db.get(AutomaticImport, automatic_job)
@@ -279,8 +308,9 @@ async def test_recheck_resumes_a_held_import_and_request_counts_follow_review(
     assert downloader.calls.count("submit") == 1
 
 
+@pytest.mark.parametrize("with_handoff", [True, False])
 async def test_linked_review_retries_automatic_matching_without_new_inspection(
-    client, database, automatic_job, downloader
+    client, database, automatic_job, downloader, with_handoff
 ):
     await automatic.run(automatic_job)
     async with database() as db, db.begin():
@@ -289,6 +319,17 @@ async def test_linked_review_retries_automatic_matching_without_new_inspection(
         inspection = await db.get(DownloadInspection, inspection_id)
         inspection.state = "ready"
         row.state, row.message = "held", "No matching edition"
+        if not with_handoff:
+            handoff = await db.scalar(select(DownloadHandoff))
+            await db.delete(handoff)
+    # The request must lead to the existing file decision, not strand the
+    # administrator on a Recheck loop when automatic matching needs review.
+    response = await client.get("/api/requests?status=review")
+    assert response.status_code == 200, response.text
+    target = response.json()["items"][0]["targets"][0]
+    assert target["needs_review"]
+    assert target["inspection_id"] == str(inspection_id)
+    assert not target["can_claim"]
     endpoint = f"/api/organization/inspections/{inspection_id}"
     view = (await client.get(endpoint)).json()
     assert view["download"]["can_retry"]

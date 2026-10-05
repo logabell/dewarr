@@ -14,6 +14,7 @@ from app.db.models import CatalogAccount, Operation, RestoreCheckpoint, User
 from app.db.session import session_factory
 from app.domain.cache_entries import TRANSIENT
 from app.domain.catalog_cache_policy import BROWSE_OPERATIONS
+from app.domain.catalog_network import catalog_endpoint
 from app.domain.operations import transaction_lock
 from app.jobs.queue import enqueue
 from app.jobs.retry import CatalogRetry
@@ -22,9 +23,7 @@ from app.jobs.retry import CatalogRetry
 async def schedule(user_id, provider, generation, operation, args):
     if get_settings().recovery_mode or operation not in BROWSE_OPERATIONS:
         return False
-    endpoint = (
-        get_settings().hardcover_url if provider == "hardcover" else get_settings().openlibrary_url
-    )
+    endpoint = catalog_endpoint(provider)
     payload = to_jsonable_python(
         dict(
             provider=provider,
@@ -82,17 +81,16 @@ async def run(operation_id):
         user = await db.get(User, owner_id)
         account = await db.get(CatalogAccount, owner_id)
         provider = payload["provider"]
-        endpoint = (
-            get_settings().hardcover_url
-            if provider == "hardcover"
-            else get_settings().openlibrary_url
-        )
+        try:
+            endpoint = catalog_endpoint(provider)
+        except AdapterError:
+            endpoint = None
         if (
             get_settings().recovery_mode
             or not user
             or not user.active
             or payload["operation"] not in BROWSE_OPERATIONS
-            or provider not in {"hardcover", "openlibrary"}
+            or provider not in {"hardcover", "openlibrary", "audible", "custom"}
             or endpoint != payload["endpoint"]
             or (
                 provider == "hardcover"

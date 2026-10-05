@@ -2,8 +2,9 @@ from copy import deepcopy
 
 import pytest
 
+from app.adapters.mam import SourceSeries
 from app.domain import pack_coverage
-from app.domain.automatic_eligibility import eligibility
+from app.domain.automatic_eligibility import collection_candidate, eligibility
 from app.domain.release_profiles import ReleasePreferences
 from tests.unit.test_automatic_eligibility import RULE, WORK, descriptor, release
 
@@ -26,6 +27,71 @@ CATALOG = {
 def pack(**changes):
     return release().model_copy(
         update={"title": "Coast", "raw_title": "Coast Books 1-2", **changes}
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["Angels and Demons", "Angels & Demons", "Angels ＆ Demons (Unabridged)"],
+)
+def test_single_series_book_title_variants_do_not_require_collection_proof(title):
+    work = {"title": "Angels & Demons", "authors": ["Dan Brown"]}
+    catalog = {
+        "target_id": "angels",
+        "series": [{"name": "Robert Langdon", "members": []}],
+    }
+    value = release().model_copy(
+        update={
+            "title": title,
+            "raw_title": title,
+            "authors": work["authors"],
+            "series": [SourceSeries(source_id="langdon", name="Robert Langdon", position="1")],
+        }
+    )
+    assert not collection_candidate(value, work, catalog)
+    assert not eligibility(
+        value,
+        work,
+        RULE,
+        ReleasePreferences(prefer_series_packs=False),
+        descriptor=descriptor(["Angels and Demons.m4b"]),
+        catalog=catalog,
+        unattended=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"raw_title": "Angels and Demons collection"},
+        {"tags": ["Books 1-2"]},
+        {"series": [SourceSeries(source_id="langdon", name="Robert Langdon", position="1-2")]},
+        {"details": {"collection_contents": {"items": [{"title": "A"}, {"title": "B"}]}}},
+        {"title": "Angels and Demons: Volume 2"},
+        {"title": "Robert Langdon"},
+        {"title": "Angels and Demons and The Da Vinci Code"},
+    ],
+)
+def test_title_equivalence_does_not_hide_collection_or_conflicting_title_evidence(changes):
+    work = {"title": "Angels & Demons", "authors": ["Dan Brown"]}
+    catalog = {"series": [{"name": "Robert Langdon", "members": []}]}
+    value = release().model_copy(
+        update={
+            "title": "Angels and Demons",
+            "raw_title": "Angels and Demons",
+            "authors": work["authors"],
+            "series": [SourceSeries(source_id="langdon", name="Robert Langdon", position="1")],
+            **changes,
+        }
+    )
+    assert collection_candidate(value, work, catalog)
+    assert eligibility(
+        value,
+        work,
+        RULE,
+        ReleasePreferences(),
+        descriptor=descriptor(["Angels and Demons.m4b"]),
+        catalog=catalog,
     )
 
 
@@ -86,7 +152,7 @@ def test_unknown_alternative_partial_omnibus_or_ambiguous_children_need_review(p
         (["Harbor/01.mp3", "Harbor/02.mp3", "Roads/01.mp3"], True),
         (["Harbor.m4b", "Roads.m4b"], True),
         (["Harbor/01.mp3", "Harbor/01.m4b", "Roads/01.mp3"], False),
-        (["Harbor/01.mp3", "Harbor/Chapter 01.mp3", "Roads/01.mp3"], True),
+        (["Harbor/01.mp3", "Harbor/Chapter 01.mp3", "Roads/01.mp3"], False),
         (["Harbor/Extra.mp3", "Harbor/01.mp3", "Roads/01.mp3"], False),
         (["Harbor/disc1/01.mp3", "Harbor/disc2/01.mp3", "Roads/01.mp3"], False),
     ],
@@ -95,6 +161,34 @@ def test_audio_groups_have_separate_book_boundaries(paths, allowed):
     # Actual track-number completeness is checked from downloaded tags before import.
     proof = pack_coverage.manifest(pack(), WORK, CATALOG, descriptor(paths), "audio")
     assert bool(proof) is allowed
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_collection_connector_variants_keep_ambiguous_catalog_members_behind_review(ambiguous):
+    scope = deepcopy(CATALOG)
+    scope["series"][0]["name"] = "Coast & Country"
+    scope["series"][0]["members"][0]["title"] = "Harbor & Roads"
+    value = pack(title="Coast and Country", raw_title="Coast and Country Books 1-2")
+    if ambiguous:
+        scope["series"][0]["members"].append(
+            {"id": "duplicate", "title": "Harbor and Roads", "authors": ["Writer"]}
+        )
+    proof = pack_coverage.manifest(
+        value,
+        {**WORK, "title": "Harbor & Roads"},
+        scope,
+        descriptor(
+            [
+                "Harbor and Roads/Harbor and Roads 01.mp3",
+                "Harbor and Roads/Harbor & Roads 02.mp3",
+                "Roads/01.mp3",
+            ]
+        ),
+        "audio",
+    )
+    assert bool(proof) is not ambiguous
+    if proof:
+        assert {member["work"]["id"] for member in proof["members"]} == {"harbor", "roads"}
 
 
 def test_wrong_author_ambiguous_series_and_per_child_constraints_cannot_be_inferred():

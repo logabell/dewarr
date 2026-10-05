@@ -1,5 +1,4 @@
 from sqlalchemy import exists, or_, select
-from sqlalchemy.orm import aliased
 
 from app.db.models import (
     AssetContains,
@@ -65,22 +64,22 @@ def visible_work(user: User):
         return True
     from app.domain.work_graph import canonical_map
 
-    mapping = canonical_map()
-    origin = aliased(Work)
-    # Membership subqueries are evaluated as sets. Correlated EXISTS inside an
-    # OR forced repeated scans of the canonical map for every private work.
-    owned_roots = (
-        select(mapping.c.work_id)
-        .join(origin, mapping.c.origin_id == origin.id)
-        .where(visible_owned_catalog(user, origin))
+    # Resolve only origins carrying access evidence. Mapping every catalog work
+    # makes every member-facing query pay for other users' private catalogs.
+    owned_origins = select(Work.id).where(Work.catalog_owner_id == user.id).correlate(None)
+    shared_origins = (
+        select(ListEntry.work_id)
+        .join(BookList, BookList.id == ListEntry.list_id)
+        .join(Work, Work.id == ListEntry.work_id)
+        .where(BookList.shared.is_(True), BookList.owner_id == Work.catalog_owner_id)
+        .correlate(None)
     )
-    library_roots = (
-        select(mapping.c.work_id)
-        .select_from(AssetContains)
-        .join(mapping, mapping.c.origin_id == AssetContains.work_id)
+    library_origins = (
+        select(AssetContains.work_id)
         .join(LibraryAsset, AssetContains.asset_id == LibraryAsset.id)
         .join(Library, LibraryAsset.library_id == Library.id)
         .join(Integration, Library.integration_id == Integration.id)
         .where(Library.accessible.is_(True), Integration.enabled.is_(True), visible_library(user))
     )
-    return or_(Work.catalog_public.is_(True), Work.id.in_(owned_roots), Work.id.in_(library_roots))
+    mapping = canonical_map(owned_origins.union_all(shared_origins, library_origins))
+    return or_(Work.catalog_public.is_(True), Work.id.in_(select(mapping.c.work_id)))

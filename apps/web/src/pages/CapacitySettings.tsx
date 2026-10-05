@@ -2,30 +2,38 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
-import { Notice } from "../components";
+import { Loading, Notice } from "../components";
+import SettingsGroup from "../components/SettingsGroup";
 
 type View = components["schemas"]["CapacityView"];
 
 export default function CapacitySettings() {
-  const [open, setOpen] = useState(false);
+  return (
+    <SettingsGroup
+      id="storage-reserve"
+      title="Storage reserve"
+      description="Keep free space available for downloads and library imports."
+    >
+      <StorageReserve />
+    </SettingsGroup>
+  );
+}
+
+function StorageReserve() {
   const [saved, setSaved] = useState(false);
   const cache = useQueryClient();
   const settings = useQuery({
     queryKey: ["capacity-settings"],
     queryFn: async () => result(await api.GET("/api/acquisition/capacity")),
-    enabled: open,
   });
   return (
-    <details
-      className="panel editor"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>Storage reserve</summary>
+    <div className="policy-settings">
       <p>
         Downloads have no daily or concurrent transfer cap. Storage is checked
         before downloading and importing.
       </p>
       <Notice error={settings.error} />
+      {settings.isPending && <Loading />}
       {saved && <p role="status">Storage reserve saved.</p>}
       {settings.data && (
         <>
@@ -44,7 +52,7 @@ export default function CapacitySettings() {
           />
         </>
       )}
-    </details>
+    </div>
   );
 }
 

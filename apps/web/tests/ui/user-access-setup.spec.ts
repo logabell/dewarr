@@ -240,3 +240,284 @@ test("add and edit a person with their role and libraries in one save", async ({
   });
   expect(errors).toEqual([]);
 });
+
+test("account removal and provider unlink require reviewed username confirmation", async ({
+  page,
+}) => {
+  const admin = {
+    id: "admin",
+    username: "admin",
+    display_name: "Admin",
+    role: "admin",
+    active: true,
+    permissions: presets[0].permissions,
+    access_label: "Administrator",
+    library_ids: [],
+    onboarding_status: "complete",
+  };
+  const reader = {
+    ...admin,
+    id: "reader",
+    username: "reader",
+    display_name: "Reader",
+    role: "member",
+    permissions: presets[1].permissions,
+    access_label: "Member",
+  };
+  let users = [admin, reader];
+  let methods = {
+    local_password: true,
+    oidc: true,
+    plex: false,
+    revision: "first",
+  };
+  const writes: string[] = [];
+  let methodReads = 0;
+  let stale = true;
+  let releaseDelete!: () => void;
+  const deletion = new Promise<void>((resolve) => {
+    releaseDelete = resolve;
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    let data: unknown = [];
+    if (path === "/api/auth/me") data = { user: admin, csrf_token: "test" };
+    else if (path === "/api/setup/onboarding") data = { status: "completed" };
+    else if (path === "/api/auth/access") data = catalog;
+    else if (path === "/api/auth/users") data = users;
+    else if (path === "/api/auth/users/reader/sign-in") {
+      methodReads++;
+      data = methods;
+    } else if (request.method() === "DELETE") {
+      writes.push(path);
+      const body = request.postDataJSON();
+      expect(body.confirm_username).toBe(stale ? "reader" : "reader-renamed");
+      expect(body.expected_revision).toBe(stale ? "first" : methods.revision);
+      if (path.endsWith("/providers/oidc")) {
+        if (stale) {
+          stale = false;
+          users = [admin, { ...reader, username: "reader-renamed" }];
+          methods = { ...methods, revision: "renamed" };
+          return route.fulfill({
+            status: 409,
+            json: { detail: "This account changed; reload it" },
+          });
+        }
+        methods = { ...methods, oidc: false, revision: "unlinked" };
+        data = methods;
+      } else {
+        expect(path).toBe("/api/auth/users/reader");
+        await deletion;
+        users = [admin];
+        return route.fulfill({ status: 204 });
+      }
+    }
+    return route.fulfill({ json: data });
+  });
+  await page.goto("/settings#accounts");
+  await page
+    .getByRole("button", { name: "Account details for Reader", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Account details for Reader",
+    exact: true,
+  });
+  await dialog
+    .getByLabel("Display name", { exact: true })
+    .fill("Reader updated");
+  await expect(
+    dialog.getByText(
+      "Save account changes before unlinking a provider or deleting the account.",
+    ),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Unlink OIDC", exact: true }),
+  ).toBeDisabled();
+  await dialog.getByLabel("Display name", { exact: true }).fill("Reader");
+  await dialog
+    .getByRole("button", { name: "Unlink OIDC", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Unlink provider", exact: true }),
+  ).toBeDisabled();
+  await dialog.getByLabel("Type reader to confirm").fill("wrong");
+  await expect(
+    dialog.getByRole("button", { name: "Unlink provider", exact: true }),
+  ).toBeDisabled();
+  expect(writes).toEqual([]);
+  await dialog.getByLabel("Type reader to confirm").fill("reader");
+  // A background refresh must not silently replace the reviewed identity.
+  methods = { ...methods, revision: "background-change" };
+  const readsBeforeRefresh = methodReads;
+  await page.clock.install();
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect.poll(() => methodReads).toBeGreaterThan(readsBeforeRefresh);
+  await dialog
+    .getByRole("button", { name: "Unlink provider", exact: true })
+    .click();
+  await expect(
+    dialog.getByText("This account changed; reload it"),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Reload sign-in details" }).click();
+  await dialog
+    .getByRole("button", { name: "Unlink OIDC", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Type reader-renamed to confirm")).toHaveValue(
+    "",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Unlink provider", exact: true }),
+  ).toBeDisabled();
+  await dialog
+    .getByLabel("Type reader-renamed to confirm")
+    .fill("reader-renamed");
+  await dialog
+    .getByRole("button", { name: "Unlink provider", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Unlink OIDC", exact: true }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Delete unused account" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Delete account permanently" }),
+  ).toBeDisabled();
+  await dialog
+    .getByLabel("Type reader-renamed to confirm")
+    .fill("reader-renamed");
+  await dialog
+    .getByRole("button", { name: "Delete account permanently" })
+    .click();
+  await expect(dialog.getByLabel("Username", { exact: true })).toBeDisabled();
+  await expect(
+    dialog.getByLabel("Display name", { exact: true }),
+  ).toBeDisabled();
+  await expect(dialog.getByLabel("Account enabled")).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  releaseDelete();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /Reader/ })).toHaveCount(0);
+  expect(writes).toEqual([
+    "/api/auth/users/reader/providers/oidc",
+    "/api/auth/users/reader/providers/oidc",
+    "/api/auth/users/reader",
+  ]);
+});
+
+test("provider registration roles appear only when relevant and retain their drafts", async ({
+  page,
+}) => {
+  const values: Record<string, Record<string, unknown>> = {
+    oidc: {
+      enabled: false,
+      label: "Identity provider",
+      issuer: "",
+      client_id: "",
+      secret_set: false,
+      redirect_uri: "https://dewarr.test/auth/callback",
+      match_existing: "off",
+      auto_register: false,
+      default_role: "member",
+      signing_algorithm: "RS256",
+      authorization_endpoint: "",
+      token_endpoint: "",
+      userinfo_endpoint: "",
+      jwks_uri: "",
+      group_claim: "",
+      group_scope: "",
+      admin_group: "",
+      member_group: "",
+      viewer_group: "",
+    },
+    plex: {
+      enabled: false,
+      machine_id: "server-1",
+      server_name: "Books",
+      auto_register: false,
+      default_role: "member",
+    },
+  };
+  const saved: string[] = [];
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    let data: unknown = [];
+    if (path === "/api/auth/me")
+      data = {
+        user: {
+          id: "admin",
+          username: "admin",
+          role: "admin",
+          display_name: "Admin",
+          permissions: ["admin"],
+          onboarding_status: "complete",
+        },
+        csrf_token: "test",
+      };
+    else if (path === "/api/auth/access") data = catalog;
+    else if (path === "/api/auth/plex/pending") data = { servers: [] };
+    else if (path.endsWith("/settings")) {
+      const provider = path.includes("/oidc/") ? "oidc" : "plex";
+      if (request.method() === "PUT") {
+        const body = request.postDataJSON();
+        expect(body.auto_register).toBe(false);
+        expect(body.default_role).toBe("viewer");
+        if (provider === "oidc") expect(body.group_claim).toBe("groups");
+        values[provider] = { ...values[provider], ...body };
+        saved.push(provider);
+      }
+      data = values[provider];
+    }
+    await route.fulfill({ json: data });
+  });
+  await page.goto("/settings#accounts");
+  for (const [title, button] of [
+    ["Identity provider", "Save identity provider"],
+    ["Plex", "Save Plex sign-in"],
+  ]) {
+    const panel = page
+      .locator("details.access-provider")
+      .filter({ has: page.locator("summary > h2", { hasText: title }) });
+    await panel.locator(":scope > summary > h2").click();
+    const registration = panel.getByLabel("Create accounts on first sign-in");
+    const access = panel.getByLabel("New account access");
+    await expect(access).toHaveCount(0);
+    await registration.check();
+    await access.selectOption("viewer");
+    await registration.uncheck();
+    await expect(access).toHaveCount(0);
+    await registration.check();
+    await expect(access).toHaveValue("viewer");
+    await registration.uncheck();
+    if (title === "Identity provider") {
+      await panel.getByText("Groups", { exact: true }).click();
+      await panel.getByLabel("Group claim", { exact: true }).fill("groups");
+      await expect(
+        panel.getByRole("combobox", { name: "Default access", exact: true }),
+      ).toHaveValue("viewer");
+      await expect(
+        panel.getByText(
+          "Used when no configured group matches. Applies to existing accounts without a local password.",
+        ),
+      ).toBeVisible();
+      await panel.getByLabel("Group claim", { exact: true }).fill("");
+      await expect(
+        panel.getByRole("combobox", { name: "Default access", exact: true }),
+      ).toHaveCount(0);
+      await panel.getByLabel("Group claim", { exact: true }).fill("groups");
+      await expect(
+        panel.getByRole("combobox", { name: "Default access", exact: true }),
+      ).toHaveValue("viewer");
+    }
+    await panel.getByRole("button", { name: button, exact: true }).click();
+  }
+  await expect.poll(() => saved).toEqual(["oidc", "plex"]);
+});

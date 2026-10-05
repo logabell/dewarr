@@ -305,8 +305,11 @@ async def validate_inspection(
 
 async def queue_view(db, admin, attempt, selection):
     handoff = await assignment(db, attempt.id)
-    inspection = await db.get(DownloadInspection, handoff.inspection_id) if handoff else None
-    retry = bool(inspection and inspection.state == "failed" and handoff.reviewer_id == admin.id)
+    inspection_id = handoff.inspection_id if handoff else attempt.inspection_id
+    inspection = await db.get(DownloadInspection, inspection_id) if inspection_id else None
+    retry = bool(
+        handoff and inspection and inspection.state == "failed" and handoff.reviewer_id == admin.id
+    )
     revision = fingerprint(
         {
             "attempt_id": str(attempt.id),
@@ -342,9 +345,7 @@ async def queue_view(db, admin, attempt, selection):
         "medium": selection.frozen["requirements"]["medium"],
         "message": message,
         "revision": revision,
-        "inspection_id": handoff.inspection_id
-        if handoff and handoff.reviewer_id == admin.id
-        else None,
+        "inspection_id": inspection.id if inspection and inspection.owner_id == admin.id else None,
         "can_claim": allowed and (not handoff or handoff.reviewer_id != admin.id or retry),
         "reassignment": bool(handoff),
         "retry": retry,

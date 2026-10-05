@@ -53,8 +53,8 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     narrators: ["Ray Porter"],
     medium: "audio",
     formats: ["m4b"],
-    size_bytes: 924634316,
-    seeders: 7534,
+    size_bytes: 924634316 as number | null,
+    seeders: 7534 as number | null,
     snatches: 25000,
     leechers: 2,
     freeleech: true,
@@ -139,6 +139,29 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   let held = false;
   let refreshes = 0;
   let savedDownload: Record<string, unknown> | null = null;
+  const inspections: string[] = [];
+  const inspectionWedges: Array<string | null> = [];
+  let inspectFails = false;
+  let role = "admin";
+  const artifact = {
+    id: "artifact-1",
+    release,
+    current_connection: true,
+    created_at: new Date().toISOString(),
+    descriptor: {
+      name: "Project Hail Mary",
+      files: [
+        { index: 0, path: "Project Hail Mary/book.m4b", size_bytes: 12000 },
+        { index: 1, path: "Project Hail Mary/book.mp3", size_bytes: 12000 },
+      ],
+      content_bytes: 24000,
+      torrent_bytes: 300,
+      padding_bytes: 0,
+      private: true,
+      infohash_v1: "a".repeat(40),
+      artifact_sha256: "b".repeat(64),
+    },
+  };
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let data: unknown = {};
@@ -146,7 +169,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
       data = {
         user: {
           id: "reader",
-          role: "admin",
+          role,
           username: "reader",
           display_name: "Reader",
         },
@@ -166,7 +189,14 @@ test("Quick add follows defaults and format overrides; sources provide compact r
       data = receipt;
     } else if (path.includes("/quick-add/latest/")) data = receipt;
     else if (path === "/api/requests/request-1")
-      data = { id: "request-1", release_policy: profile };
+      data = {
+        id: "request-1",
+        work_id: work.id,
+        work_title: work.title,
+        release_policy: profile,
+        specification: { mode: "audio" },
+        targets: [{ slot: "audio", state: "wanted" }],
+      };
     else if (path === "/api/catalog/works/work-1") data = work;
     else if (path === "/api/metadata/works/work-1")
       data = {
@@ -244,7 +274,24 @@ test("Quick add follows defaults and format overrides; sources provide compact r
             ]
           : [],
       };
-    } else if (path.endsWith("/artifact")) data = { id: "artifact-1" };
+    } else if (path.endsWith("/artifact")) {
+      inspections.push(path);
+      inspectionWedges.push(
+        new URL(route.request().url()).searchParams.get("use_wedge"),
+      );
+      if (inspectFails) {
+        inspectFails = false;
+        return route.fulfill({
+          status: 409,
+          json: { detail: "Source settings changed. Refresh results." },
+        });
+      }
+      data = artifact;
+    } else if (path === "/api/source-artifacts/artifact-1") data = artifact;
+    else if (path === "/api/acquisition/selections/options")
+      data = { downloaders: [], destinations: [] };
+    else if (path === "/api/acquisition/selections")
+      data = { items: [], total: 0 };
     else if (path.endsWith("/torrent"))
       return route.fulfill({
         contentType: "application/x-bittorrent",
@@ -266,7 +313,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   submitGate = new Promise<void>((resolve) => {
     finishSubmit = resolve;
   });
-  await page.getByRole("button", { name: "Quick add", exact: true }).click();
+  await page.getByRole("button", { name: /^Quick add ·/ }).click();
   const startingStatus = page.getByRole("region", {
     name: "Quick add progress",
   });
@@ -458,6 +505,11 @@ test("Quick add follows defaults and format overrides; sources provide compact r
     "/api/source-searches/search-refreshed-1/results/result-1/download",
   ]);
   expect(wedgeChoices).toEqual(["true"]);
+  await expect(page.getByLabel("Result source")).toHaveCount(0);
+  await expect(page.getByLabel("Reported format")).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "Unknown format", exact: true }),
+  ).toHaveCount(0);
   await page.getByLabel("Sort this view").click();
   await page
     .getByRole("listbox", { name: "Sort this view" })
@@ -481,7 +533,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   ).toHaveCount(0);
   await dialog.getByRole("tab", { name: "Media info", exact: true }).click();
   await expect(dialog).toContainText("16 hours");
-  await expect(dialog.locator("dl")).toContainText("MPEG-4");
+  await expect(dialog.locator(".release-tab-panel dl")).toContainText("MPEG-4");
   await dialog.screenshot({
     path: testInfo.outputPath("release-media-desktop.png"),
   });
@@ -542,7 +594,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   savedDownload = null;
   search.items[0].release.freeleech = true;
   await page.reload();
-  await details.click();
+  await table.locator(".release-title-button").first().click();
   await dialog
     .getByRole("button", { name: "Download Project Hail Mary" })
     .click();
@@ -601,6 +653,60 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await expect(table.locator(".source-download-status")).toHaveCount(0);
   await expect(sourceDownload.first()).toBeEnabled();
   const downloadCount = releaseDownloads.length;
+  search.items[0].release.freeleech = false;
+  savedDownload = {
+    state: "needs-review",
+    message: "Alternative audio encodings need recording review",
+    request_id: "another-request",
+    operation_id: "selected-1",
+    reasons: ["Alternative audio encodings need recording review"],
+    prevent_download: false,
+  };
+  await page.reload();
+  await table.locator(".release-title-button").first().click();
+  const reviewRelease = dialog.getByRole("button", {
+    name: "Review release Project Hail Mary",
+    exact: true,
+  });
+  inspectFails = true;
+  await dialog.getByLabel("Use a Freeleech wedge").check();
+  await reviewRelease.click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Source settings changed",
+  );
+  await reviewRelease.click();
+  await expect(page).toHaveURL(/sources\/artifacts\/artifact-1/);
+  const reviewedUrl = new URL(page.url());
+  expect(reviewedUrl.searchParams.get("request")).toBe("request-1");
+  expect(reviewedUrl.searchParams.get("work")).toBe(work.id);
+  expect(reviewedUrl.searchParams.get("search")).toBe("search-refreshed-1");
+  expect(reviewedUrl.searchParams.get("slot")).toBe("audio");
+  await expect(
+    page.getByRole("heading", { name: "Torrent manifest" }),
+  ).toBeVisible();
+  await expect(page.getByRole("list", { name: "Torrent files" })).toContainText(
+    "book.m4b",
+  );
+  await expect(page.getByLabel("Wanted book")).toHaveValue("request-1:audio");
+  await expect(
+    page.getByRole("button", { name: "Save release selection" }),
+  ).toBeDisabled();
+  expect(inspections).toHaveLength(2);
+  expect(inspectionWedges).toEqual(["true", "true"]);
+  expect(releaseDownloads).toHaveLength(downloadCount);
+  await page.getByRole("link", { name: "Return to book sources" }).click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  role = "member";
+  await page.reload();
+  await expect(
+    table.getByRole("button", {
+      name: "Review release Project Hail Mary",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  role = "admin";
   for (const [state, label] of [
     ["queued", "Download queued"],
     ["downloading", "Downloading"],
@@ -670,6 +776,9 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await expect(
     page.getByText("Search results expired", { exact: true }),
   ).toHaveCount(0);
+  await page
+    .getByRole("checkbox", { name: "Hide blocked or expired results" })
+    .uncheck();
   search.items[0].current_connection = false;
   await page.reload();
   await expect(table).toContainText("Source settings changed");
@@ -700,11 +809,80 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   await page.getByLabel("Filter title, author or narrator").fill("Narrator 54");
   await expect(table.locator("tbody tr")).toHaveCount(1);
   await expect(table).toContainText("Release 54");
+  await page.reload();
+  await expect(page.getByLabel("Filter title, author or narrator")).toHaveValue(
+    "Narrator 54",
+  );
+  await expect(table.locator("tbody tr")).toHaveCount(1);
   await page
     .getByRole("button", { name: "Reset result view", exact: true })
     .click();
   await page.getByLabel("Sort this view").selectOption("seeds");
   await expect(table.locator("tbody tr").first()).toContainText("Release 54");
+  search.items = search.items.slice(0, 2).map((item, index) => ({
+    ...item,
+    release: {
+      ...item.release,
+      source: index ? "audiobookbay" : "mam",
+      formats: index ? [] : ["m4b"],
+    },
+  }));
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await page.getByLabel("Result source").selectOption("audiobookbay");
+  await page.getByLabel("Reported format").selectOption("unknown");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  search.items = search.items.map((item) => ({
+    ...item,
+    release: {
+      ...item.release,
+      source: "mam",
+      formats: ["m4b"],
+      seeders: null,
+      size_bytes: null,
+    },
+  }));
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(page.getByLabel("Result source")).toHaveCount(0);
+  await expect(page.getByLabel("Reported format")).toHaveCount(0);
+  await expect(page.getByLabel("Sort this view")).toHaveValue("profile");
+  await expect(
+    page.getByRole("option", { name: "Most seeders", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: "Smallest download", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: "Largest download", exact: true }),
+  ).toHaveCount(0);
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  search.items = search.items.slice(0, 1);
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(page.getByLabel("Sort this view")).toHaveCount(0);
+  search.items = [];
+  search.sources = [];
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(
+    page.getByText("Connect a download source in Settings to find releases."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No releases found. Try a different search."),
+  ).toHaveCount(0);
   let imported = 0;
   receipt = null;
   await page.route("**/api/metadata/books/hardcover/9010", (route) =>
@@ -737,7 +915,7 @@ test("Quick add follows defaults and format overrides; sources provide compact r
   });
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "Quick add", exact: true }).click();
+  await page.getByRole("button", { name: /^Quick add ·/ }).click();
   await expect.poll(() => posted.length).toBe(6);
   expect(imported).toBe(1);
   expect(posted[5]).toEqual({ work_id: work.id, specification: {} });

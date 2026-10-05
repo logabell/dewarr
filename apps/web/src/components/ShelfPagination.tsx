@@ -99,26 +99,30 @@ export default function ShelfPagination({
       aria-label={`${label} navigation`}
     >
       {busy && <span role="status">Loading…</span>}
-      <button
-        type="button"
-        aria-label={`Scroll ${label} back`}
-        disabled={(!scroll.previous && page <= 1) || busy}
-        onClick={() => move(-1)}
-      >
-        <ChevronLeft size={18} />
-      </button>
-      <button
-        type="button"
-        aria-label={
-          infinite?.isFetchNextPageError
-            ? `Retry loading ${label}`
-            : `Scroll ${label} forward`
-        }
-        disabled={(!scroll.next && (!hasMore || page >= max)) || busy}
-        onClick={() => move(1)}
-      >
-        <ChevronRight size={18} />
-      </button>
+      {(scroll.previous || scroll.next || hasMore || page > 1) && (
+        <>
+          <button
+            type="button"
+            aria-label={`Scroll ${label} back`}
+            disabled={(!scroll.previous && page <= 1) || busy}
+            onClick={() => move(-1)}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            type="button"
+            aria-label={
+              infinite?.isFetchNextPageError
+                ? `Retry loading ${label}`
+                : `Scroll ${label} forward`
+            }
+            disabled={(!scroll.next && (!hasMore || page >= max)) || busy}
+            onClick={() => move(1)}
+          >
+            <ChevronRight size={18} />
+          </button>
+        </>
+      )}
     </nav>
   );
 }

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -92,6 +93,42 @@ class InspectionView(BaseModel):
 @router.get("/download-roots", response_model=list[str])
 async def download_roots(admin: Admin, db: Database):
     return sorted(await import_sources(db))
+
+
+class DownloadBrowseEntry(BaseModel):
+    name: str
+    path: str
+    kind: Literal["file", "directory"]
+    size: int | None = None
+
+
+class DownloadBrowseView(BaseModel):
+    path: str
+    parent: str | None
+    entries: list[DownloadBrowseEntry]
+    truncated: bool
+
+
+@router.get("/download-files", response_model=DownloadBrowseView)
+async def download_files(
+    admin: Admin,
+    db: Database,
+    source_key: str = Query(pattern=r"^[a-z0-9_-]{1,60}$"),
+    path: str = Query(default="", max_length=1024),
+):
+    from app.importing.browsing import browse_downloads
+
+    roots = await import_sources(db)
+    if source_key not in roots:
+        raise HTTPException(404, "Download root is no longer configured")
+    try:
+        return await asyncio.to_thread(browse_downloads, roots[source_key], path)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            422,
+            "Cannot browse this folder. Use an accessible folder inside "
+            "the selected download root; symbolic links are not followed.",
+        ) from error
 
 
 @router.post("/inspections", status_code=202, response_model=InspectionView)

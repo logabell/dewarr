@@ -36,6 +36,43 @@ async def test_only_explicit_media_labels_supply_format_metadata(title, formats)
 
 
 @pytest.mark.parametrize(
+    ("title", "language"),
+    [
+        ("Harry.Potter.7.Hoerspiel.Audiobook.German", None),
+        ("Stephen King - Holly German Hoerbuch", None),
+        ("Stephen.King.-.Holly.Hoerbuch.German.MP3", None),
+        ("Stephen King - Holly [German]", "de"),
+        ("Stephen King - Holly (Deutsch)", "de"),
+        ("Stephen.King.-.Holly.German", None),
+        ("Holly.By.Stephen.King.German.Abook.MP3-MG", None),
+        ("Writer - Book English Audiobook", None),
+        ("Writer - Book [French]", "fr"),
+        ("Writer - Book [German] [Deutsch]", "de"),
+        ("Writer - Book German English Audiobook", None),
+        ("Writer - Book [German] [French]", None),
+        ("Writer - The Good German", None),
+        ("Writer - The Good German.Audiobook", None),
+        ("Writer.-.The.Good.German", None),
+        ("Writer - The English Patient.Audiobook", None),
+        ("Writer - German Lessons.MP3", None),
+        ("Writer - Book Hoerbuch", None),
+        ("Writer - Book [German edition]", None),
+        ("Writer - Book [German)", None),
+        ("Writer - Book.German.MP3.part01.rar", None),
+    ],
+)
+async def test_explicit_trailing_language_labels_are_preserved(title, language):
+    async with ProwlarrClient(
+        "https://prowlarr.test/base",
+        "secret",
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=[release(title=title)])),
+    ) as client:
+        item = (await client.search(ProwlarrSearch(q="Book", indexer_id=7))).hits[0].release
+    assert item.language == language
+    assert item.details.get("language_basis") == ("release_title" if language else None)
+
+
+@pytest.mark.parametrize(
     "bad_url",
     [
         "https://evil.test/7/download?link=secret",

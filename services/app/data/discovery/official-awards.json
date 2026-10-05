@@ -1,0 +1,647 @@
+{
+  "schema_version": 1,
+  "collections": [
+    {
+      "id": "official-hugo-novel-2025",
+      "provider": "hugo",
+      "kind": "award",
+      "title": "Hugo · Best Novel",
+      "year": 2025,
+      "category": "Novel",
+      "genres": [
+        "science-fiction",
+        "fantasy"
+      ],
+      "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/",
+      "books": [
+        {
+          "external_id": "hugo-381649e4a83be4eb49aff154",
+          "provider": "hugo",
+          "title": "The Tainted Cup",
+          "authors": [
+            "Robert Jackson Bennett"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/"
+        },
+        {
+          "external_id": "hugo-87f26792bd5c8c7ea0a66fb9",
+          "provider": "hugo",
+          "title": "A Sorceress Comes to Call",
+          "authors": [
+            "T. Kingfisher"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/"
+        },
+        {
+          "external_id": "hugo-f51e59877f9ef9fa1761478c",
+          "provider": "hugo",
+          "title": "Alien Clay",
+          "authors": [
+            "Adrian Tchaikovsky"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/"
+        },
+        {
+          "external_id": "hugo-3dfc0dd45228190cdac72340",
+          "provider": "hugo",
+          "title": "Someone You Can Build a Nest In",
+          "authors": [
+            "John Wiswell"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/"
+        },
+        {
+          "external_id": "hugo-c3f2bb060488679a4345c5eb",
+          "provider": "hugo",
+          "title": "The Ministry of Time",
+          "authors": [
+            "Kaliane Bradley"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/"
+        },
+        {
+          "external_id": "hugo-09cce1800324415131893d8f",
+          "provider": "hugo",
+          "title": "Service Model",
+          "authors": [
+            "Adrian Tchaikovsky"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.thehugoawards.org/hugo-history/2025-hugo-awards/"
+        }
+      ],
+      "count": 6,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "adult",
+      "description": "The winner and five finalists for the 2025 Best Novel Hugo. Other Hugo categories are not included."
+    },
+    {
+      "id": "official-nebula-novel-2024",
+      "provider": "nebula",
+      "kind": "award",
+      "title": "Nebula · Best Novel",
+      "year": 2024,
+      "category": "Novel",
+      "genres": [
+        "science-fiction",
+        "fantasy"
+      ],
+      "source_url": "https://nebulas.sfwa.org/award-year/2024/",
+      "books": [
+        {
+          "external_id": "nebula-3dfc0dd45228190cdac72340",
+          "provider": "nebula",
+          "title": "Someone You Can Build a Nest In",
+          "authors": [
+            "John Wiswell"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://nebulas.sfwa.org/award-year/2024/"
+        },
+        {
+          "external_id": "nebula-3098601adb9e6ea998a0e40e",
+          "provider": "nebula",
+          "title": "Sleeping Worlds Have No Memory",
+          "authors": [
+            "Yaroslav Barsukov"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://nebulas.sfwa.org/award-year/2024/"
+        },
+        {
+          "external_id": "nebula-20dcc1f94f6111c9b3f52f89",
+          "provider": "nebula",
+          "title": "Rakesfall",
+          "authors": [
+            "Vajra Chandrasekera"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://nebulas.sfwa.org/award-year/2024/"
+        },
+        {
+          "external_id": "nebula-2240bf47c29b3bb42f2a917b",
+          "provider": "nebula",
+          "title": "Asunder",
+          "authors": [
+            "Kerstin Hall"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://nebulas.sfwa.org/award-year/2024/"
+        },
+        {
+          "external_id": "nebula-87f26792bd5c8c7ea0a66fb9",
+          "provider": "nebula",
+          "title": "A Sorceress Comes to Call",
+          "authors": [
+            "T. Kingfisher"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://nebulas.sfwa.org/award-year/2024/"
+        },
+        {
+          "external_id": "nebula-583fdca84affb966a210529a",
+          "provider": "nebula",
+          "title": "The Book of Love",
+          "authors": [
+            "Kelly Link"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://nebulas.sfwa.org/award-year/2024/"
+        }
+      ],
+      "count": 6,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "adult",
+      "description": "2024 award year; presented in June 2025. Best Novel winner and finalists."
+    },
+    {
+      "id": "official-booker-2025",
+      "provider": "booker",
+      "kind": "award",
+      "title": "The Booker Prize",
+      "year": 2025,
+      "category": "Novel",
+      "genres": [
+        "literary-fiction"
+      ],
+      "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025",
+      "books": [
+        {
+          "external_id": "booker-7da4a75b814ea8c3a5d5a8f5",
+          "provider": "booker",
+          "title": "Flesh",
+          "authors": [
+            "David Szalay"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025"
+        },
+        {
+          "external_id": "booker-e45b6d99c6f286d4dedb33da",
+          "provider": "booker",
+          "title": "Flashlight",
+          "authors": [
+            "Susan Choi"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025"
+        },
+        {
+          "external_id": "booker-0fcdf8093a61b4a14ab050ba",
+          "provider": "booker",
+          "title": "The Loneliness of Sonia and Sunny",
+          "authors": [
+            "Kiran Desai"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025"
+        },
+        {
+          "external_id": "booker-623aee4721af5c125b093030",
+          "provider": "booker",
+          "title": "Audition",
+          "authors": [
+            "Katie Kitamura"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025"
+        },
+        {
+          "external_id": "booker-c7e102612de6a7b1add91470",
+          "provider": "booker",
+          "title": "The Rest of Our Lives",
+          "authors": [
+            "Ben Markovits"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025"
+        },
+        {
+          "external_id": "booker-89d8ecc35cf0be39e8989d0d",
+          "provider": "booker",
+          "title": "The Land in Winter",
+          "authors": [
+            "Andrew Miller"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://thebookerprizes.com/the-booker-library/prize-years/2025"
+        }
+      ],
+      "count": 6,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "adult",
+      "description": "The complete 2025 shortlist, including the winner. Longlisted titles are not included."
+    },
+    {
+      "id": "official-newbery-2026",
+      "provider": "ala",
+      "kind": "award",
+      "title": "Newbery Medal & Honors",
+      "year": 2026,
+      "category": "Children’s literature",
+      "genres": [
+        "children"
+      ],
+      "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+      "books": [
+        {
+          "external_id": "ala-8ada086dd758989974e3d570",
+          "provider": "ala",
+          "title": "All the Blues in the Sky",
+          "authors": [
+            "Renée Watson"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals"
+        },
+        {
+          "external_id": "ala-9285c37d0f852c44db9a64b2",
+          "provider": "ala",
+          "title": "The Nine Moons of Han Yu and Luli",
+          "authors": [
+            "Karina Yan Glaser"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals"
+        },
+        {
+          "external_id": "ala-afc78b8f4d910899164422e2",
+          "provider": "ala",
+          "title": "A Sea of Lemon Trees: The Corrido of Roberto Alvarez",
+          "authors": [
+            "María Dolores Águila"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals"
+        },
+        {
+          "external_id": "ala-0556c34aa07a445c9e206146",
+          "provider": "ala",
+          "title": "The Teacher of Nomad Land: A World War II Story",
+          "authors": [
+            "Daniel Nayeri"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals"
+        },
+        {
+          "external_id": "ala-c9c8d1b729ff6f000651c80d",
+          "provider": "ala",
+          "title": "The Undead Fox of Deadwood Forest",
+          "authors": [
+            "Aubrey Hartman"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals"
+        }
+      ],
+      "count": 5,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "children",
+      "description": "The 2026 medal and four Honor Books, awarded for children’s literature."
+    },
+    {
+      "id": "official-caldecott-2026",
+      "provider": "ala",
+      "kind": "award",
+      "title": "Caldecott Medal & Honors",
+      "year": 2026,
+      "category": "Illustration",
+      "genres": [
+        "children",
+        "picture-books"
+      ],
+      "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+      "books": [
+        {
+          "external_id": "ala-1f994e9fb281eccd7f41317c",
+          "provider": "ala",
+          "title": "Fireworks",
+          "authors": [
+            "Matthew Burgess"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+          "subject": "edition",
+          "contributors": [
+            "Cátia Chien (illustrator)"
+          ]
+        },
+        {
+          "external_id": "ala-960367adbbf65caf24309b73",
+          "provider": "ala",
+          "title": "Every Monday Mabel",
+          "authors": [
+            "Jashar Awan"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+          "subject": "edition",
+          "contributors": [
+            "Jashar Awan (illustrator)"
+          ]
+        },
+        {
+          "external_id": "ala-9af52c41fa8738817a001bc4",
+          "provider": "ala",
+          "title": "Our Lake",
+          "authors": [
+            "Angie Kang"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+          "subject": "edition",
+          "contributors": [
+            "Angie Kang (illustrator)"
+          ]
+        },
+        {
+          "external_id": "ala-04f670a86c26769e9300744c",
+          "provider": "ala",
+          "title": "Stalactite & Stalagmite: A Big Tale from a Little Cave",
+          "authors": [
+            "Drew Beckmeyer"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+          "subject": "edition",
+          "contributors": [
+            "Drew Beckmeyer (illustrator)"
+          ]
+        },
+        {
+          "external_id": "ala-ce7a9bd8dbd2bb443a27a8a8",
+          "provider": "ala",
+          "title": "Sundust",
+          "authors": [
+            "Zeke Peña"
+          ],
+          "winner": false,
+          "status": "honor",
+          "language": "en",
+          "source_url": "https://www.ala.org/news/2026/01/renee-watson-catia-chien-win-newbery-caldecott-medals",
+          "subject": "edition",
+          "contributors": [
+            "Zeke Peña (illustrator)"
+          ]
+        }
+      ],
+      "count": 5,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "children",
+      "description": "Recognizes picture-book illustration. Choose the illustrated edition; this is not an audiobook award."
+    },
+    {
+      "id": "official-pulitzer-fiction-2025",
+      "provider": "pulitzer",
+      "kind": "award",
+      "title": "Pulitzer Prize · Fiction",
+      "year": 2025,
+      "category": "Fiction",
+      "genres": [
+        "literary-fiction"
+      ],
+      "source_url": "https://www.pulitzer.org/prize-winners-by-year/2025",
+      "books": [
+        {
+          "external_id": "pulitzer-4ba4980573640c294b77f94b",
+          "provider": "pulitzer",
+          "title": "James",
+          "authors": [
+            "Percival Everett"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://www.pulitzer.org/prize-winners-by-year/2025"
+        },
+        {
+          "external_id": "pulitzer-2f9f725be76210df7c650ac2",
+          "provider": "pulitzer",
+          "title": "The Unicorn Woman",
+          "authors": [
+            "Gayl Jones"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.pulitzer.org/prize-winners-by-year/2025"
+        },
+        {
+          "external_id": "pulitzer-e94842e4e24210c01cdca46a",
+          "provider": "pulitzer",
+          "title": "Mice 1961",
+          "authors": [
+            "Stacey Levine"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.pulitzer.org/prize-winners-by-year/2025"
+        },
+        {
+          "external_id": "pulitzer-e47fe464511e3b752dbf3666",
+          "provider": "pulitzer",
+          "title": "Headshot: A Novel",
+          "authors": [
+            "Rita Bullwinkel"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.pulitzer.org/prize-winners-by-year/2025"
+        }
+      ],
+      "count": 4,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "adult",
+      "description": "The 2025 Fiction winner and all three named finalists."
+    },
+    {
+      "id": "official-audie-audiobook-2025",
+      "provider": "audie",
+      "kind": "award",
+      "title": "Audie · Audiobook of the Year",
+      "year": 2025,
+      "category": "Audiobook of the Year",
+      "genres": [
+        "audiobooks"
+      ],
+      "source_url": "https://www.audiopub.org/2025audies-1",
+      "books": [
+        {
+          "external_id": "audie-da6db416a58e24406c77730c",
+          "provider": "audie",
+          "title": "My Name Is Barbra",
+          "authors": [
+            "Barbra Streisand"
+          ],
+          "winner": true,
+          "status": "winner",
+          "language": "en",
+          "source_url": "https://www.audiopub.org/2025audies-1",
+          "subject": "recording",
+          "narrators": [
+            "Barbra Streisand"
+          ]
+        },
+        {
+          "external_id": "audie-4c424f3d51abcf64abfae267",
+          "provider": "audie",
+          "title": "George Orwell’s 1984",
+          "authors": [
+            "George Orwell"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.audiopub.org/2025audies-1",
+          "subject": "recording",
+          "narrators": [
+            "Andrew Garfield",
+            "Cynthia Erivo",
+            "Full cast"
+          ],
+          "contributors": [
+            "Joe White (adaptation)"
+          ]
+        },
+        {
+          "external_id": "audie-984200d848f5e32772e622b9",
+          "provider": "audie",
+          "title": "Playground: A Novel",
+          "authors": [
+            "Richard Powers"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.audiopub.org/2025audies-1",
+          "subject": "recording",
+          "narrators": [
+            "Edoardo Ballerini",
+            "Robin Siegerman",
+            "Full cast"
+          ]
+        },
+        {
+          "external_id": "audie-fc59a706fdbb97c5e884f241",
+          "provider": "audie",
+          "title": "Poor Deer",
+          "authors": [
+            "Claire Oshetsky"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.audiopub.org/2025audies-1",
+          "subject": "recording",
+          "narrators": [
+            "Sophie Amoss"
+          ]
+        },
+        {
+          "external_id": "audie-ff0c83082ee023cb5e69fd6f",
+          "provider": "audie",
+          "title": "The Sing Sing Files",
+          "authors": [
+            "Dan Slepian"
+          ],
+          "winner": false,
+          "status": "finalist",
+          "language": "en",
+          "source_url": "https://www.audiopub.org/2025audies-1",
+          "subject": "recording",
+          "narrators": [
+            "Dan Slepian"
+          ]
+        }
+      ],
+      "count": 5,
+      "coverage": "complete",
+      "updated_at": "2026-10-05T00:00:00Z",
+      "refresh_mode": "app-update",
+      "language": "en",
+      "audience": "adult",
+      "description": "The winning performance and four finalists. Narration and adaptation credits identify the awarded recording.",
+      "medium": "audio"
+    }
+  ]
+}

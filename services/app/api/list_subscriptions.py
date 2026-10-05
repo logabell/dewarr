@@ -21,7 +21,7 @@ from app.db.models import (
 from app.domain.acquisition import withdraw_list_reasons
 from app.domain.list_subscriptions import begin, ensure_membership, owned_list, repair_job
 from app.domain.visibility import visible_work
-from app.domain.work_graph import canonical_work, family_ids, graph_lock
+from app.domain.work_graph import canonical_map, canonical_work, family_ids, graph_lock
 from app.security import decrypt_secrets, encrypt_secrets
 
 router = APIRouter(prefix="/lists/{list_id}/subscription", tags=["list-subscriptions"])
@@ -97,19 +97,16 @@ async def subscription(db, user, list_id):
 
 async def view(db, row):
     await repair_job(db, row)
-    count, excluded = (
+    count, excluded, count_present = (
         await db.execute(
-            select(func.count(), func.count().filter(ListObservation.excluded.is_(True))).where(
-                ListObservation.subscription_id == row.id
-            )
+            select(
+                func.count(),
+                func.count().filter(ListObservation.excluded.is_(True)),
+                func.count().filter(ListObservation.present.is_(True)),
+            ).where(ListObservation.subscription_id == row.id)
         )
     ).one()
     config = decrypt_secrets(row.encrypted_config)
-    count_present = await db.scalar(
-        select(func.count())
-        .select_from(ListObservation)
-        .where(ListObservation.subscription_id == row.id, ListObservation.present.is_(True))
-    )
     if row.provider == "hardcover":
         shelf = config.get("name") or f"Hardcover list {config['external_id']}"
         completeness = "verified-observation" if config.get("complete") else "not-observed"
@@ -285,18 +282,42 @@ async def observations(list_id: UUID, user: Member, db: Database, offset: int = 
             .limit(limit)
         )
     )
+    resolved = {}
+    if records:
+        mapping = canonical_map([record.work_id for record in records])
+        allowed = (
+            select(Work.id, Work.title)
+            .where(Work.id.in_(select(mapping.c.work_id)), visible_work(user))
+            .subquery()
+        )
+        resolved = {
+            origin: (work_id, title, visible_id)
+            for origin, work_id, title, visible_id in await db.execute(
+                select(
+                    mapping.c.origin_id, mapping.c.work_id, allowed.c.title, allowed.c.id
+                ).outerjoin(allowed, allowed.c.id == mapping.c.work_id)
+            )
+        }
     items = []
     for record in records:
-        work = await canonical_work(db, record.work_id)
-        allowed = await db.scalar(select(Work.id).where(Work.id == work.id, visible_work(user)))
+        identity = resolved.get(record.work_id)
+        if identity is None:
+            # Preserve the existing missing/cyclic identity errors, and handle
+            # an identity repaired concurrently with the batched projection.
+            work = await canonical_work(db, record.work_id)
+            visible_id = await db.scalar(
+                select(Work.id).where(Work.id == work.id, visible_work(user))
+            )
+            identity = work.id, work.title if visible_id else None, visible_id
+        work_id, title, visible_id = identity
         items.append(
             ObservationView(
                 id=record.id,
                 external_id=record.external_id,
-                work_id=work.id if allowed else None,
+                work_id=work_id if visible_id else None,
                 title=record.snapshot["title"],
                 authors=record.snapshot["authors"],
-                catalog_title=work.title if allowed else None,
+                catalog_title=title,
                 excluded=record.excluded,
                 identity_changed=record.snapshot.get("identity_changed", False),
                 present=record.present,

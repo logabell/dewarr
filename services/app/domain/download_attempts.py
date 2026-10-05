@@ -167,7 +167,12 @@ async def selection_authority(db, selection, *, wanted, configuration=None, disp
 
         configuration = await accepted_configuration(db, selection)
     if not await configuration_current(
-        db, selection, committed=True, configuration=configuration, version_identity_required=wanted
+        db,
+        selection,
+        committed=True,
+        configuration=configuration,
+        version_identity_required=wanted,
+        require_enabled=wanted and dispatch_consent,
     ):
         raise HTTPException(409, "Saved acquisition settings changed; review the download route")
     artifact = await db.get(SourceArtifact, selection.artifact_id)

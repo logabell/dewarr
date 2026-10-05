@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
-from app.adapters.catalog_types import CATALOG_PROVIDERS, BookData, Provider
+from app.adapters.catalog_types import CATALOG_PROVIDERS, BookData
 from app.db.models import (
     ListCatalogBinding,
     MetadataSettings,
@@ -24,8 +24,9 @@ FIELDS = ("title", "authors", "description", "publication_year", "language", "co
 
 
 class MetadataPreferences(BaseModel):
-    primary: Provider = "hardcover"
+    primary: Literal["hardcover", "openlibrary"] = "hardcover"
     automatic_enrichment: bool = True
+    recording_enrichment: bool = True
     automatic_edition_lookup: bool = True
     # After each library sync, save unique verified Hardcover matches for library books.
     automatic_library_matching: bool = True
@@ -37,7 +38,7 @@ class MetadataPreferences(BaseModel):
     language: str = Field(default="en", min_length=2, max_length=20)
     filter_language: bool = False
     covers: Literal["automatic", "hardcover", "openlibrary"] = "automatic"
-    field_providers: dict[str, Provider] = Field(default_factory=dict)
+    field_providers: dict[str, Literal["hardcover", "openlibrary"]] = Field(default_factory=dict)
 
     @field_validator("field_providers")
     @classmethod
@@ -85,6 +86,10 @@ async def resolve_fields(db, work, settings):
         selected = next(
             (source for source in ordered if source.snapshot.get(field) not in (None, "", [])), None
         )
+        # Supplemental sources fill gaps only; they never redefine Hardcover identity or
+        # overwrite populated library metadata merely because that source lacks a field.
+        if selected and selected.provider in {"audible", "custom"} and getattr(work, field):
+            continue
         if selected:
             value = selected.snapshot[field]
             setattr(work, field, value)
@@ -104,6 +109,16 @@ async def resolve_fields(db, work, settings):
     )
     work.metadata_fields = {**work.metadata_fields, "identity_rejected": uncertain}
     work.match_key = None if uncertain else work_key(work.title, work.authors)
+
+
+def fill_recording_fields(version, edition, snapshot):
+    filled = dict(snapshot.get("filled_fields", {}))
+    for name in ("narrators", "language", "abridged", "runtime_minutes"):
+        before, after = getattr(version, name), getattr(edition, name)
+        if before in (None, "", []) and after not in (None, "", []):
+            filled[name] = {"before": before, "after": after}
+            setattr(version, name, after)
+    return {**snapshot, "filled_fields": filled}
 
 
 async def attach_source(db, work, book, *, explicit=False, verified_match=False):
@@ -183,6 +198,8 @@ async def attach_source(db, work, book, *, explicit=False, verified_match=False)
         )
         snapshot = edition.model_dump(mode="json")
         if version_link:
+            if version_link.snapshot.get("filled_fields"):
+                snapshot["filled_fields"] = version_link.snapshot["filled_fields"]
             if version_link.metadata_source_id and version_link.metadata_source_id != link.id:
                 previous_source = await db.get(WorkMetadataSource, version_link.metadata_source_id)
                 if not explicit or (previous_source and previous_source.accepted):
@@ -213,7 +230,84 @@ async def attach_source(db, work, book, *, explicit=False, verified_match=False)
                 version_link.snapshot = snapshot
                 version_link.match_status = "matched"
                 version_link.pending_snapshot = None
+                version = await db.get(Version, version_link.version_id)
+                if version and book.provider == "audible":
+                    other_lock = await db.scalar(
+                        select(ProviderObject.id)
+                        .where(
+                            ProviderObject.version_id == version.id,
+                            ProviderObject.manual_lock.is_(True),
+                        )
+                        .limit(1)
+                    )
+                    if not other_lock:
+                        version_link.snapshot = fill_recording_fields(version, edition, snapshot)
             continue
+        if book.provider == "audible" and edition.identifiers.get("asin"):
+            # Reuse only one accepted catalog edition with the exact recording ASIN.
+            # Owned library versions need their existing identity review; do not adopt them here.
+            candidates = list(
+                await db.scalars(
+                    select(Version)
+                    .join(ProviderObject, ProviderObject.version_id == Version.id)
+                    .join(
+                        WorkMetadataSource,
+                        WorkMetadataSource.id == ProviderObject.metadata_source_id,
+                    )
+                    .where(
+                        Version.work_id.in_(family_ids(work.id)),
+                        Version.medium == "audio",
+                        Version.identifiers["asin"].astext == edition.identifiers["asin"],
+                        WorkMetadataSource.accepted.is_(True),
+                        WorkMetadataSource.provider.in_(CATALOG_PROVIDERS),
+                        ProviderObject.match_status == "matched",
+                    )
+                )
+            )
+            candidates = list({v.id: v for v in candidates}.values())
+            if len(candidates) == 1:
+                version = candidates[0]
+                locked = await db.scalar(
+                    select(ProviderObject.id)
+                    .where(
+                        ProviderObject.version_id == version.id,
+                        ProviderObject.manual_lock.is_(True),
+                    )
+                    .limit(1)
+                )
+                conflicts = any(
+                    getattr(version, field) not in (None, "", [])
+                    and getattr(edition, field) not in (None, "", [])
+                    and getattr(version, field) != getattr(edition, field)
+                    for field in ("language", "narrators", "abridged")
+                )
+                if not locked and not conflicts:
+                    snapshot = fill_recording_fields(version, edition, snapshot)
+                db.add(
+                    ProviderObject(
+                        provider=namespace,
+                        kind="edition",
+                        external_id=edition.external_id,
+                        work_id=link.work_id,
+                        version_id=version.id,
+                        snapshot={
+                            **snapshot,
+                            **{
+                                name: getattr(version, name)
+                                for name in ("language", "narrators", "abridged")
+                            },
+                        }
+                        if conflicts
+                        else snapshot,
+                        match_status="needs-review" if conflicts else "matched",
+                        pending_snapshot=snapshot if conflicts else None,
+                        metadata_source_id=link.id,
+                    )
+                )
+                continue
+            if candidates:
+                # Multiple versions claim this ASIN. Do not create a third interpretation.
+                continue
         version = Version(
             work_id=link.work_id,
             medium=edition.medium,
@@ -223,6 +317,7 @@ async def attach_source(db, work, book, *, explicit=False, verified_match=False)
             abridged=edition.abridged,
             publication_year=edition.publication_year,
             identifiers=edition.identifiers,
+            runtime_minutes=edition.runtime_minutes,
         )
         db.add(version)
         await db.flush()

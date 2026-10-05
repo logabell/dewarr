@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from app.api.catalog import WorkPage, WorkView, work_view
 from app.api.dependencies import CurrentUser, Database
 from app.db.models import CatalogSeries, LibraryAsset, SeriesMembership, Work, WorkMetadataSource
-from app.domain.availability import availability_for, availability_rows
+from app.domain.availability import availability_for, availability_rows, library_work_ids
 from app.domain.catalog_display import display_map
 from app.domain.visibility import visible_origin_work
 
@@ -45,7 +45,7 @@ def array(value):
 
 
 def group_rows(user, kind, medium, library_id):
-    mapping = display_map(user)
+    mapping = display_map(user, library_work_ids(user, library_id=library_id, medium=medium))
     holdings = availability_rows(user, mapping)
     if medium != "any":
         holdings = holdings.where(LibraryAsset.medium == medium)
@@ -191,7 +191,7 @@ async def groups(
     for key, work in samples:
         by_group.setdefault(key, []).append(work_view(work, availability[work.id]))
     # Resolve accepted identities in one query, including consolidated editions.
-    mapping = display_map(user)
+    mapping = display_map(user, select(pairs.c.work_id))
     portrait_books = (
         dict(
             (

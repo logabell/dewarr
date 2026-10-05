@@ -29,6 +29,15 @@ def words(value):
     return re.findall(r"[^\W_]+", "".join(c for c in text if not unicodedata.combining(c)))
 
 
+def exact_title_key(value):
+    """Token equality for evidence, retaining subtitles and edition qualifiers.
+
+    This is not a persisted work key. Unlike compatible_title, it never omits
+    subtitles, articles, or recording labels to reconcile two file assertions.
+    """
+    return " ".join(words(value))
+
+
 def primary(value):
     tokens = words(value)
     if len(tokens) > 2 and tokens[0] in {"a", "an", "the"}:

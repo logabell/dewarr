@@ -50,7 +50,9 @@ export function readChoices(
     publisher: template.includes("{publisher}"),
   };
   const segments = templateSegments(template);
-  const tokens = segments.map((segment) => segment.match(/\{([^}]+)\}/g) || []);
+  const tokens = segments.map(
+    (segment) => escapedTemplate(segment).match(/\{[a-z_]+\}/g) || [],
+  );
   const supported = new Set([
     "{title}",
     "{author}",
@@ -135,12 +137,19 @@ const SAMPLE: Record<string, string> = {
 };
 
 // Short stand-in for the style cards. The live preview still comes from the planner.
+function escapedTemplate(template: string): string {
+  return template.replace(/\{\{|\}\}|\{[a-z_]+\}/g, (part) =>
+    part === "{{" ? "\u0001" : part === "}}" ? "\u0002" : part,
+  );
+}
+
 export function illustrate(template: string, medium: Medium): string {
   const values: Record<string, string> = {
     ...SAMPLE,
     year: medium === "audio" ? SAMPLE.recording_year : SAMPLE.edition_year,
   };
-  const filled = template.replace(/\[[^\]]*\]/g, (block) => {
+  const escaped = escapedTemplate(template);
+  const filled = escaped.replace(/\[[^\]]*\]/g, (block) => {
     const tokens = [...block.matchAll(/\{([a-z_]+)\}/g)].map(
       (match) => match[1],
     );
@@ -148,10 +157,10 @@ export function illustrate(template: string, medium: Medium): string {
       ? block.slice(1, -1)
       : "";
   });
-  return filled.replace(
-    /\{([a-z_]+)\}/g,
-    (_, token: string) => values[token] || "",
-  );
+  return filled
+    .replace(/\{([a-z_]+)\}/g, (_, token: string) => values[token] || "")
+    .replaceAll("\u0001", "{")
+    .replaceAll("\u0002", "}");
 }
 
 export function filenameStyles(medium: Medium) {
@@ -168,7 +177,7 @@ export function filenameStyles(medium: Medium) {
     });
   return styles;
 }
-export type TokenJoin = "folder" | "dash" | "space" | "parentheses";
+export type TokenJoin = "folder" | "dash" | "space" | "parentheses" | "braces";
 export type ParsedSegment = {
   optional: boolean;
   token: string;
@@ -182,11 +191,12 @@ const JOINS: [string, string, TokenJoin, boolean][] = [
   [" - ", "", "dash", true],
   [" ", "", "space", true],
   [" (", ")", "parentheses", true],
+  [" {{", "}}", "braces", true],
 ];
 export function parseSegment(segment: string): ParsedSegment | null {
   const optional = segment.startsWith("[") && segment.endsWith("]");
   const body = optional ? segment.slice(1, -1) : segment;
-  const match = body.match(/^([^{]*)\{([a-z_]+)\}([^}]*)$/);
+  const match = body.match(/^(.*?)\{([a-z_]+)\}(.*?)$/);
   if (!match) return null;
   const [, prefix, token, suffix] = match;
   const found = JOINS.find(
@@ -213,6 +223,9 @@ export function formatSegment({
   else if (join === "parentheses") {
     prefix = " (";
     suffix = ")";
+  } else if (join === "braces") {
+    prefix = " {{";
+    suffix = "}}";
   } else if (join === "dash") {
     if (leading) prefix = " - ";
     else suffix = " - ";
@@ -229,7 +242,10 @@ export function withJoin(segment: string, join: TokenJoin): string {
   const leading =
     join === "folder"
       ? false
-      : join === "parentheses" || parsed.join === "parentheses"
+      : join === "parentheses" ||
+          join === "braces" ||
+          parsed.join === "parentheses" ||
+          parsed.join === "braces"
         ? true
         : parsed.leading;
   return formatSegment({ ...parsed, join, leading });

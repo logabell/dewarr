@@ -16,18 +16,22 @@ export default function ConnectionTestStatus({
   error,
 }: ConnectionTestStatusProps) {
   const connected = status === "connected";
-  const state = isPending
-    ? "pending"
-    : error
-      ? "failed"
-      : connected
-        ? "connected"
-        : configured && status === "untested"
-          ? "saved"
-          : configured
-            ? "attention"
-            : "not-saved";
+  const disabled = configured && status === "disabled";
+  const state = disabled
+    ? "disabled"
+    : isPending
+      ? "pending"
+      : error
+        ? "failed"
+        : connected
+          ? "connected"
+          : configured && status === "untested"
+            ? "saved"
+            : configured
+              ? "attention"
+              : "not-saved";
   const label = {
+    disabled: "Disabled",
     pending: "Testing…",
     failed: "Test failed",
     connected: "Saved & connected",
@@ -35,19 +39,21 @@ export default function ConnectionTestStatus({
     attention: "Needs attention",
     "not-saved": "Not saved",
   }[state];
-  const detail = isPending
-    ? "Checking the saved connection."
-    : error
-      ? "Saved credentials were kept."
-      : connected && lastSuccessAt
-        ? `Verified ${new Date(lastSuccessAt).toLocaleString()}`
-        : connected
-          ? "Connection verified successfully."
-          : configured && status === "untested"
-            ? "Test the saved connection to verify access."
-            : configured
-              ? "Review the error, then test again."
-              : "Save this connection before testing.";
+  const detail = disabled
+    ? "Enable this connection to test it."
+    : isPending
+      ? "Checking the saved connection."
+      : error
+        ? "Saved credentials were kept."
+        : connected && lastSuccessAt
+          ? `Verified ${new Date(lastSuccessAt).toLocaleString()}`
+          : connected
+            ? "Connection verified successfully."
+            : configured && status === "untested"
+              ? "Test the saved connection to verify access."
+              : configured
+                ? "Review the error, then test again."
+                : "Save this connection before testing.";
 
   return (
     <span

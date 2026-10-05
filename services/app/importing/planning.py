@@ -179,6 +179,17 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
     observed = {group.key: group.model_dump() for group in grouping.groups}
     files = {file["path"]: file for file in row.snapshot["files"]}
     groups, sidecars, versions, covers, matches, collections = [], {}, {}, {}, {}, {}
+    from app.db.models import AcquisitionSelection, DownloadAttempt, DownloadMembership
+    from app.importing.release_narrators import naming_narrators
+
+    replacements = list(
+        await db.scalars(
+            select(AcquisitionSelection)
+            .join(DownloadMembership, DownloadMembership.selection_id == AcquisitionSelection.id)
+            .join(DownloadAttempt, DownloadAttempt.id == DownloadMembership.attempt_id)
+            .where(DownloadAttempt.inspection_id == row.id)
+        )
+    )
     await graph_lock(db)
     for selection in body.selections:
         group = observed.get(selection.group_key)
@@ -225,6 +236,13 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
             )
         series, sequence = await filing_series(db, work)
         part = release_part(group, row)
+        releases = []
+        if len(grouping.groups) == 1:
+            for acquisition in replacements:
+                if (
+                    await canonical_work(db, UUID(acquisition.frozen["origin_work_id"]))
+                ).id == work.id:
+                    releases.append(acquisition.frozen.get("release") or {})
         # Preserve version's origin work for correction/merge undo provenance.
         groups.append(
             ImportGroup(
@@ -243,7 +261,7 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
                     part_index=part[0] if part else None,
                     part_total=part[1] if part else None,
                     language=version.language or work.language,
-                    narrators=version.narrators,
+                    narrators=naming_narrators(reviewed_group, version, releases),
                     abridged=version.abridged,
                     original_year=work.publication_year,
                     edition_year=version.publication_year if version.medium == "ebook" else None,
@@ -319,17 +337,8 @@ async def freeze_plan(db, admin, inspection_id: UUID, body: FreezeInput):
         plan.skipped_items = sum(item.state == "skipped" for item in plan.items)
     # Replacements publish alongside the reported copy; no rename, overwrite or
     # deletion of library content is part of failed-download recovery.
-    from app.db.models import AcquisitionSelection, DownloadAttempt, DownloadMembership
     from app.domain.download_recovery import replacement_folders
 
-    replacements = list(
-        await db.scalars(
-            select(AcquisitionSelection)
-            .join(DownloadMembership, DownloadMembership.selection_id == AcquisitionSelection.id)
-            .join(DownloadAttempt, DownloadAttempt.id == DownloadMembership.attempt_id)
-            .where(DownloadAttempt.inspection_id == row.id)
-        )
-    )
     replacement_folders(plan, replacements)
     selected_files = sorted({file.path for group in groups for file in group.files})
     document = {

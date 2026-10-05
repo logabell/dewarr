@@ -40,6 +40,12 @@ test("join controls build a space-separated sequence folder and a wrapped year",
   assert.equal(withJoin("{author}/", "dash"), "{author} - ");
   assert.equal(withJoin("[{disc}-]", "space"), "[{disc}-]");
   assert.equal(parseSegment("{title}")?.join, null);
+  assert.equal(withJoin("[ - {narrator}]", "braces"), "[ {{{narrator}}}]");
+  assert.equal(withJoin("[ {{{narrator}}}]", "dash"), "[ - {narrator}]");
+  assert.equal(
+    illustrate("{title}[ {{{narrator}}}]", "audio"),
+    "Philosopher’s Stone {Stephen Fry}",
+  );
 });
 
 test("style examples show the punctuation each choice changes", () => {

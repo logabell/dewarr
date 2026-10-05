@@ -50,6 +50,7 @@ def test_wedge_is_skipped_when_the_torrent_is_already_free():
     assert spend_wedge(free, None, True, now) is False
     assert spend_wedge(owned, None, True, now) is False
     assert spend_wedge(vip_free, now + timedelta(days=7), True, now) is False
+    assert spend_wedge(vip_free, None, True, now) is True
     assert spend_wedge(vip_free, now - timedelta(days=1), True, now) is True
 
 
@@ -312,18 +313,38 @@ async def test_a_chosen_torrent_ignores_the_minimum_size():
     assert queries == ["tid=501&fl"] or queries == ["tid=501&fl="]
 
 
-async def test_vip_only_torrent_is_not_fetched_without_active_vip():
+@pytest.mark.parametrize("expiry", [None, "2000-01-01 00:00:00", "unknown"])
+async def test_vip_torrent_uses_tracker_authorization_instead_of_optional_expiry(expiry):
+    downloads = []
+
     def handler(request):
         if request.url.path.endswith("jsonLoad.php"):
-            return httpx.Response(200, json={"vip_until": "2000-01-01 00:00:00"})
+            return httpx.Response(200, json={"classname": "Elite VIP", "vip_until": expiry})
         if "download.php" in request.url.path:
-            raise AssertionError("download")
+            downloads.append(str(request.url))
+            return httpx.Response(200, content=b"d4:infod4:name6:Harboree")
+        return httpx.Response(
+            200, json=search_response(data=[release_row(vip=1, free=0, fl_vip=1)])
+        )
+
+    async with _client(handler) as client:
+        client.automation = AccountAutomation(use_wedge=True)
+        artifact = await client.resolve("501")
+    assert artifact.release.vip is True
+    assert len(downloads) == 1
+    assert "&fl" in downloads[0]
+
+
+async def test_vip_torrent_still_respects_tracker_denial():
+    def handler(request):
+        if "download.php" in request.url.path:
+            return httpx.Response(403)
         return httpx.Response(200, json=search_response(data=[release_row(vip=1, free=0)]))
 
     async with _client(handler) as client:
-        with pytest.raises(AdapterError, match="active MyAnonamouse VIP") as error:
+        with pytest.raises(AdapterError) as error:
             await client.resolve("501")
-    assert error.value.kind == FailureKind.UNSUPPORTED
+    assert error.value.kind == FailureKind.AUTHENTICATION
 
 
 async def test_bonus_purchases_stop_when_points_fall_under_the_threshold():

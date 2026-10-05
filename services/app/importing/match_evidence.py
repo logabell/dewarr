@@ -3,10 +3,13 @@
 import re
 
 from pydantic import Field
+from sqlalchemy import Text, case, cast, exists, func, literal, literal_column, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.domain.catalog_language import catalog_language
 from app.domain.identity import normalized
 from app.domain.narrators import embedded_names
+from app.domain.title_matching import exact_title_key
 from app.importing.metadata import valid_isbn
 from app.importing.naming import StrictModel
 
@@ -42,6 +45,7 @@ def isbn_forms(value):
 def identifier(scheme, value):
     if not isinstance(value, str):
         return None
+    value = value.strip()
     scheme = normalized(str(scheme or "")).replace("-", "").replace("_", "")
     if scheme.startswith("isbn") or re.match(r"^(?:urn:)?isbn", value, re.I):
         return ("isbn", key) if (key := isbn_key(value)) else None
@@ -55,6 +59,49 @@ def identifier(scheme, value):
 
 def catalog_identifiers(values):
     return {found for key, value in values.items() if (found := identifier(key, value))}
+
+
+def identifier_sql(value, scheme):
+    """SQL discovery spelling of a validated ISBN/ASIN, not proof of identity.
+
+    Match the Python parser's whitespace and qualified-prefix handling so an
+    alternative edition cannot disappear before ambiguity checks run.
+    """
+    value = func.regexp_replace(value, r"^[[:space:]]+|[[:space:]]+$", "", "g")
+    prefix = (
+        r"^(urn:)?isbn([-_ ]?(10|13))?[[:space:]]*:[[:space:]]*"
+        if scheme == "isbn"
+        else r"^(urn:)?asin:[[:space:]]*"
+    )
+    value = func.upper(func.regexp_replace(value, prefix, "", "i"))
+    return func.regexp_replace(value, r"[[:space:]-]", "", "g") if scheme == "isbn" else value
+
+
+def identifier_matches_sql(values, assertions):
+    """Discover aliases supported by identifier(), including legacy metadata keys.
+
+    Enumerating only lowercase JSON keys can hide a conflicting edition before
+    uniqueness checks. Keep namespaces and JSON value types explicit instead.
+    """
+    entries = func.jsonb_each_text(
+        case((func.jsonb_typeof(values) == "object", values), else_=cast(literal("{}"), JSONB))
+    ).table_valued("key", "value")
+    key = func.lower(func.normalize(entries.c.key, literal_column("NFKC")))
+    key = func.regexp_replace(key, r"^[[:space:]]+|[[:space:]]+$", "", "g")
+    key = func.regexp_replace(key, "[-_]", "", "g")
+    value = func.regexp_replace(entries.c.value, r"^[[:space:]]+|[[:space:]]+$", "", "g")
+    isbn = or_(key.startswith("isbn"), value.op("~*")(r"^(urn:)?isbn"))
+    asin = ~isbn & or_(key == "asin", value.op("~*")(r"^(urn:)?asin:"))
+    conditions = []
+    for scheme, wanted in assertions:
+        namespace = or_(isbn, key == "") if scheme == "isbn" else asin
+        forms = isbn_forms(wanted) if scheme == "isbn" else {wanted}
+        conditions.append(namespace & identifier_sql(value, scheme).in_(forms))
+    return exists(
+        select(1)
+        .select_from(entries)
+        .where(func.jsonb_typeof(values[cast(entries.c.key, Text)]) == "string", or_(*conditions))
+    )
 
 
 class IdentifierEvidence(StrictModel):
@@ -149,10 +196,12 @@ def group_evidence(snapshot, group):
                 scheme
                 and normalized(str(scheme)).replace("-", "").replace("_", "")
                 in {*ISBN_KEYS, "asin"}
-            ) or (isinstance(value, str) and re.match(r"^(?:urn:)?(?:isbn|asin)", value, re.I)):
+            ) or (
+                isinstance(value, str) and re.match(r"^(?:urn:)?(?:isbn|asin)", value.strip(), re.I)
+            ):
                 issues.add("An embedded edition identifier is invalid")
     for label, values in (
-        ("title", titles),
+        ("title", {exact_title_key(title) for title in titles}),
         ("author", authors),
         ("narrator", narrators),
         ("language", languages),

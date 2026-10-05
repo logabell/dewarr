@@ -1,3 +1,5 @@
+import NavigationContinuity from "./components/NavigationContinuity";
+import ContentSkeleton from "./components/ContentSkeleton";
 import ConnectionHealth from "./components/ConnectionHealth";
 import { ApplicationRelease } from "./components/ApplicationRelease";
 import { useRefreshReadingLists } from "./hooks/useRefreshReadingLists";
@@ -379,6 +381,8 @@ function Shell({ auth }: { auth: Auth }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [search, setSearch] = useState("");
+  const [mobileMenu, setMobileMenu] = useState(false);
+  useEffect(() => setMobileMenu(false), [location.pathname]);
   const [addingList, setAddingList] = useState(false);
   const listsRefresh = useRefreshReadingLists();
   useEffect(() => {
@@ -418,10 +422,20 @@ function Shell({ auth }: { auth: Auth }) {
     );
   return (
     <div className="app-shell">
+      <NavigationContinuity />
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <aside className="sidebar">
+      <aside className="sidebar" data-menu-open={mobileMenu}>
+        <button
+          type="button"
+          className="mobile-menu-button"
+          aria-expanded={mobileMenu}
+          aria-controls="main-navigation"
+          onClick={() => setMobileMenu(!mobileMenu)}
+        >
+          {mobileMenu ? "Close menu" : "Menu"}
+        </button>
         <NavLink to="/" className="brand">
           <img src="/assets/dewarr.png" width="32" height="32" alt="" />
           <span>Dewarr</span>
@@ -435,7 +449,14 @@ function Shell({ auth }: { auth: Auth }) {
           <LogOut size={18} />
         </button>
         <p className="nav-caption">YOUR COLLECTION</p>
-        <nav aria-label="Main navigation">
+        <nav
+          id="main-navigation"
+          aria-label="Main navigation"
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest("a"))
+              setMobileMenu(false);
+          }}
+        >
           <NavLink to="/discover">
             <Compass size={19} />
             Discover
@@ -453,7 +474,7 @@ function Shell({ auth }: { auth: Auth }) {
           {admin && (
             <NavLink to="/review">
               <ListChecks size={19} />
-              Review
+              Library review
               {reviewing > 0 && (
                 <span className="nav-count">
                   {reviewing > 99 ? "99+" : reviewing}
@@ -514,18 +535,21 @@ function Shell({ auth }: { auth: Auth }) {
             <button type="submit">Search</button>
           </form>
           <ConnectionHealth />
-          {auth.user.role !== "viewer" && (
-            <div className="topbar-actions">
-              <button
-                className="topbar-action"
-                onClick={() => setAddingList(true)}
-              >
-                <ListPlus size={18} aria-hidden="true" />
-                Add list
-              </button>
-              <RefreshLists refresh={listsRefresh} />
-            </div>
-          )}
+          {auth.user.role !== "viewer" &&
+            /^\/(discover(?:\/collections\/[^/]+)?|lists(?:\/.*)?|following(?:\/.*)?)$/.test(
+              location.pathname,
+            ) && (
+              <div className="topbar-actions">
+                <button
+                  className="topbar-action"
+                  onClick={() => setAddingList(true)}
+                >
+                  <ListPlus size={18} aria-hidden="true" />
+                  Add list
+                </button>
+                <RefreshLists refresh={listsRefresh} />
+              </div>
+            )}
         </header>
         {addingList && (
           <Suspense fallback={<Loading />}>
@@ -540,7 +564,13 @@ function Shell({ auth }: { auth: Auth }) {
               {listsRefresh.busy ? "Refreshing lists…" : listsRefresh.message}
             </p>
           )}
-          <Suspense fallback={<Loading />}>
+          <Suspense
+            fallback={
+              <ContentSkeleton
+                kind={location.pathname.includes("/books/") ? "book" : "rows"}
+              />
+            }
+          >
             <Routes>
               <Route
                 path="/getting-started"

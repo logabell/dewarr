@@ -6,6 +6,7 @@ detail starts a torrent. A separate downloader metadata boundary resolves magnet
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import ipaddress
 import re
@@ -236,6 +237,19 @@ def parse_search(content, base_url, page):
         raise AdapterError(FailureKind.PARSER, "AudiobookBay returned too many postings.")
     items = {}
     for post in posts:
+        # ABB's browser script expands base64 HTML inside marked postings.
+        # Decode that public markup without running scripts; one encoded row
+        # must not hide the rest of an otherwise valid search page.
+        if "re-ab" in post.get("class", []):
+            try:
+                markup = base64.b64decode("".join(post.get_text().split()), validate=True).decode(
+                    "utf-8"
+                )
+            except (binascii.Error, ValueError) as error:
+                raise AdapterError(
+                    FailureKind.PARSER, "AudiobookBay encoded posting could not be read."
+                ) from error
+            post = document(markup)
         link = post.select_one(".postTitle h2 a, .postTitle h1 a")
         try:
             path = detail_path(link.get("href") if link else None, base_url)

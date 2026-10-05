@@ -78,7 +78,11 @@ async def check_policy(db, row, *, lock=False):
         selection = await db.get(AcquisitionSelection, attempt.selection_id)
         mapping = selection.frozen["mapping"]
         if not approved(policy.configuration, current.probe, mapping) or not await verified_probe(
-            db, destination, await destination_configuration(db, destination), mapping
+            db,
+            destination,
+            await destination_configuration(db, destination),
+            mapping,
+            require_enabled=False,
         ):
             raise HTTPException(
                 409, "Verify this client's download folder for the library before importing"
@@ -347,6 +351,14 @@ def content_reason(group, files, release, *, omitted_audio_paths=None):
         if reason:
             return reason
     if len(selected) == 1:
+        from app.domain.audio_manifest import single_part_name
+
+        stem = PurePosixPath(selected[0]["path"]).stem
+        title = getattr(group, "title", None) or release["title"]
+        # A complete transfer of one explicitly labelled chapter/part is still
+        # not a complete book. A real book named "Chapter 37" stays eligible.
+        if single_part_name(stem, title):
+            return "This audio filename identifies one part of a larger recording"
         tags = (selected[0].get("technical") or {}).get("tags", {})
         if str(tags.get("track", "1")) not in {"1", "1/1"} or str(tags.get("disc", "1")) not in {
             "1",
@@ -359,7 +371,9 @@ def content_reason(group, files, release, *, omitted_audio_paths=None):
     # accepted; conflicting tags and multi-disc folders still require review.
     from app.importing.audio_order import numbered_sequence
 
-    numbered = numbered_sequence(file["path"] for file in selected)
+    numbered = numbered_sequence(
+        (file["path"] for file in selected), title=getattr(group, "title", None)
+    )
     totals, tracks, discs = set(), [], set()
     for index, file in enumerate(selected):
         tags = (file.get("technical") or {}).get("tags", {})

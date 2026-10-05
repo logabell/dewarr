@@ -69,7 +69,12 @@ async def followed_lists(
     if not rows:
         return FollowedListShelf(items=[], total=total or 0, offset=offset, limit=limit)
 
-    mapping = display_map(user)
+    # Limit identity traversal to the visible list page, while display_map still
+    # includes matching editions outside those lists for grouping and ownership.
+    mapping = display_map(
+        user,
+        select(ListEntry.work_id).where(ListEntry.list_id.in_([item.id for item, _ in rows])),
+    )
     roots = (
         select(ListEntry.list_id, mapping.c.work_id, func.min(ListEntry.position).label("position"))
         .join(mapping, mapping.c.origin_id == ListEntry.work_id)

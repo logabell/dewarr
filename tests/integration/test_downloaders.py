@@ -366,6 +366,64 @@ async def test_simple_connection_needs_no_credentials_or_worker_roots(
         assert decrypt_secrets(row.encrypted_secrets) == {"username": "", "password": ""}
 
 
+@pytest.mark.parametrize("kind", ["qbittorrent", "transmission", "deluge", "sabnzbd", "nzbget"])
+async def test_enable_toggle_preserves_saved_configuration(
+    client, admin, database, downloader_http, kind
+):
+    record = await create(client, kind=kind, api_key="saved-api-key" if kind == "sabnzbd" else None)
+    identifier = UUID(record["id"])
+    async with database() as db, db.begin():
+        row = await db.get(Integration, identifier)
+        row.status = "connected"
+        row.last_checked_at = datetime.now(UTC)
+        row.capabilities = {"version": "fixture"}
+        saved_config, saved_secrets = row.config, row.encrypted_secrets
+    for enabled in (False, True):
+        response = await client.put(
+            f"/api/downloaders/{identifier}",
+            json={
+                "kind": kind,
+                "name": record["name"],
+                "base_url": record["base_url"],
+                "category": record["category"],
+                "enabled": enabled,
+                "expected_generation": record["generation"],
+                "expected_enabled": not enabled,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["enabled"] is enabled
+        assert response.json()["generation"] == record["generation"]
+        assert response.json()["status"] == ("connected" if enabled else "disabled")
+        async with database() as db:
+            row = await db.get(Integration, identifier)
+            assert row.config == saved_config
+            assert row.encrypted_secrets == saved_secrets
+            assert row.capabilities == {"version": "fixture"}
+        if not enabled:
+            assert (await client.post(f"/api/downloaders/{identifier}/test")).status_code == 409
+            for stale_name in (record["name"], "Stale edited name"):
+                stale = await client.put(
+                    f"/api/downloaders/{identifier}",
+                    json={
+                        "kind": kind,
+                        "name": stale_name,
+                        "base_url": record["base_url"],
+                        "category": record["category"],
+                        "enabled": True,
+                        "expected_generation": record["generation"],
+                        "expected_enabled": True,
+                    },
+                )
+                assert stale.status_code == 409, stale.text
+            async with database() as db:
+                current = await db.get(Integration, identifier)
+                assert not current.enabled
+                assert current.name == record["name"]
+                assert current.credential_generation == record["generation"]
+    assert not downloader_http["calls"]
+
+
 async def test_changing_endpoint_drops_saved_credentials(client, admin, database, downloader_http):
     record = await create(client)
     response = await client.put(

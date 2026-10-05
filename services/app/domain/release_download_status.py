@@ -73,7 +73,9 @@ async def for_releases(db, owner_id, work_id, releases):
     statuses = {}
     receipts = (
         await db.execute(
-            select(Operation, SourceResult)
+            select(
+                Operation, SourceResult, AcquisitionSelection.state, AcquisitionSelection.message
+            )
             .join(
                 SourceResult,
                 cast(SourceResult.id, String) == Operation.payload["command"]["result_id"].astext,
@@ -82,6 +84,12 @@ async def for_releases(db, owner_id, work_id, releases):
                 AcquisitionIntent,
                 cast(AcquisitionIntent.id, String)
                 == Operation.payload["command"]["intent_id"].astext,
+            )
+            .outerjoin(
+                AcquisitionSelection,
+                (cast(AcquisitionSelection.id, String) == Operation.payload["selection_id"].astext)
+                & (AcquisitionSelection.intent_id == AcquisitionIntent.id)
+                & (AcquisitionSelection.owner_id == owner_id),
             )
             .where(
                 Operation.owner_id == owner_id,
@@ -102,7 +110,7 @@ async def for_releases(db, owner_id, work_id, releases):
             .order_by(Operation.created_at.desc(), Operation.id.desc())
         )
     ).all()
-    for operation, result in receipts:
+    for operation, result, selection_state, selection_message in receipts:
         key = identity(result.release_snapshot)
         if key not in wanted or key in statuses:
             continue
@@ -115,6 +123,8 @@ async def for_releases(db, owner_id, work_id, releases):
             "cancelled": "cancelled",
             "completed": "selected",
         }.get(operation.status, "needs-review")
+        if state == "selected" and selection_state == "cancelled":
+            state, message = "cancelled", selection_message
         statuses[key] = ReleaseDownloadStatus(
             state=state,
             message=message,

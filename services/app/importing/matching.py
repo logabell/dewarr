@@ -3,7 +3,7 @@
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import exists, false, func, or_, select
+from sqlalchemy import exists, false, or_, select
 
 from app.db.models import (
     Integration,
@@ -20,17 +20,16 @@ from app.domain.title_matching import compatible_title, title_search_variants
 from app.domain.work_graph import canonical_work
 from app.importing.file_editions import FILE_EDITION_PROVIDER
 from app.importing.match_evidence import (
-    ISBN_KEYS,
     MatchEvidence,
     catalog_identifiers,
     group_evidence,
-    isbn_forms,
+    identifier_matches_sql,
     language_key,
 )
 from app.importing.naming import StrictModel, fingerprint
 from app.importing.versioning import version_revision
 
-MATCHER_VERSION = 5
+MATCHER_VERSION = 6
 MAX_CANDIDATES = 50
 
 
@@ -82,7 +81,7 @@ def usable_version():
             ProviderObject.version_id == Version.id,
             ProviderObject.kind == "edition",
             WorkMetadataSource.accepted.is_(True),
-            WorkMetadataSource.provider.in_(["hardcover", "openlibrary"]),
+            WorkMetadataSource.provider.in_(["hardcover", "openlibrary", "audible", "custom"]),
         )
     )
     library = exists(
@@ -195,27 +194,12 @@ def candidate_evidence(facts, version, origin, work, needs_review):
 async def match_group(db, snapshot, grouping_revision, group):
     facts = group_evidence(snapshot, group)
     conditions = []
-    for item in facts.identifiers:
-        scheme, value = item.namespace, item.value
-        if scheme == "isbn":
-            for key in ISBN_KEYS:
-                conditions.append(
-                    func.regexp_replace(
-                        func.upper(
-                            func.regexp_replace(
-                                Version.identifiers[key].astext,
-                                r"^(urn:)?isbn([-_ ]?(10|13))?[[:space:]]*:[[:space:]]*",
-                                "",
-                                "i",
-                            )
-                        ),
-                        "[^0-9X]",
-                        "",
-                        "g",
-                    ).in_(isbn_forms(value))
-                )
-        elif scheme == "asin":
-            conditions.append(func.upper(Version.identifiers["asin"].astext) == value)
+    if facts.identifiers:
+        conditions.append(
+            identifier_matches_sql(
+                Version.identifiers, [(item.namespace, item.value) for item in facts.identifiers]
+            )
+        )
     # Put every exact identifier candidate before title-only suggestions. A
     # display limit must not hide an edition or manufacture uniqueness.
     identifier_condition = or_(*conditions) if conditions else false()
@@ -255,8 +239,16 @@ async def match_group(db, snapshot, grouping_revision, group):
         else []
     )
     candidates = []
+    # Many editions share the same origin. The query above refreshed those
+    # origins already; resolve each redirected work once within this pass.
+    # Never retain this cache across calls: a later review must see new evidence.
+    canonical = {}
     for version, origin, review, _ in rows[:MAX_CANDIDATES]:
-        work = await canonical_work(db, origin.id)
+        if origin.id not in canonical:
+            canonical[origin.id] = (
+                await canonical_work(db, origin.id) if origin.redirect_to else origin
+            )
+        work = canonical[origin.id]
         candidates.append(candidate_evidence(facts, version, origin, work, review))
     candidates.sort(
         key=lambda row: (not row.identifier_match, len(row.conflicts), str(row.version_id))

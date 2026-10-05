@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 import { api, result } from "../api/client";
@@ -85,6 +85,7 @@ export default function LibraryReview() {
   const selectedKey = params.get("item");
   const [input, setInput] = useState(q);
   const [resolved, setResolved] = useState("");
+  const [continueReview, setContinueReview] = useState(true);
   const update = (values: Record<string, string>) => {
     const next = new URLSearchParams(params);
     for (const [key, value] of Object.entries(values)) {
@@ -126,6 +127,30 @@ export default function LibraryReview() {
     ).values(),
   ];
   const selected = shown.find((item) => itemKey(item) === selectedKey);
+  const nextItem =
+    shown[shown.findIndex((item) => itemKey(item) === selectedKey) + 1];
+  useEffect(() => {
+    if (
+      selected &&
+      !nextItem &&
+      items.hasNextPage &&
+      !items.isFetching &&
+      !items.isFetchNextPageError
+    )
+      void items.fetchNextPage();
+  }, [
+    selectedKey,
+    !!nextItem,
+    items.hasNextPage,
+    items.isFetching,
+    items.isFetchNextPageError,
+  ]);
+  const remaining = Math.max(
+    0,
+    (items.data?.total || 0) -
+      shown.findIndex((item) => itemKey(item) === selectedKey) -
+      1,
+  );
   const close = () => update({ item: "", source: "" });
   const search = (event: FormEvent) => {
     event.preventDefault();
@@ -134,7 +159,7 @@ export default function LibraryReview() {
   const reasons = summary.data?.reasons ?? [];
   return (
     <div className="library-review">
-      <h1 className="sr-only">Review</h1>
+      <h1 className="workspace-title">Library review</h1>
       <nav className="page-tabs" aria-label="Review filter">
         {KINDS.map(({ id, label, count }) => {
           const total = summary.data ? count(summary.data) : 0;
@@ -259,8 +284,19 @@ export default function LibraryReview() {
           close={close}
           className="review-dialog"
         >
+          {selected.asset && (
+            <label className="check-label review-next-control">
+              <input
+                type="checkbox"
+                checked={continueReview}
+                onChange={(event) => setContinueReview(event.target.checked)}
+              />
+              Review next item after saving · {remaining} remaining
+            </label>
+          )}
           {selected.asset ? (
             <AssetReview
+              continueReview={continueReview && !!nextItem}
               item={selected}
               asset={selected.asset}
               close={close}
@@ -270,7 +306,9 @@ export default function LibraryReview() {
                     ? `Linked “${itemTitle(selected)}”. It now counts as owned.`
                     : `Left “${itemTitle(selected)}” unmatched.`,
                 );
-                close();
+                if (continueReview && nextItem)
+                  update({ item: itemKey(nextItem), source: "" });
+                else close();
               }}
             />
           ) : (
@@ -502,7 +540,9 @@ function AssetReview({
   asset,
   close,
   matched,
+  continueReview,
 }: {
+  continueReview: boolean;
   item: Item;
   asset: Asset;
   close: () => void;
@@ -516,26 +556,34 @@ function AssetReview({
     item.search_query ||
     `${searchTitle(asset.title)} ${authors[0] || ""}`.trim();
   return (
-    <>
-      <BackendReport
-        kind={asset.server_kind}
-        title={asset.title}
-        authors={authors}
-        narrators={asset.narrators}
-        library={asset.library_name}
-        paths={(asset.files || []).map((file) => file.path)}
-        reasons={asset.read_issues || []}
-        values={item.issue_values}
-        linked={asset.match_status !== "needs-review" ? item.linked_titles : []}
-        parts={
-          item.parts && asset.part_index
-            ? { index: asset.part_index, ...item.parts }
-            : null
-        }
-        openUrl={asset.open_url}
-      />
+    <div className="asset-review-layout">
+      <details className="review-evidence" open>
+        <summary>File and library evidence</summary>
+        <BackendReport
+          kind={asset.server_kind}
+          title={asset.title}
+          authors={authors}
+          narrators={asset.narrators}
+          library={asset.library_name}
+          paths={(asset.files || []).map((file) => file.path)}
+          reasons={asset.read_issues || []}
+          values={item.issue_values}
+          linked={
+            asset.match_status !== "needs-review" ? item.linked_titles : []
+          }
+          parts={
+            item.parts && asset.part_index
+              ? { index: asset.part_index, ...item.parts }
+              : null
+          }
+          openUrl={asset.open_url}
+        />
+      </details>
       <section className="review-find" aria-label="Find the book">
         <h3>Which book is this?</h3>
+        <p className="review-item-context">
+          <strong>{asset.title}</strong> · {asset.library_name}
+        </p>
         {item.auto_match && item.auto_match.status !== "matched" && (
           <div className="review-auto-match" role="note">
             <p>
@@ -577,6 +625,7 @@ function AssetReview({
             close={close}
             onMatched={matched}
             heading={false}
+            continueReview={continueReview}
           />
         ) : (
           <div className="book-match-search">
@@ -590,7 +639,7 @@ function AssetReview({
           </div>
         )}
       </section>
-    </>
+    </div>
   );
 }
 

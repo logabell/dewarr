@@ -33,6 +33,7 @@ from app.jobs.queue import enqueue
 TERMINAL = {"completed", "cancelled", "failed"}
 # Each book costs one to four Hardcover requests spaced about a second apart.
 BATCH = 25
+LOOKUP_FAILED = "Hardcover could not be read for this book."
 
 
 async def schedule_library_match(db, owner_id, integration_id, run_id):
@@ -163,8 +164,14 @@ async def match_library(operation_id):
                 cursor = next_cursor
                 continue
             fingerprint = evidence_hash(identity)
-            if (fields or {}).get("auto_match", {}).get("evidence") == fingerprint:
+            previous_match = (fields or {}).get("auto_match", {})
+            if (
+                previous_match.get("evidence") == fingerprint
+                and previous_match.get("reason") != LOOKUP_FAILED
+            ):
                 # Already tried with exactly this evidence. A resync with new details retries.
+                # Older failed lookups also used this fingerprint; they are not
+                # evidence of an actual no-match and should be tried again.
                 cursor = next_cursor
                 continue
             checked += 1
@@ -178,7 +185,11 @@ async def match_library(operation_id):
                 )
             except AdapterError as error:
                 await db.rollback()
-                if error.kind in {FailureKind.RATE_LIMIT, FailureKind.UNAVAILABLE}:
+                if error.kind in {
+                    FailureKind.RATE_LIMIT,
+                    FailureKind.UNAVAILABLE,
+                    FailureKind.TIMEOUT,
+                }:
                     paused = True
                     retry_after = error.retry_after or 60
                     checked -= 1
@@ -215,7 +226,7 @@ async def match_library(operation_id):
         operation.message = (
             f"Matched {matched} of {checked} library books to Hardcover"
             + (f"; added the series to {written} Audiobookshelf items" if written else "")
-            + ("; Hardcover asked us to wait; matching will resume automatically" if paused else "")
+            + ("; waiting to retry Hardcover; matching will resume automatically" if paused else "")
             + (f"; {warning}" if warning else "")
         )
         operation.payload = {
@@ -315,7 +326,7 @@ async def record(db, owner_id, work_id, identity, fingerprint, result):
         "evidence": fingerprint,
         "checked_at": datetime.now(UTC).isoformat(),
         "status": result.status if result else "unmatched",
-        "reason": result.reason if result else "Hardcover could not be read for this book.",
+        "reason": result.reason if result else LOOKUP_FAILED,
         "candidates": [
             {"external_id": book.external_id, "title": book.title, "authors": book.authors}
             for book in (result.candidates if result else [])[:5]
@@ -329,6 +340,9 @@ async def record(db, owner_id, work_id, identity, fingerprint, result):
             outcome["status"], outcome["reason"] = "unmatched", str(error.detail)
         else:
             saved = 1
+            from app.domain.catalog_enrichment import schedule_recording
+
+            await schedule_recording(db, user, work)
             db.add(
                 AuditEvent(
                     actor_id=owner_id,

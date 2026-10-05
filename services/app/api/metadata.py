@@ -151,12 +151,20 @@ async def provider_call(
         cache=operation not in {"list_page", "list_choices", "community_lists", "community_list"},
         on_stale=refresh if background and not force else None,
     ) as gateway:
-        adapter = (
-            Hardcover(gateway.request) if provider == "hardcover" else OpenLibrary(gateway.request)
-        )
+        from app.adapters.audible import Audible
+        from app.adapters.custom_metadata import CustomMetadata, remember
+
+        adapter = {
+            "hardcover": Hardcover,
+            "openlibrary": OpenLibrary,
+            "audible": Audible,
+            "custom": CustomMetadata,
+        }[provider](gateway.request)
         try:
             async with asyncio.timeout(60):
                 value = await getattr(adapter, operation)(*args)
+                if provider == "custom" and operation == "search" and not gateway.stale:
+                    await remember(value)
         except TimeoutError as error:
             raise AdapterError(
                 FailureKind.TIMEOUT, "The catalog lookup took too long. Retry it."
@@ -302,12 +310,32 @@ async def known_works(db, user, provider, external_ids, books=None):
     }
 
 
+class MetadataCapabilities(BaseModel):
+    custom_metadata: bool
+    audible_region: str
+    proxy_configured: bool
+    nyt_configured: bool
+
+
+@router.get("/capabilities", response_model=MetadataCapabilities)
+async def capabilities(user: CurrentUser):
+    from app.config import get_settings
+
+    settings = get_settings()
+    return MetadataCapabilities(
+        custom_metadata=bool(settings.custom_metadata_url),
+        audible_region=settings.audible_region,
+        proxy_configured=bool(settings.metadata_proxy_url),
+        nyt_configured=bool(settings.nyt_api_key),
+    )
+
+
 @router.get("/search", response_model=MetadataSearchPage)
 async def search(
     user: CurrentUser,
     db: Database,
     q: str = Query(min_length=1, max_length=300),
-    provider: Literal["automatic", "hardcover", "openlibrary"] = "automatic",
+    provider: Literal["automatic", "hardcover", "openlibrary", "audible", "custom"] = "automatic",
     page: int = Query(default=1, ge=1, le=100),
 ):
     if not q.strip():
@@ -334,6 +362,26 @@ async def search(
             warning = "Hardcover is unavailable; showing Open Library results. " + str(error)
         except AdapterError as fallback_error:
             raise adapter_http_error(fallback_error) from fallback_error
+    if provider == "automatic" and page == 1 and not result.items and not stale:
+        from app.config import get_settings
+
+        for fallback in [
+            *(["openlibrary"] if result.provider != "openlibrary" else []),
+            "audible",
+            *(["custom"] if get_settings().custom_metadata_url else []),
+        ]:
+            try:
+                candidate, fallback_stale, _ = await provider_call(
+                    db, user_id, fallback, "search", q.strip(), page, language
+                )
+            except AdapterError:
+                continue
+            if candidate.items and not fallback_stale:
+                result, stale = candidate, False
+                warning = (
+                    "The primary catalog had no results; showing supplemental matches for review."
+                )
+                break
     user = await current_actor(db, user_id)
     return MetadataSearchPage(
         **result.model_dump(exclude={"stale", "warning"}),
@@ -659,6 +707,9 @@ async def save_hardcover_match(work_id: UUID, user: Admin, db: Database):
             409, "The saved match changed during lookup. Review it before continuing."
         )
     await attach_source(db, work, match.book, verified_match=True)
+    from app.domain.catalog_enrichment import schedule_recording
+
+    await schedule_recording(db, user, work)
     db.add(
         AuditEvent(
             actor_id=user_id,
@@ -700,6 +751,7 @@ class VersionView(BaseModel):
     narrators: list[str]
     publication_year: int | None
     identifiers: dict[str, Any]
+    runtime_minutes: int | None = None
     owned: bool
     needs_review: bool
 
@@ -751,7 +803,7 @@ async def work_metadata(
             SourceView(
                 id=source.id,
                 work_id=source.work_id,
-                revision=revision(source_state(work, source))
+                revision=revision(await source_state(db, work, source))
                 if user.role == "admin" and scope == "identity"
                 else None,
                 provider=book.provider,
@@ -776,7 +828,7 @@ async def work_metadata(
             ProviderObject.version_id == Version.id,
             ProviderObject.kind == "edition",
             WorkMetadataSource.accepted.is_(True),
-            WorkMetadataSource.provider.in_(["hardcover", "openlibrary"]),
+            WorkMetadataSource.provider.in_(CATALOG_PROVIDERS),
         )
     )
     from app.importing.file_editions import FILE_EDITION_PROVIDER
@@ -865,6 +917,7 @@ async def work_metadata(
                 title=version.title,
                 language=version.language,
                 narrators=version.narrators,
+                runtime_minutes=version.runtime_minutes,
                 publication_year=version.publication_year,
                 identifiers=version.identifiers,
                 owned=available,

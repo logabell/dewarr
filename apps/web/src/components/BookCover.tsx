@@ -37,17 +37,23 @@ export default function BookCover({
   );
   const canAdd =
     actions &&
+    providerBook?.provider !== "audible" &&
     canDownload &&
     !!session &&
     !!(work || providerBook) &&
     !(work?.availability.ebook && work?.availability.audio);
   async function resolveWork() {
     let book = providerBook!;
-    if (book.provider === "goodreads") {
+    if (book.provider === "goodreads" || book.provider === "curation") {
       const resolved = result(
-        await api.GET("/api/discovery/goodreads/{external_id}", {
-          params: { path: { external_id: book.external_id } },
-        }),
+        await api.GET(
+          book.provider === "goodreads"
+            ? "/api/discovery/goodreads/{external_id}"
+            : "/api/discovery/curation/{external_id}",
+          {
+            params: { path: { external_id: book.external_id } },
+          },
+        ),
       );
       if (resolved.entry.work) return resolved.entry.work.id;
       if (!resolved.match.book)
@@ -57,7 +63,11 @@ export default function BookCover({
         );
       book = resolved.match.book;
     }
-    if (book.provider !== "hardcover" && book.provider !== "openlibrary")
+    if (
+      book.provider !== "hardcover" &&
+      book.provider !== "openlibrary" &&
+      book.provider !== "custom"
+    )
       throw new Error("Open this book to choose a supported catalog edition.");
     return result(
       await api.POST("/api/metadata/books/{provider}/{external_id}/import", {

@@ -96,6 +96,11 @@ for (const scenario of [
           csrf_token: "test",
         };
       else if (path === "/api/setup/onboarding") data = { status: "completed" };
+      else if (path === "/api/requests")
+        data = {
+          items: [{ targets: [{ inspection_id: "next-download" }] }],
+          total: 1,
+        };
       else if (path === "/api/organization/inspections/download")
         data = {
           id: "download",
@@ -104,7 +109,15 @@ for (const scenario of [
           plan_id: imported ? "plan" : null,
           snapshot: {
             revision: "inspection-revision",
-            files: files.map((path) => ({ path, medium, state: "inspected" })),
+            files: files.map((path) => ({
+              path,
+              extension: path.split(".").pop(),
+              identity: { size: 5242880 },
+              technical:
+                medium === "audio" ? { duration: 600, codec: "mp3" } : null,
+              medium,
+              state: "inspected",
+            })),
           },
           download: {
             attempt_id: "attempt",
@@ -344,6 +357,12 @@ for (const scenario of [
     }
     await expect(page.locator(".download-import-state")).toHaveText(
       "In library",
+    );
+    await expect(
+      page.getByRole("link", { name: "Review next download →" }),
+    ).toHaveAttribute(
+      "href",
+      "/organization/inspections?inspection=next-download",
     );
     expect(plans).toBe(1);
     expect(editions).toBe(scenario === "untagged" ? 1 : 0);

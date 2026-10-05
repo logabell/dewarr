@@ -42,7 +42,6 @@ BUFFER_FLOOR_GB = 10
 BONUS_CEILING = 5000
 UPLOAD_CHECK_HOURS = 3
 UPLOAD_PURCHASE_CAP = 12
-VIP_DOWNLOAD_BLOCKED = "This torrent requires active MyAnonamouse VIP."
 SEEDBOX_REFRESH = timedelta(hours=24)
 logger = logging.getLogger(__name__)
 
@@ -927,7 +926,7 @@ class MAMClient:
         item = page.items[0]
         enabled = requested or self.automation.use_wedge
         vip_until = None
-        if item.vip is True or (enabled and item.vip_freeleech is True):
+        if enabled and item.vip_freeleech is True:
             if self.cooldown:
                 raise AdapterError(
                     FailureKind.RATE_LIMIT,
@@ -936,8 +935,9 @@ class MAMClient:
                 )
             await asyncio.sleep(self.request_interval)
             vip_until = vip_until_from(await self.request("jsonLoad.php"))
-            if item.vip is True and not (vip_until and vip_until > datetime.now(UTC)):
-                raise AdapterError(FailureKind.UNSUPPORTED, VIP_DOWNLOAD_BLOCKED)
+        # jsonLoad documents classname, not vip_until. A missing or stale expiry
+        # cannot establish download rights (including Elite VIP accounts). Let
+        # MAM authorize the authenticated metadata request below.
         path = download_path(
             value["data"][0].get("dl"),
             source_id,

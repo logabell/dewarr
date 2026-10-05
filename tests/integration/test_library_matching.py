@@ -7,11 +7,13 @@ from sqlalchemy import select
 
 from app.adapters.audiobookshelf import Audiobookshelf
 from app.adapters.catalog_types import BookData, SearchPage
+from app.adapters.contracts import AdapterError, FailureKind
 from app.db.models import (
     AuditEvent,
     CatalogAccount,
     MetadataSettings,
     Operation,
+    User,
     Work,
     WorkMetadataSource,
 )
@@ -125,6 +127,72 @@ async def test_matching_is_on_by_default():
 
     assert MetadataPreferences().automatic_library_matching
     assert not MetadataPreferences().write_library_series
+
+
+@pytest.mark.parametrize(
+    "failure", [FailureKind.TIMEOUT, FailureKind.RATE_LIMIT, FailureKind.UNAVAILABLE]
+)
+async def test_transient_lookup_failure_retries_without_remembering_a_nonmatch(
+    client, admin, database, monkeypatch, failure
+):
+    await opt_in(database, admin)
+    connection = await connect(client)
+    fixture = ABSFixture({"storm": titled("storm", "Storm Front", ["Jim Butcher"])})
+    await sync(client, connection, fixture, "retryable-match-sync")
+    (operation,) = await match_operations(database)
+
+    async def fail(*args, **kwargs):
+        raise AdapterError(failure, "Temporary provider failure", retry_after=1)
+
+    monkeypatch.setattr("app.api.metadata.provider_call", fail)
+    await match_library(operation.id)
+    async with database() as db:
+        pending = await db.get(Operation, operation.id)
+        assert pending.status == "queued"
+        assert pending.payload["checked"] == 0 and pending.payload["cursor"] is None
+        work = await db.scalar(select(Work).where(Work.title == "Storm Front"))
+        assert "auto_match" not in work.metadata_fields
+    calls = []
+    monkeypatch.setattr("app.api.metadata.provider_call", hardcover(calls))
+    await match_library(operation.id)
+    async with database() as db:
+        completed = await db.get(Operation, operation.id)
+        assert completed.status == "completed"
+        assert completed.payload["checked"] == completed.payload["matched"] == 1
+        assert calls
+
+
+async def test_legacy_failed_lookup_is_retried_on_the_next_sync(
+    client, admin, database, monkeypatch
+):
+    from app.api.metadata import reader_lookup_identity
+    from app.domain.library_matching import evidence_hash
+
+    await opt_in(database, admin)
+    connection = await connect(client)
+    fixture = ABSFixture({"storm": titled("storm", "Storm Front", ["Jim Butcher"])})
+    await sync(client, connection, fixture, "legacy-failure-sync")
+    async with database() as db, db.begin():
+        work = await db.scalar(select(Work).where(Work.title == "Storm Front"))
+        user = await db.get(User, UUID(admin["id"]))
+        identity = await reader_lookup_identity(db, user, work.id)
+        work.metadata_fields = {
+            **work.metadata_fields,
+            "auto_match": {
+                "evidence": evidence_hash(identity),
+                "status": "unmatched",
+                "reason": "Hardcover could not be read for this book.",
+                "candidates": [],
+            },
+        }
+    (operation,) = await match_operations(database)
+    calls = []
+    monkeypatch.setattr("app.api.metadata.provider_call", hardcover(calls))
+    await match_library(operation.id)
+    async with database() as db:
+        finished = await db.get(Operation, operation.id)
+        assert finished.status == "completed" and finished.payload["matched"] == 1
+        assert calls
 
 
 async def test_nothing_is_queued_when_the_admin_turns_matching_off(client, admin, database):

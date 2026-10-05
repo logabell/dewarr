@@ -4,9 +4,11 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from sqlalchemy import func, select, text
 
+from app.adapters.mam import MAMClient
 from app.db.models import (
     AcquisitionProfile,
     AcquisitionSelection,
@@ -16,7 +18,7 @@ from app.db.models import (
     User,
     Work,
 )
-from app.domain import book_sources
+from app.domain import book_sources, source_network
 from app.domain.book_sources import SearchInput
 from app.jobs.retry import SourceSearchRetry
 from tests.integration.test_acquisition import catalog  # noqa: F401
@@ -27,6 +29,7 @@ from tests.integration.test_prowlarr_sources import configure as configure_prowl
 from tests.integration.test_prowlarr_sources import prowlarr_http  # noqa: F401
 from tests.mam_fixture import release_row, search_response
 from tests.prowlarr_fixture import indexer, release
+from tests.torrent_fixture import torrent_bytes
 
 pytestmark = pytest.mark.integration
 
@@ -190,11 +193,79 @@ async def test_incremental_ranked_private_results_preserve_mam_fields_and_owners
             == 2
         )
     source_row = next(i for i in complete["items"] if i["release"]["source"] == "prowlarr")
+    rejected_wedge = await client.post(
+        f"/api/source-searches/{identifier}/results/{source_row['id']}/artifact?use_wedge=true"
+    )
+    assert rejected_wedge.status_code == 422
     artifact = await client.post(
         f"/api/source-searches/{identifier}/results/{source_row['id']}/artifact"
     )
     assert artifact.status_code == 200, artifact.text
     assert artifact.json()["source_key"] == "prowlarr"
+
+
+@pytest.mark.parametrize("access", ["admin", "requester", "audio", "ebook"])
+async def test_review_inspection_honors_explicit_wedge_even_for_cached_artifact(
+    client, admin, catalog, source_http, monkeypatch, database, access
+):
+    await configure_mam(client)
+    saved = await begin(client, catalog)
+    await book_sources.run(UUID(saved["id"]), "mam")
+    source_row = (await read(client, saved["id"])).json()["items"][0]
+    endpoint = f"/api/source-searches/{saved['id']}/results/{source_row['id']}/artifact"
+    protected = False
+    downloads = []
+    calls = []
+    if access != "admin":
+        from app.db.models import LibraryGrant
+        from app.domain.permissions import AUTO_APPROVE_AUDIO, AUTO_APPROVE_EBOOK, REQUESTER
+
+        async with database() as db, db.begin():
+            user = await db.get(User, UUID(admin["id"]))
+            user.role = "member"
+            user.permissions = (
+                REQUESTER
+                | {"requester": 0, "audio": AUTO_APPROVE_AUDIO, "ebook": AUTO_APPROVE_EBOOK}[access]
+            )
+            db.add(LibraryGrant(user_id=user.id, library_id=catalog["library"]))
+
+    async def handler(request):
+        nonlocal protected
+        calls.append(str(request.url))
+        if request.url.path.endswith("loadSearchJSONbasic.php"):
+            return httpx.Response(
+                200,
+                json=search_response(data=[release_row(free=0, personal_freeleech=protected)]),
+            )
+        assert request.url.path == "/tor/download.php/fixture-private-download-token"
+        downloads.append("fl" in request.url.params)
+        if "fl" in request.url.params:
+            assert not protected, "An already-protected release must not spend another wedge"
+            protected = True
+        return httpx.Response(200, content=torrent_bytes())
+
+    monkeypatch.setattr(
+        source_network,
+        "MAMClient",
+        lambda *args, **kwargs: MAMClient(*args, **kwargs, transport=httpx.MockTransport(handler)),
+    )
+    initial = await client.post(endpoint)
+    assert initial.status_code == 200, initial.text
+    assert downloads == [False]
+    before_review = len(calls)
+    reviewed = await client.post(endpoint, params={"use_wedge": "true"})
+    if access in {"requester", "ebook"}:
+        assert reviewed.status_code == 403, reviewed.text
+        assert len(calls) == before_review
+        assert downloads == [False] and not protected
+        return
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["id"] == initial.json()["id"]
+    assert downloads == [False, True]
+    repeated = await client.post(endpoint, params={"use_wedge": "true"})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["id"] == initial.json()["id"]
+    assert downloads == [False, True, False]
 
 
 async def test_source_failure_retains_completed_sibling(

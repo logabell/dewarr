@@ -8,6 +8,92 @@ from app.importing.linked_download import agrees_with_request
 from app.importing.match_evidence import MatchEvidence
 
 
+@pytest.mark.parametrize(
+    "change",
+    [None, "missing-title", "missing-author", "wrong-author", "wrong-title", "invalid", "rejected"],
+)
+def test_multiple_isbns_need_independent_book_identity(change):
+    from app.importing.linked_download import MULTIPLE_IDENTIFIERS
+
+    work = SimpleNamespace(
+        title="First Harbor",
+        authors=["Alex Morgan"],
+        language="en",
+        metadata_fields={"identity_rejected": change == "rejected"},
+    )
+    facts = MatchEvidence(
+        titles=[]
+        if change == "missing-title"
+        else ["other book" if change == "wrong-title" else "first harbor"],
+        authors=[]
+        if change == "missing-author"
+        else [["other author" if change == "wrong-author" else "alex morgan"]],
+        identifiers=[
+            {"namespace": "isbn", "value": "9781234567897"},
+            {"namespace": "isbn", "value": "9780306406157"},
+        ],
+        issues=[MULTIPLE_IDENTIFIERS]
+        + (["An embedded edition identifier is invalid"] if change == "invalid" else []),
+    )
+    assert agrees_with_request(work, {"title": work.title, "authors": work.authors}, facts) is (
+        change is None
+    )
+
+
+@pytest.mark.parametrize(
+    "case", ["same-book", "other-book", "pending", "specific-edition", "ambiguous"]
+)
+async def test_multiple_isbns_do_not_override_catalog_conflicts(monkeypatch, case):
+    from app.importing import linked_download
+
+    work = SimpleNamespace(
+        id=uuid4(), title="First Harbor", authors=["Alex Morgan"], language="en", metadata_fields={}
+    )
+    facts = MatchEvidence(
+        titles=["first harbor"],
+        authors=[["alex morgan"]],
+        issues=[linked_download.MULTIPLE_IDENTIFIERS],
+    )
+    candidate = SimpleNamespace(
+        identifier_match=True,
+        work_id=uuid4() if case == "other-book" else work.id,
+        conflicts=["Resolve this catalog version's pending metadata conflict"]
+        if case == "pending"
+        else [linked_download.UNSUPPORTED_IDENTIFIERS],
+    )
+    selection = SimpleNamespace(
+        owner_id=uuid4(),
+        frozen={
+            "origin_work_id": str(work.id),
+            "requirements": {
+                "medium": "ebook",
+                "version_id": str(uuid4()) if case == "specific-edition" else None,
+            },
+            "release": {"title": work.title, "authors": work.authors},
+        },
+    )
+    version = SimpleNamespace(id=uuid4())
+    attach = AsyncMock(return_value=(version, True))
+    monkeypatch.setattr(linked_download, "canonical_work", AsyncMock(return_value=work))
+    monkeypatch.setattr(linked_download, "identity", AsyncMock(return_value={"series": []}))
+    monkeypatch.setattr(linked_download, "group_evidence", lambda *args: facts)
+    monkeypatch.setattr(linked_download, "attach_file_edition", attach)
+    result = await linked_download.linked_version(
+        AsyncMock(),
+        None,
+        selection,
+        SimpleNamespace(id=uuid4(), snapshot={}),
+        SimpleNamespace(key="book", medium="ebook"),
+        "revision",
+        match=SimpleNamespace(
+            candidates=[candidate, candidate] if case == "ambiguous" else [candidate]
+        ),
+    )
+    accepted = case in {"same-book", "ambiguous"}
+    assert result is (version if accepted else None)
+    assert attach.await_count == int(accepted)
+
+
 def test_proxied_author_title_names_identify_untagged_completed_audio():
     work = SimpleNamespace(
         title="The Anxious Generation: A Descriptive Subtitle",

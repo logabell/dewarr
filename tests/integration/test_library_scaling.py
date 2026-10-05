@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -12,9 +13,21 @@ from sqlalchemy import select, text, update
 
 from app.adapters.audiobookshelf import Audiobookshelf
 from app.adapters.contracts import AdapterError, FailureKind, ResponseTooLarge
-from app.db.models import InventoryItemState, LibraryAsset, Operation, Work
+from app.config import get_settings
+from app.db.models import (
+    EbookCompanion,
+    ImportDestination,
+    InventoryItemState,
+    Library,
+    LibraryAsset,
+    Operation,
+    Version,
+    Work,
+)
 from app.domain.catalog_titles import display_title_sql
 from app.domain.library_matching import match_library
+from app.importing.destinations import destination_configuration
+from app.importing.filesystem import identity
 from app.importing.ownership import already_owned
 from app.jobs.queue import get_queue
 from app.jobs.worker import run_pools
@@ -81,6 +94,109 @@ class RichSummary(ABSFixture):
                 row.update(path=f"/private/library/{row['id']}", media=copy.deepcopy(item["media"]))
             return httpx.Response(200, json=payload)
         return response
+
+
+async def test_cached_census_retains_tracked_nonprimary_ebook_and_detects_its_removal(
+    client, admin, database, tmp_path, monkeypatch
+):
+    connection = await connect(client)
+    raw = book("one")
+    raw["path"] = "/private/library/one"
+    fixture = RichSummary({"one": raw})
+    await sync(client, connection, fixture, "companion-audio-initial")
+    root = tmp_path / "library"
+    (root / "one").mkdir(parents=True)
+    copy_path = root / "one/book.epub"
+    copy_path.write_bytes(b"complete tracked ebook")
+    monkeypatch.setattr(get_settings(), "import_destinations", {"companion-audio": root})
+    async with database() as db, db.begin():
+        audio = await db.scalar(
+            select(LibraryAsset).where(
+                LibraryAsset.external_id == "one", LibraryAsset.medium == "audio"
+            )
+        )
+        version = await db.get(Version, audio.version_id)
+        ebook = Version(work_id=version.work_id, medium="ebook")
+        destination = ImportDestination(
+            root_key="companion-audio",
+            library_id=audio.library_id,
+            medium="audio",
+            backend_path="/private/library",
+            enabled=True,
+        )
+        db.add_all([ebook, destination])
+        await db.flush()
+        original = LibraryAsset(
+            library_id=audio.library_id,
+            external_id="canonical",
+            version_id=ebook.id,
+            medium="ebook",
+            state="missing-confirmed",
+            match_status="matched",
+            full_content=False,
+        )
+        db.add(original)
+        await db.flush()
+        db.add(
+            EbookCompanion(
+                library_id=audio.library_id,
+                source_asset_id=original.id,
+                target_asset_id=audio.id,
+                version_id=ebook.id,
+                source_path="/private/library/canonical/book.epub",
+                target_path="/private/library/one/book.epub",
+                configuration={
+                    "target_destination_id": str(destination.id),
+                    "target": await destination_configuration(db, destination),
+                    "target_relative": "one/book.epub",
+                },
+                receipt={
+                    **identity(copy_path.stat()),
+                    "sha256": hashlib.sha256(copy_path.read_bytes()).hexdigest(),
+                },
+                state="present",
+            )
+        )
+        library_id, ebook_id = audio.library_id, ebook.id
+    file = book("one", ebook="epub")["libraryFiles"][1]
+    file["metadata"]["size"] = copy_path.stat().st_size
+    raw["libraryFiles"].append(file)
+    raw["updatedAt"] = 2
+    assert "ebookFile" not in raw["media"]
+    await sync(client, connection, fixture, "companion-observed")
+    fixture.calls.clear()
+    await sync(client, connection, fixture, "companion-reused")
+    assert not any(path.endswith("batch/get") for path in fixture.calls)
+    async with database() as db:
+        library = await db.get(Library, library_id)
+        companion = await db.scalar(
+            select(LibraryAsset).where(
+                LibraryAsset.external_id == "one", LibraryAsset.medium == "ebook"
+            )
+        )
+        cached = await db.scalar(
+            select(InventoryItemState).where(InventoryItemState.item_external_id == "one")
+        )
+        assert set(cached.observed_media) == {"audio", "ebook"}
+        assert companion.state == "present" and companion.full_content
+        assert companion.seen_generation == library.generation
+        assert await already_owned(db, ebook_id, library_id)
+        companion_id = companion.id
+    raw["libraryFiles"] = raw["libraryFiles"][:1]
+    raw["updatedAt"] = 3
+    copy_path.unlink()
+    await sync(client, connection, fixture, "companion-removed")
+    fixture.calls.clear()
+    await sync(client, connection, fixture, "companion-removed-reused")
+    assert not any(path.endswith("batch/get") for path in fixture.calls)
+    async with database() as db:
+        companion = await db.get(LibraryAsset, companion_id)
+        cached = await db.scalar(
+            select(InventoryItemState).where(InventoryItemState.item_external_id == "one")
+        )
+        assert cached.observed_media == ["audio"]
+        assert companion.state == "missing-suspected" and not companion.full_content
+        assert not await already_owned(db, ebook_id, library_id)
 
 
 async def test_unchanged_inventory_reuses_details_but_changed_or_expired_evidence_does_not(

@@ -29,6 +29,7 @@ export default function SourceReleaseDetails({
   close,
   disabled,
   canAcquire,
+  reviewContext,
 }: {
   item: Item;
   searchId: string;
@@ -36,6 +37,7 @@ export default function SourceReleaseDetails({
   close: () => void;
   disabled: boolean;
   canAcquire: boolean;
+  reviewContext?: string;
 }) {
   const [tab, setTab] = useState("Description");
   const tabsId = useId();
@@ -73,10 +75,40 @@ export default function SourceReleaseDetails({
         <p className="muted">
           {release.authors?.join(", ") || "Author not supplied"}
         </p>
+        <dl className="release-decision-facts">
+          <div>
+            <dt>Format</dt>
+            <dd>{release.formats?.join(", ").toUpperCase() || "Unknown"}</dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd>
+              {release.size_bytes == null
+                ? "Unknown"
+                : transferSize(release.size_bytes)}
+            </dd>
+          </div>
+          <div>
+            <dt>Availability</dt>
+            <dd>
+              {release.protocol === "soulseek"
+                ? "Peer online"
+                : `${release.seeders ?? "Unknown"} seeders`}
+            </dd>
+          </div>
+          <div>
+            <dt>Narrator</dt>
+            <dd>{release.narrators?.join(", ") || "Not supplied"}</dd>
+          </div>
+        </dl>
+        {!!item.assessment.blocked.length && (
+          <p className="notice error">{item.assessment.blocked.join(" · ")}</p>
+        )}
         <div className="release-detail-actions">
           {canAcquire && (
             <SourceReleaseDownload
               possibleCollection={item.possible_collection}
+              reviewContext={reviewContext}
               searchId={searchId}
               resultId={item.id}
               title={release.title}

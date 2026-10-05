@@ -18,6 +18,7 @@ from pydantic import (
     model_validator,
 )
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Bundle
 
 from app.config import get_settings
 from app.db.models import (
@@ -358,9 +359,21 @@ async def inventory_candidates(db, user, work_id):
         .correlate(LibraryAsset)
         .scalar_subquery()
     )
-    return (
+    # Status checks need only ownership/rule evidence, not recording manifests
+    # or metadata snapshots. Bundles keep these projections out of the session's
+    # identity map so later import work still loads complete ORM entities.
+    asset = Bundle(
+        "asset",
+        LibraryAsset.id,
+        LibraryAsset.medium,
+        LibraryAsset.state,
+        LibraryAsset.full_content,
+        LibraryAsset.containment,
+    )
+    version = Bundle("version", Version.id, Version.language, Version.abridged, Version.narrators)
+    rows = (
         await db.execute(
-            select(LibraryAsset, Version, coverage)
+            select(asset, version, coverage)
             .outerjoin(
                 Version,
                 and_(
@@ -388,6 +401,7 @@ async def inventory_candidates(db, user, work_id):
             .order_by(LibraryAsset.id)
         )
     ).all()
+    return [(asset, version if version.id else None, count) for asset, version, count in rows]
 
 
 def asset_satisfies(asset, version, count, rule):

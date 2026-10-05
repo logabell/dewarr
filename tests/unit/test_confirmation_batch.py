@@ -1,7 +1,27 @@
 import pytest
 
+from app.adapters.contracts import AdapterError, FailureKind
 from app.importing.confirmation import DiscoveryBatch
 from app.importing.publication import PublicationError
+
+
+async def test_failed_shared_scan_is_retried_for_the_next_confirmation():
+    class Backend:
+        calls = 0
+
+        async def scan(self, library_id):
+            self.calls += 1
+            if self.calls == 1:
+                raise AdapterError(FailureKind.TIMEOUT, "Scan timed out")
+
+    backend = Backend()
+    batch = DiscoveryBatch(backend, "library", ["/books/one", "/books/two"])
+    with pytest.raises(AdapterError):
+        await batch.scan("library")
+    await batch.scan("library")
+    assert backend.calls == 2
+    await batch.scan("library")
+    assert backend.calls == 2
 
 
 async def test_discovery_reuses_pages_invalidates_scope_and_isolates_duplicate_folders():

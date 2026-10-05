@@ -50,7 +50,7 @@ from app.domain.release_profiles import (
     source_popularity,
 )
 from app.domain.request_scope import SCOPE_FIELDS
-from app.domain.source_artifacts import persist_artifact
+from app.domain.source_artifacts import persist_artifact, persist_file_list
 from app.domain.source_network import source_call
 from app.domain.work_graph import acquisition_lock
 from app.importing.versioning import version_revision
@@ -443,27 +443,35 @@ async def repair(db, operation):
 
 
 async def candidates(db, operation, work, profile, rule, version):
+    from app.domain import release_blocklist
+    from app.domain.pack_expansion import matches_source, pinned_source
+
     search_id = UUID(operation.payload["command"]["search_id"])
+    pinned = operation.payload["command"].get("result_id")
     rows = list(
         await db.scalars(
             select(SourceResult).where(
                 SourceResult.operation_id == search_id,
                 SourceResult.owner_id == operation.owner_id,
+                SourceResult.id == UUID(pinned) if pinned else True,
             )
         )
     )
     sources = {s.key: s for s in await db.scalars(select(SourceConnection))}
+    blocked_keys = (
+        await release_blocklist.active_keys(db, work.id, rule["medium"]) if rows else set()
+    )
+    root_id = operation.payload.get("recovery_selection_id")
+    if root_id and rows:
+        from app.domain.download_recovery import frozen_context
+
+        _, original_rule, original_profile = await frozen_context(db, root_id, rule, profile)
     ranked = []
     for row in rows:
-        pinned = operation.payload["command"].get("result_id")
-        if pinned and str(row.id) != pinned:
-            continue
         release = release_value(row)
         verified = operation.payload.get("verified", {}).get(str(row.id))
         if verified:
             release = type(release).model_validate(verified["release"])
-        from app.domain.pack_expansion import matches_source, pinned_source
-
         problems = eligibility(
             release,
             operation.payload["work"],
@@ -477,15 +485,9 @@ async def candidates(db, operation, work, profile, rule, version):
             pinned_source(operation.payload.get("series_authority")), row, release
         ):
             problems.append("Additional pack books must use their originally selected torrent")
-        from app.domain import release_blocklist
-
-        if await release_blocklist.blocked(db, work.id, rule["medium"], release):
+        if blocked_keys.intersection(release_blocklist.release_keys(release)[1]):
             problems.append("This release is blocklisted for this book and medium")
-        root_id = operation.payload.get("recovery_selection_id")
         if root_id:
-            from app.domain.download_recovery import frozen_context
-
-            _, original_rule, original_profile = await frozen_context(db, root_id, rule, profile)
             problems.extend(
                 eligibility(
                     release,
@@ -539,6 +541,12 @@ async def candidates(db, operation, work, profile, rule, version):
 async def resolve_candidate(
     owner_id, row, *, downloader_id=None, downloader_generation=None, use_wedge=False
 ):
+    if row.source_key == "slskd":
+        # Soulseek search already supplies the peer's file list. It has no
+        # torrent or Prowlarr download reference to resolve.
+        release = release_value(row)
+        identifier = await persist_file_list(owner_id, release, row.source_generation)
+        return identifier, release
     if row.source_key == "audiobookbay":
         from app.domain.audiobookbay_network import resolve_abb
 
@@ -825,6 +833,7 @@ async def run(identifier):
             raise SourceSearchRetry(getattr(error, "retry_after", None) or 60) from None
         return
     soulseek_batch = None
+    soulseek_route = None
     accepted_batch = False
     try:
         async with session_factory()() as db, db.begin():
@@ -1057,7 +1066,7 @@ async def run(identifier):
                     )
                     batch = str(uuid4())
                     try:
-                        await queue_folder(fresh, batch)
+                        soulseek_route = await queue_folder(fresh, batch)
                     except AdapterError as error:
                         retry = error.kind in {
                             FailureKind.RATE_LIMIT,
@@ -1184,7 +1193,7 @@ async def run(identifier):
 
                 await hold_selection(db, operation, error)
     finally:
-        if soulseek_batch and not accepted_batch:
+        if soulseek_batch and soulseek_route is not None and not accepted_batch:
             from app.domain.slskd_transfers import cancel_folder
 
-            await cancel_folder(fresh.username, soulseek_batch)
+            await cancel_folder(fresh.username, soulseek_batch, route=soulseek_route)

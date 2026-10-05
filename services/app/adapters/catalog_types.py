@@ -4,8 +4,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
-Provider = Literal["hardcover", "openlibrary"]
-CATALOG_PROVIDERS = ("hardcover", "openlibrary")
+Provider = Literal["hardcover", "openlibrary", "audible", "custom"]
+CATALOG_PROVIDERS = ("hardcover", "openlibrary", "audible", "custom")
 
 
 def year(value) -> int | None:
@@ -31,6 +31,9 @@ def cover_url(value) -> str | None:
                 "covers.libro.fm",
                 "i.gr-assets.com",
                 "images.gr-assets.com",
+                "m.media-amazon.com",
+                "images-na.ssl-images-amazon.com",
+                "static01.nyt.com",
             }
         ):
             return value
@@ -51,6 +54,9 @@ class EditionData(BaseModel):
     identifiers: dict[str, str] = Field(default_factory=dict)
     cover_url: str | None = None
     abridged: bool | None = None
+    runtime_minutes: int | None = Field(default=None, gt=0, le=100000)
+    release_date: str | None = None
+    field_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class SeriesData(BaseModel):
@@ -76,6 +82,7 @@ class BookData(BaseModel):
     editions_offset: int = 0
     series: list[SeriesData] = Field(default_factory=list)
     canonical_id: str | None = None
+    source_url: str | None = None
 
     @field_validator("authors")
     @classmethod

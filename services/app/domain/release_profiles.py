@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from app.db.models import AcquisitionDefaults, AcquisitionProfile
 from app.domain import narrators
 from app.domain.catalog_titles import optional_subtitle_base, parse_title_labels
+from app.domain.indexer_labels import indexer_language, indexer_suffixes, label_language
 from app.domain.narrators import NarratorNames
 from app.domain.request_scope import ScopePreferences
 from app.domain.series_identity import position_key, title_outside_series_note
@@ -353,7 +354,8 @@ _RELEASE_PART = re.compile(
 )
 _RELEASE_DRAMATIZED = re.compile(
     r"[\(\[]?\s*\b(?:graphic\s*audio|dramati[sz](?:ed|ation)(?:\s+adaptation)?|"
-    r"full[- ]cast(?:\s+(?:edition|dramati[sz]ation|production|recording))?)\b\s*[\)\]]?",
+    r"full[- ]cast(?:\s+(?:edition|dramati[sz]ation|production|recording))?|"
+    r"hoerspiel|hörspiel)\b\s*[\)\]]?",
     re.I,
 )
 
@@ -412,6 +414,7 @@ def indexer_title_authors(release, work):
         r"(?:\.|\s)(?:m4b|mp3|epub|pdf|flac|aac|ogg|opus|azw3|mobi)\s*$", "", title, flags=re.I
     )
     actual = normalized(title)
+    labelled_titles = {normalized(prefix) for prefix, _ in indexer_suffixes(title)}
     expected_titles = {
         normalized(parse_title_labels(work["title"]).title),
         normalized(optional_subtitle_base(work["title"])),
@@ -433,7 +436,9 @@ def indexer_title_authors(release, work):
             for pair in (f"{author} {expected}", f"{expected} {author}", f"{expected} by {author}"):
                 # Match the book first so a year or "Retail" in its actual title
                 # is never stripped away. Unknown suffixes still need review.
-                if re.fullmatch(rf"{re.escape(pair)}(?: (?:19|20)\d{{2}})?(?: retail)?", actual):
+                if pair in labelled_titles or re.fullmatch(
+                    rf"{re.escape(pair)}(?: (?:19|20)\d{{2}})?(?: retail)?", actual
+                ):
                     matched.add(authors[author])
     if not matched and not re.search(r"\.(?:rar|zip|7z|par2)$", title, re.I):
         # Indexers often use "Author - Title- Subtitle" when the catalog has
@@ -478,7 +483,50 @@ def indexer_title_authors(release, work):
     return sorted(matched)
 
 
+def catalog_language_release(release, work):
+    """Infer postfix language only beyond the matched catalog title/credit pair.
+
+    Keep this a copy: one source result can be assessed for different books.
+    Structured source language remains authoritative. Previously inferred title
+    language is recalculated so persisted ambiguous claims are corrected too.
+    """
+    if release.source != "prowlarr" or (
+        release.language and release.details.get("language_basis") != "release_title"
+    ):
+        return release
+    title = release.title
+    titles = {
+        normalized(parse_title_labels(work["title"]).title),
+        normalized(optional_subtitle_base(work["title"])),
+    } - {""}
+    authors = {normalized(author) for author in work["authors"]} - {""}
+    for author in work["authors"]:
+        words = author.split()
+        for split in range(1, len(words)):
+            given, surname = " ".join(words[:split]), " ".join(words[split:])
+            if re.search(rf"\b{re.escape(surname)},\s*{re.escape(given)}\b", title, re.I):
+                authors.add(normalized(f"{surname} {given}"))
+    prefixes = titles | {
+        pair
+        for expected in titles
+        for author in authors
+        for pair in (f"{author} {expected}", f"{expected} {author}", f"{expected} by {author}")
+    }
+    language = indexer_language(title)
+    for prefix, labels in indexer_suffixes(title):
+        if normalized(prefix) in prefixes or normalized(_RELEASE_TAG.sub(" ", prefix)) in prefixes:
+            # Stop at the longest match: 'The Good German.Audiobook' has no
+            # language label; German remains part of the actual title.
+            language = label_language(labels, catalog_boundary=True)
+            break
+    details = {key: value for key, value in release.details.items() if key != "language_basis"}
+    if language:
+        details["language_basis"] = "release_title"
+    return release.model_copy(update={"language": language, "details": details})
+
+
 def assess_release(release, work, preferences, medium="all"):
+    release = catalog_language_release(release, work)
     raw, part, dramatized = release_labels(getattr(release, "title", release.raw_title))
     title, expected = normalized(raw), normalized(parse_title_labels(work["title"]).title)
     title_agrees = compatible_title(raw, work["title"])
@@ -516,6 +564,8 @@ def assess_release(release, work, preferences, medium="all"):
         explanation.append(
             "Format reported in the release name; downloaded files still need inspection"
         )
+    if release.details.get("language_basis") == "release_title":
+        explanation.append("Language reported in the release name")
     if same_edition:
         explanation.append("The source's ISBN or ASIN matches an edition of this book")
     if dramatized:

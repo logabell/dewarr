@@ -92,6 +92,9 @@ async def public_addresses(host):
 
 
 async def download_cover(url, *, transport=None, resolver=public_addresses):
+    from app.config import get_settings
+
+    proxy = get_settings().metadata_proxy_url
     marker = _cover_request.set(True)
     try:
         member = None
@@ -100,6 +103,7 @@ async def download_cover(url, *, transport=None, resolver=public_addresses):
             asyncio.timeout(30),
             httpx.AsyncClient(
                 transport=transport,
+                proxy=proxy.get_secret_value() if proxy else None,
                 trust_env=False,
                 follow_redirects=False,
                 timeout=httpx.Timeout(10, connect=5),

@@ -15,6 +15,7 @@ test("naming lanes stay on one line and preserve independent format settings", a
     audio_filename: "[{disc}-][{track} - ]{title}",
     ebook_filename: "{title}",
     merge_mp3_chapters: false,
+    ebooks_with_audio: false,
   };
   let profile = { ...defaults };
   let revision = 1;
@@ -152,6 +153,20 @@ test("naming lanes stay on one line and preserve independent format settings", a
     "Narrator",
   ]);
   await page.getByRole("checkbox", { name: "Language", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Adjust dashes and folders", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "Join Narrator in Folder token order" })
+    .selectOption("braces");
+  await page
+    .getByRole("checkbox", {
+      name: "Place ebooks inside matching audiobook version folders",
+    })
+    .check();
+  await expect
+    .poll(() => previews.at(-1)?.audio_folder)
+    .toContain("[ {{{narrator}}}]");
   await page.getByRole("button", { name: "Ebook", exact: true }).click();
   await page.getByRole("button", { name: "By author", exact: true }).click();
   await expect(page.getByLabel("Example destination path")).toContainText(
@@ -159,9 +174,17 @@ test("naming lanes stay on one line and preserve independent format settings", a
   );
   await page.getByRole("button", { name: "Save naming settings" }).click();
   expect(profile.ebook_folder).toBe("{author}/{title}");
-  expect(profile.audio_folder).toBe(`${defaults.audio_folder}[ - {language}]`);
+  expect(profile.audio_folder).toBe(
+    `${defaults.audio_folder.replace("[ - {narrator}]", "[ {{{narrator}}}]")}[ - {language}]`,
+  );
   expect(profile.merge_mp3_chapters).toBe(false);
+  expect(profile.ebooks_with_audio).toBe(true);
   await page.reload();
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Place ebooks inside matching audiobook version folders",
+    }),
+  ).toBeChecked();
   await page.getByRole("button", { name: "Audiobook", exact: true }).click();
   await expect(
     page.getByRole("checkbox", { name: "Language", exact: true }),

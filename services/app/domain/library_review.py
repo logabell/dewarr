@@ -48,14 +48,19 @@ async def review_counts(db, library_ids=None) -> dict[str, int]:
         assets = assets.where(LibraryAsset.library_id.in_(library_ids))
         issues = issues.where(LibraryReadIssue.library_id.in_(library_ids))
 
-    async def count(query):
-        return await db.scalar(select(func.count()).select_from(query.subquery()))
-
-    matching = await count(assets.where(NEEDS_MATCHING))
-    unread_assets = await count(assets.where(HAS_IDENTITY_ISSUES))
-    details = await count(assets.where(DETAILS_ONLY))
-    unread_items = await count(issues)
-    attention = await count(assets.where(or_(NEEDS_MATCHING, HAS_IDENTITY_ISSUES)))
+    # Categories overlap: one item may need a match and have unreadable fields.
+    # Compute each count independently during the same scoped asset scan.
+    matching, unread_assets, details, attention = (
+        await db.execute(
+            assets.with_only_columns(
+                func.count().filter(NEEDS_MATCHING),
+                func.count().filter(HAS_IDENTITY_ISSUES),
+                func.count().filter(DETAILS_ONLY),
+                func.count().filter(or_(NEEDS_MATCHING, HAS_IDENTITY_ISSUES)),
+            )
+        )
+    ).one()
+    unread_items = await db.scalar(select(func.count()).select_from(issues.subquery()))
     return {
         "total": attention + unread_items,
         "needs_matching": matching,

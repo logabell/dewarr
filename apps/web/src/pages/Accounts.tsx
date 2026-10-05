@@ -106,6 +106,7 @@ function OidcSettingsPanel() {
     draft.userinfo_endpoint &&
     draft.jwks_uri,
   );
+  const mapsGroups = Boolean(draft?.group_claim?.trim());
   return (
     <details
       className="access-provider"
@@ -226,19 +227,27 @@ function OidcSettingsPanel() {
                   <option value="email">Verified email</option>
                 </select>
               </label>
-              <label>
-                New account access
-                <select
-                  value={draft.default_role}
-                  onChange={(event) =>
-                    update("default_role", event.target.value)
-                  }
-                >
-                  <option value="member">Member</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-              </label>
+              {(draft.auto_register || mapsGroups) && (
+                <label>
+                  {mapsGroups ? "Default access" : "New account access"}
+                  <select
+                    value={draft.default_role}
+                    onChange={(event) =>
+                      update("default_role", event.target.value)
+                    }
+                  >
+                    <option value="member">Member</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </label>
+              )}
             </div>
+            {mapsGroups && (
+              <p className="access-hint">
+                Used when no configured group matches. Applies to existing
+                accounts without a local password.
+              </p>
+            )}
             <label className="check-label">
               <input
                 type="checkbox"
@@ -517,18 +526,20 @@ function PlexSettingsPanel() {
               </label>
             ) : null}
             <div className="form-row">
-              <label>
-                New account access
-                <select
-                  value={draft.default_role}
-                  onChange={(event) =>
-                    update("default_role", event.target.value)
-                  }
-                >
-                  <option value="member">Member</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-              </label>
+              {draft.auto_register && (
+                <label>
+                  New account access
+                  <select
+                    value={draft.default_role}
+                    onChange={(event) =>
+                      update("default_role", event.target.value)
+                    }
+                  >
+                    <option value="member">Member</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </label>
+              )}
               <label className="check-label">
                 <input
                   type="checkbox"
@@ -1703,6 +1714,7 @@ function AccountProfileDialog({
   const [username, setUsername] = useState(user.username);
   const [displayName, setDisplayName] = useState(user.display_name);
   const [active, setActive] = useState(user.active !== false);
+  const [removalPending, setRemovalPending] = useState(false);
   const dirty =
     username !== user.username ||
     displayName !== user.display_name ||
@@ -1744,7 +1756,7 @@ function AccountProfileDialog({
       save.reset();
     },
   });
-  const busy = save.isPending || reload.isPending;
+  const busy = save.isPending || reload.isPending || removalPending;
   return (
     <AccessDialog
       title={`Account details for ${user.display_name}`}
@@ -1805,6 +1817,20 @@ function AccountProfileDialog({
             Each person can link their own identity provider in Settings →
             Sign-in.
           </p>
+          {dirty && user.id !== selfId && (
+            <p className="access-hint">
+              Save account changes before unlinking a provider or deleting the
+              account.
+            </p>
+          )}
+          <AccountRemovalControls
+            user={user}
+            selfId={selfId}
+            disabled={busy || dirty}
+            onPendingChange={setRemovalPending}
+            close={close}
+            reloadAccount={() => reload.mutateAsync()}
+          />
           <Notice error={save.error || reload.error} />
           {save.error instanceof ApiError && save.error.status === 409 && (
             <div className="access-conflict">
@@ -1832,5 +1858,188 @@ function AccountProfileDialog({
         </form>
       )}
     </AccessDialog>
+  );
+}
+
+function AccountRemovalControls({
+  user,
+  selfId,
+  disabled,
+  close,
+  reloadAccount,
+  onPendingChange,
+}: {
+  user: User;
+  selfId?: string;
+  disabled: boolean;
+  close: () => void;
+  reloadAccount: () => Promise<unknown>;
+  onPendingChange: (pending: boolean) => void;
+}) {
+  const cache = useQueryClient();
+  const [action, setAction] = useState<"delete" | "oidc" | "plex" | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [reviewedRevision, setReviewedRevision] = useState<string>();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      onPendingChange(false);
+    };
+  }, [onPendingChange]);
+  const methods = useQuery({
+    queryKey: ["account-sign-in", user.id],
+    queryFn: async () =>
+      result(
+        await api.GET("/api/auth/users/{user_id}/sign-in", {
+          params: { path: { user_id: user.id } },
+        }),
+      ),
+  });
+  const remove = useMutation({
+    onMutate: () => onPendingChange(true),
+    mutationFn: async () => {
+      if (!reviewedRevision || !action)
+        throw new Error("Reload this account first.");
+      const body = {
+        confirm_username: confirmation,
+        expected_revision: reviewedRevision,
+      };
+      if (action === "delete") {
+        result(
+          await api.DELETE("/api/auth/users/{user_id}", {
+            params: { path: { user_id: user.id } },
+            body,
+          }),
+        );
+      } else {
+        result(
+          await api.DELETE("/api/auth/users/{user_id}/providers/{provider}", {
+            params: { path: { user_id: user.id, provider: action } },
+            body,
+          }),
+        );
+      }
+      return action;
+    },
+    onSuccess: (completed) => {
+      cache.invalidateQueries({ queryKey: ["accounts"] });
+      cache.invalidateQueries({ queryKey: ["account-sign-in", user.id] });
+      if (!mounted.current) return;
+      setAction(null);
+      setConfirmation("");
+      setReviewedRevision(undefined);
+      if (completed === "delete") close();
+    },
+    onSettled: () => {
+      if (mounted.current) onPendingChange(false);
+    },
+  });
+  const reload = useMutation({
+    mutationFn: async () => {
+      await Promise.all([
+        reloadAccount(),
+        methods.refetch({ throwOnError: true }),
+      ]);
+    },
+    onSuccess: () => {
+      setAction(null);
+      setConfirmation("");
+      setReviewedRevision(undefined);
+      remove.reset();
+    },
+  });
+  const busy =
+    disabled || remove.isPending || methods.isFetching || reload.isPending;
+  const choose = (next: "delete" | "oidc" | "plex") => {
+    if (!methods.data) return;
+    setAction(next);
+    setReviewedRevision(methods.data.revision);
+    setConfirmation("");
+    remove.reset();
+  };
+  return (
+    <fieldset disabled={busy}>
+      <legend>Sign-in and account removal</legend>
+      {methods.data && (
+        <p className="access-hint">
+          Linked sign-in:{" "}
+          {[
+            methods.data.local_password ? "Local password" : null,
+            methods.data.oidc ? "OIDC" : null,
+            methods.data.plex ? "Plex" : null,
+          ]
+            .filter(Boolean)
+            .join(", ") || "None"}
+          .
+        </p>
+      )}
+      {user.id === selfId ? (
+        <p className="access-hint">
+          Use another administrator account to remove this account or its
+          sign-in providers.
+        </p>
+      ) : action ? (
+        <>
+          <p>
+            {action === "delete"
+              ? "Delete this unused account permanently? Accounts with owned data or history must be disabled instead."
+              : `Unlink ${action === "oidc" ? "OIDC" : "Plex"}? All sessions will end. This account must have another enabled sign-in method. Provider matching or registration settings can allow a future sign-in to link again.`}
+          </p>
+          <label>
+            Type {user.username} to confirm
+            <input
+              value={confirmation}
+              autoComplete="off"
+              onChange={(event) => setConfirmation(event.target.value)}
+            />
+          </label>
+          <div className="actions">
+            <button type="button" onClick={() => setAction(null)}>
+              Keep account
+            </button>
+            <button
+              type="button"
+              className="danger"
+              disabled={!methods.data || confirmation !== user.username}
+              onClick={() => remove.mutate()}
+            >
+              {remove.isPending
+                ? "Updating…"
+                : action === "delete"
+                  ? "Delete account permanently"
+                  : "Unlink provider"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="actions">
+          {methods.data?.oidc && (
+            <button type="button" onClick={() => choose("oidc")}>
+              Unlink OIDC
+            </button>
+          )}
+          {methods.data?.plex && (
+            <button type="button" onClick={() => choose("plex")}>
+              Unlink Plex
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!methods.data}
+            onClick={() => choose("delete")}
+          >
+            Delete unused account
+          </button>
+        </div>
+      )}
+      <Notice error={reload.error || methods.error || remove.error} />
+      {(reload.isError || methods.isError || remove.isError) && (
+        <button type="button" onClick={() => reload.mutate()}>
+          Reload sign-in details
+        </button>
+      )}
+    </fieldset>
   );
 }

@@ -390,3 +390,84 @@ async def test_route_sentinel_proves_qbittorrent_sees_the_library_folder(tmp_pat
     with pytest.raises(PublicationError, match="cannot see this library folder"):
         await confirm_client_library(Missing(), str(library), library)
     assert not list(library.iterdir())
+
+
+@pytest.mark.parametrize("changed", [None, "credentials", "endpoint", "deleted"])
+async def test_existing_seeding_import_accepts_disabled_client_but_fences_changes(
+    monkeypatch, changed
+):
+    from types import SimpleNamespace
+
+    from app.db.models import (
+        AcquisitionSelection,
+        FrozenImportPlan,
+        ImportEntry,
+        ImportRun,
+        Integration,
+    )
+    from app.importing import seeding_rename
+    from app.importing.naming import fingerprint
+
+    attempt = SimpleNamespace(
+        id=uuid4(), selection_id=uuid4(), endpoint_key=fingerprint({"url": "http://qbit"})
+    )
+    selection = SimpleNamespace(
+        id=attempt.selection_id,
+        downloader_id=uuid4(),
+        frozen={"downloader": {"generation": 1}, "descriptor": {"infohash_v1": HASH}},
+    )
+    downloader = SimpleNamespace(
+        kind="qbittorrent",
+        enabled=False,
+        deleted_at=changed == "deleted",
+        owner_id=None,
+        status="connected",
+        credential_generation=2 if changed == "credentials" else 1,
+        base_url="http://other" if changed == "endpoint" else "http://qbit",
+        config={"mappings": MAPPINGS},
+        encrypted_secrets="fixture",
+    )
+    rows = {
+        ImportEntry: SimpleNamespace(
+            run_id=uuid4(),
+            configuration={"destination": {"seeding_rename": True, "client_path": "/library"}},
+        ),
+        ImportRun: SimpleNamespace(plan_id=uuid4()),
+        FrozenImportPlan: SimpleNamespace(inspection_id=uuid4()),
+        AcquisitionSelection: selection,
+        Integration: downloader,
+    }
+
+    class Database:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, model, identifier):
+            return rows[model]
+
+        async def scalar(self, query):
+            return attempt
+
+    async def sources(db):
+        return {"fixture": Path("/downloads")}
+
+    async def repaired(db, selected):
+        return None
+
+    monkeypatch.setattr(seeding_rename, "session_factory", lambda: Database)
+    monkeypatch.setattr(seeding_rename, "import_sources", sources)
+    monkeypatch.setattr(seeding_rename, "accepted_configuration", repaired)
+    monkeypatch.setattr(
+        seeding_rename, "decrypt_secrets", lambda value: {"username": "user", "password": "secret"}
+    )
+    if changed:
+        with pytest.raises(PublicationError):
+            await seeding_rename.seeding_connection(uuid4())
+    else:
+        connection = await seeding_rename.seeding_connection(uuid4())
+        assert connection["torrent_hash"] == HASH
+        assert connection["tag"] == "book-search:" + str(attempt.id)
+        assert connection["client_root"] == "/library"

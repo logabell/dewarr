@@ -135,7 +135,7 @@ test("editions paginate and reviews expand, sort and protect spoilers", async ({
   ).toBeVisible();
   const actions = page.locator(".reader-actions");
   const add = await actions
-    .getByRole("button", { name: "Add to catalog" })
+    .getByRole("button", { name: "Save catalog entry" })
     .boundingBox();
   const icon = await actions
     .getByRole("link", { name: "View on Hardcover" })
@@ -179,5 +179,76 @@ test("editions paginate and reviews expand, sort and protect spoilers", async ({
   await expect(section.locator(".book-data-table").first()).toContainText(
     "Edition 1",
   );
+  await page.route(/\/api\/requests(?:\?|$)/, (route) =>
+    route.fulfill({
+      json: {
+        items: Array.from({ length: 12 }, (_, index) => ({
+          id: `request-${index}`,
+          work_id: "book",
+          work_title: work.title,
+          authors: work.authors,
+          owner_name: "Reader",
+          can_open_book: true,
+          can_withdraw: false,
+          can_decide: false,
+          approval_status: "approved",
+          specification: { mode: "ebook" },
+          reasons: [
+            {
+              id: `reason-${index}`,
+              active: true,
+              label: "Your request",
+              approval_status: "approved",
+            },
+          ],
+          targets: [
+            {
+              slot: "ebook",
+              state: "satisfied",
+              next_action: "book",
+              message: "In library",
+            },
+          ],
+        })),
+        total: 12,
+        offset: 0,
+        limit: 20,
+      },
+    }),
+  );
+  await page.goto("/requests?q=Wild&sort=title");
+  const lastBook = page
+    .getByRole("link", { name: work.title, exact: true })
+    .last();
+  await lastBook.scrollIntoViewIfNeeded();
+  await lastBook.click();
+  const back = page.getByRole("link", { name: "← Back to requests" });
+  await expect(back).toHaveAttribute("href", "/requests?q=Wild&sort=title");
+  await page.getByRole("tab", { name: "Editions", exact: true }).click();
+  await expect(back).toHaveAttribute("href", "/requests?q=Wild&sort=title");
+  await back.click();
+  await expect(page.getByLabel("Search requests", { exact: true })).toHaveValue(
+    "Wild",
+  );
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(100);
+  let resume!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  await page.route("**/api/catalog/works/book", async (route) => {
+    await delayed;
+    await route.fulfill({ json: work });
+  });
+  try {
+    await lastBook.click();
+    await expect(
+      page.getByRole("heading", { name: work.title, level: 1, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("status", { name: "Loading content" }),
+    ).toHaveCount(0);
+  } finally {
+    resume();
+  }
   expect(errors).toEqual([]);
 });

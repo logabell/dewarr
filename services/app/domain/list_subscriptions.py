@@ -523,11 +523,26 @@ async def schedule():
         ids = list(
             await db.scalars(
                 select(ListSubscription.list_id)
+                .join(BookList, BookList.id == ListSubscription.list_id)
+                .join(User, User.id == BookList.owner_id)
+                .outerjoin(Operation, Operation.id == ListSubscription.operation_id)
+                .outerjoin(CatalogAccount, CatalogAccount.user_id == User.id)
                 .where(
                     ListSubscription.enabled.is_(True),
                     ListSubscription.next_sync_at <= datetime.now(UTC),
+                    User.active.is_(True),
+                    User.role != "viewer",
+                    # Filter live work before LIMIT. Keep disabled Hardcover
+                    # accounts eligible for the account-failure cleanup below.
+                    text(
+                        "NOT EXISTS (SELECT 1 FROM book_queue.procrastinate_jobs j "
+                        "WHERE j.id = operations.job_id AND j.status IN ('todo', 'doing') "
+                        "AND list_subscriptions.state IN ('queued', 'running') "
+                        "AND (list_subscriptions.provider != 'hardcover' "
+                        "OR catalog_accounts.enabled IS TRUE))"
+                    ),
                 )
-                .order_by(ListSubscription.next_sync_at)
+                .order_by(ListSubscription.next_sync_at, ListSubscription.id)
                 .limit(50)
             )
         )

@@ -47,14 +47,21 @@ async def freeze(db, ids, physical_work_id):
 
 
 async def verify(db, contents, *, lock=False):
-    for saved in contents:
-        item = ContainedWork.model_validate(saved)
-        work = await db.get(
-            Work,
-            item.work_id,
-            with_for_update={"read": True} if lock else None,
-            populate_existing=True,
-        )
+    items = [ContainedWork.model_validate(saved) for saved in contents]
+    if not items:
+        return
+    statement = (
+        select(Work.id, Work.title, Work.authors, Work.redirect_to)
+        .where(Work.id.in_({item.work_id for item in items}))
+        .order_by(Work.id)
+    )
+    if lock:
+        statement = statement.with_for_update(read=True)
+    # Read current identity fields on every verification, independently of the ORM
+    # identity map. Acquire publication locks in a consistent order when requested.
+    works = {work.id: work for work in await db.execute(statement)}
+    for item in items:
+        work = works.get(item.work_id)
         if not work or work.redirect_to or identity(work) != item.revision:
             raise HTTPException(
                 409, "Contained book identity changed; review a fresh collection plan"

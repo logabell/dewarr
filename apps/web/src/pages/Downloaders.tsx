@@ -131,6 +131,11 @@ export default function Downloaders({
     ]);
     setEditing(null);
     if (connection.enabled) test.mutate(connection.id);
+    else {
+      void cache.invalidateQueries({ queryKey: ["connection-health"] });
+      void cache.invalidateQueries({ queryKey: ["setup-readiness"] });
+      void cache.invalidateQueries({ queryKey: ["library-folder-options"] });
+    }
   };
   const selected = connections.data?.find(
     (connection) => connection.id === editing,
@@ -192,7 +197,7 @@ export default function Downloaders({
       ) : (
         editing && (
           <ConnectionForm
-            key={`${editing}:${selected?.generation || 0}`}
+            key={`${editing}:${selected?.generation || 0}:${selected?.enabled}`}
             kind={draftKind(editing, selected)}
             connection={selected}
             close={() => setEditing(null)}
@@ -252,7 +257,7 @@ export default function Downloaders({
                     <span className="status">Disabled</span>
                   )}
                 </div>
-                {(testError || connection.last_error) && (
+                {connection.enabled && (testError || connection.last_error) && (
                   <div role="alert" className="notice error">
                     <strong>Connection saved. Test unsuccessful.</strong>
                     <p>{testError?.message || connection.last_error}</p>
@@ -328,35 +333,7 @@ export default function Downloaders({
                   saved={saved}
                   disabled={test.isPending}
                 />
-                {connection.kind !== "slskd" && (
-                  <details className="downloader-details">
-                    <summary>Client capabilities</summary>
-                    <p className="muted">
-                      Attempt tags:{" "}
-                      {connection.capabilities?.attempt_tagging
-                        ? "supported"
-                        : "unique folders identify attempts"}
-                      . In-client rename:{" "}
-                      {connection.capabilities?.in_client_rename
-                        ? "available when enabled"
-                        : "unavailable"}
-                      . Categories:{" "}
-                      {connection.capabilities?.categories
-                        ? "supported"
-                        : "Label plugin required"}
-                      . Sequential/first-last controls:{" "}
-                      {connection.capabilities?.sequential_first_last
-                        ? "supported"
-                        : "unavailable"}
-                      .
-                    </p>
-                    {(connection.limitations || []).map((limit) => (
-                      <p className="muted" key={limit}>
-                        {limit}
-                      </p>
-                    ))}
-                  </details>
-                )}
+                <DownloaderLimitations connection={connection} />
                 {connection.kind === "slskd" && (
                   <p className="muted">
                     Soulseek searches and downloads through the same slskd
@@ -417,6 +394,41 @@ export default function Downloaders({
         </Empty>
       )}
     </div>
+  );
+}
+
+function DownloaderLimitations({ connection }: { connection: Connection }) {
+  const capabilities = connection.capabilities;
+  const torrentClient =
+    connection.kind === "deluge" || connection.kind === "transmission";
+  const notes: string[] = [];
+  if (torrentClient && capabilities?.in_client_rename === false)
+    notes.push(
+      "Keep seeding files in their download folder. Dewarr can hardlink or copy them into the library.",
+    );
+  if (torrentClient && capabilities?.full_v2_hashes === false)
+    notes.push(
+      "Choose v1 or hybrid torrents; this connection does not support v2-only torrents.",
+    );
+  if (
+    connection.kind === "deluge" &&
+    connection.status === "connected" &&
+    capabilities?.categories === false &&
+    connection.category
+  )
+    notes.push(
+      "Enable Deluge’s Label plugin and create the category label, or leave Category blank.",
+    );
+  if (!notes.length) return null;
+  return (
+    <details className="downloader-details">
+      <summary>Client limits</summary>
+      <ul className="muted">
+        {notes.map((note) => (
+          <li key={note}>{note}</li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -635,6 +647,7 @@ function ConnectionForm({
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [category, setCategory] = useState(connection?.category ?? "");
+  const [enabled, setEnabled] = useState(connection?.enabled ?? true);
   const save = useMutation({
     mutationFn: async () => {
       const body = {
@@ -645,8 +658,9 @@ function ConnectionForm({
         password: token ? null : password || null,
         api_key: token ? apiKey || null : null,
         category,
-        enabled: connection?.enabled ?? true,
+        enabled,
         expected_generation: connection?.generation || 0,
+        expected_enabled: connection?.enabled ?? null,
       };
       return connection
         ? result(
@@ -746,9 +760,25 @@ function ConnectionForm({
         />
       </label>
       <p className="muted">{client.category}</p>
+      <label className="check-label">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />
+        Enabled
+      </label>
+      <p className="muted">
+        Disable to stop new downloads while keeping this configuration. Existing
+        transfers continue to be monitored.
+      </p>
       <div className="button-row">
         <button className="primary" disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save & test connection"}
+          {save.isPending
+            ? "Saving…"
+            : enabled
+              ? "Save & test connection"
+              : "Save connection"}
         </button>
         <button type="button" onClick={close}>
           Cancel

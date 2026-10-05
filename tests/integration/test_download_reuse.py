@@ -1,11 +1,13 @@
 # ruff: noqa: F401, F811
 import asyncio
+import json
+import time
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text
 
 from app.db.models import (
     AutomaticImportContinuation,
@@ -127,6 +129,126 @@ async def completed_join(client, database, pair, authorized):
     await packs.run(pair[1])
     async with database() as db:
         return await db.scalar(select(AutomaticImportContinuation))
+
+
+@pytest.mark.parametrize("stopped", ["missing", "succeeded", "failed", "aborted"])
+async def test_reuse_scheduler_reaches_stopped_work_behind_busy_jobs(
+    client, database, pair, authorized, tmp_path, stopped
+):
+    from app.jobs.queue import enqueue
+    from app.jobs.tasks import schedule_downloads
+
+    original = await completed_join(client, database, pair, authorized)
+    now = datetime.now(UTC)
+    payload = {"saved_evidence": "x" * 100_000}
+    busy = []
+    async with database() as db, db.begin():
+        (await db.get(AutomaticImportContinuation, original.id)).state = "held"
+        owner = (await db.get(Operation, original.operation_id)).owner_id
+        for n in range(21):
+            join = Operation(owner_id=owner, kind="acquisition.reuse", idempotency_key=f"join-{n}")
+            operation = Operation(
+                owner_id=owner,
+                kind=reuse.KIND,
+                idempotency_key=f"recover-reuse-{n}",
+                payload=payload,
+            )
+            db.add_all([join, operation])
+            await db.flush()
+            row = AutomaticImportContinuation(
+                attempt_id=original.attempt_id,
+                join_operation_id=join.id,
+                policy_id=original.policy_id,
+                policy_generation=original.policy_generation,
+                operation_id=operation.id,
+                evidence={**original.evidence, **payload},
+                created_at=now - timedelta(hours=1) + timedelta(seconds=n),
+                state="inspecting" if n % 2 else "queued",
+            )
+            db.add(row)
+            await db.flush()
+            if n < 20 or stopped != "missing":
+                operation.job_id = await enqueue(db, reuse.KIND, continuation_id=str(row.id))
+                await db.execute(
+                    text("UPDATE book_queue.procrastinate_jobs SET status=:state WHERE id=:id"),
+                    {
+                        "id": operation.job_id,
+                        "state": ("doing" if n % 2 else "todo") if n < 20 else stopped,
+                    },
+                )
+            if n < 20:
+                busy.append((row.id, operation.id, operation.job_id))
+            else:
+                eligible_id, operation_id, prior_job = row.id, operation.id, operation.job_id
+    calls, loaded = [], []
+    engine = database.kw["bind"].sync_engine
+
+    def count(*args):
+        calls.append(1)
+
+    def capture(row, context):
+        loaded.append({k: v for k, v in vars(row).items() if not k.startswith("_")})
+
+    event.listen(engine, "before_cursor_execute", count)
+    for model in (AutomaticImportContinuation, Operation):
+        event.listen(model, "load", capture)
+    started = time.perf_counter()
+    try:
+        await schedule_downloads(0)
+    finally:
+        elapsed = time.perf_counter() - started
+        event.remove(engine, "before_cursor_execute", count)
+        for model in (AutomaticImportContinuation, Operation):
+            event.remove(model, "load", capture)
+    metrics = {
+        "queries": len(calls),
+        "loaded_bytes": len(json.dumps(loaded, default=str)),
+        "elapsed_ms": elapsed * 1000,
+    }
+    (tmp_path / "reuse-scheduler-metrics.json").write_text(json.dumps(metrics, indent=2))
+    async with database() as db:
+        eligible = await db.get(AutomaticImportContinuation, eligible_id)
+        operation = await db.get(Operation, operation_id)
+        if stopped in {"failed", "aborted"}:
+            assert eligible.state == "held" and operation.status == "failed"
+            assert operation.job_id == prior_job
+        else:
+            assert operation.job_id is not None and operation.job_id != prior_job
+        new_job = operation.job_id
+        assert eligible.evidence["saved_evidence"] == payload["saved_evidence"]
+        for row_id, op_id, job_id in busy:
+            assert (await db.get(AutomaticImportContinuation, row_id)).state in {
+                "queued",
+                "inspecting",
+            }
+            assert (await db.get(Operation, op_id)).job_id == job_id
+    exhausted = stopped in {"failed", "aborted"}
+    async with database() as db, db.begin():
+        before_jobs = await db.scalar(
+            text(
+                "SELECT count(*) FROM book_queue.procrastinate_jobs "
+                "WHERE args->>'continuation_id'=:id"
+            ),
+            {"id": str(eligible_id)},
+        )
+        if not exhausted:
+            await db.execute(
+                text("UPDATE book_queue.procrastinate_jobs SET status='succeeded' WHERE id=:id"),
+                {"id": new_job},
+            )
+    await asyncio.gather(schedule_downloads(1), schedule_downloads(2))
+    async with database() as db:
+        final_job = (await db.get(Operation, operation_id)).job_id
+        assert (final_job == new_job) if exhausted else (final_job != new_job)
+        assert await db.scalar(
+            text(
+                "SELECT count(*) FROM book_queue.procrastinate_jobs "
+                "WHERE args->>'continuation_id'=:id"
+            ),
+            {"id": str(eligible_id)},
+        ) == before_jobs + (0 if exhausted else 1)
+    assert metrics["queries"] < 40
+    assert metrics["loaded_bytes"] < 10_000
 
 
 @pytest.mark.parametrize("job_state", ["failed", "aborted"])

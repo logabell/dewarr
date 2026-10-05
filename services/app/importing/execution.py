@@ -704,7 +704,8 @@ async def confirm_observation(db, current, integration, library, item, observed_
     """Record an already verified item within the caller's transaction.
 
     Callers must verify current identity, route, collection, physical files and ABS
-    evidence before entering this helper. It neither publishes nor queues work.
+    evidence before entering this helper. It does not publish files; optional ebook
+    companion work is queued atomically with confirmation.
     """
     spec = PublicationSpec.model_validate(current.specification)
     version = await db.get(Version, current.version_id)
@@ -797,6 +798,9 @@ async def confirm_observation(db, current, integration, library, item, observed_
         None,
         None,
     )
+    from app.importing.colocate import enqueue_for_import
+
+    await enqueue_for_import(db, current, library, integration)
     return version, contents, asset
 
 

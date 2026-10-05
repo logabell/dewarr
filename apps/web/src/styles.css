@@ -3649,6 +3649,34 @@ img.detail-cover {
 }
 
 /* Page tabs: the underline used by Review, and every other top-level page. */
+.settings-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-tabs-bar > .page-tabs {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+  position: relative;
+}
+.settings-tabs-scroll {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  min-height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+}
+.settings-tabs-scroll:disabled {
+  opacity: 0.3;
+}
 .page-tabs-bar {
   display: flex;
   align-items: stretch;

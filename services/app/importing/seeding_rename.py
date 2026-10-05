@@ -27,9 +27,10 @@ from app.db.models import (
 )
 from app.db.session import session_factory
 from app.domain.download_attempts import attempt_tag
+from app.domain.download_repairs import accepted_configuration
 from app.domain.downloaders import mappings_current, relative_to
 from app.importing.filesystem import InspectionError, beneath, digest, directory
-from app.importing.naming import AUDIO, EBOOK
+from app.importing.naming import AUDIO, EBOOK, fingerprint
 from app.importing.publication import (
     PublicationError,
     generated_files,
@@ -553,10 +554,17 @@ async def seeding_connection(entry_id):
         if (
             not downloader
             or downloader.kind != "qbittorrent"
-            or not downloader.enabled
+            or downloader.deleted_at
+            or downloader.owner_id is not None
             or downloader.status != "connected"
         ):
             raise PublicationError("Connect qBittorrent before renaming the seeding copy")
+        frozen = {**selection.frozen, **(await accepted_configuration(db, selection) or {})}
+        if (
+            downloader.credential_generation != frozen["downloader"]["generation"]
+            or fingerprint({"url": downloader.base_url.rstrip("/")}) != attempt.endpoint_key
+        ):
+            raise PublicationError("Downloader settings changed; review the existing transfer")
         if not mappings_current(downloader, await import_sources(db)):
             raise PublicationError("Review the download path map before renaming the seeding copy")
         destination = entry.configuration["destination"]

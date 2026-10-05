@@ -5,7 +5,7 @@ from uuid import UUID
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.api.dependencies import Admin, Database
 from app.api.imports import assert_admin
@@ -59,34 +59,63 @@ class RunView(BaseModel):
 
 
 async def view(db, run):
+    return (await views(db, [run]))[0]
+
+
+async def views(db, runs):
+    """Read status without materializing publication manifests or frozen credentials."""
     from app.domain.recovery_approvals import denial
 
-    hold = await denial(db, "import-plan", run.plan_id)
+    if not runs:
+        return []
+    holds = {
+        plan_id: await denial(db, "import-plan", plan_id)
+        for plan_id in {run.plan_id for run in runs}
+    }
     entries = (
-        await db.scalars(
-            select(ImportEntry)
-            .where(ImportEntry.run_id == run.id)
+        await db.execute(
+            select(
+                ImportEntry.id,
+                ImportEntry.run_id,
+                ImportEntry.group_id,
+                ImportEntry.version_id,
+                ImportEntry.destination_id,
+                ImportEntry.operation_id,
+                ImportEntry.state,
+                ImportEntry.message,
+                ImportEntry.published_at,
+                ImportEntry.confirmed_at,
+                ImportEntry.asset_id,
+                ImportEntry.cover_export,
+                ImportEntry.reserved,
+                func.coalesce(
+                    (func.jsonb_typeof(ImportEntry.specification) == "object")
+                    & (ImportEntry.specification != {}),
+                    False,
+                ).label("has_specification"),
+                ImportEntry.configuration["destination"]["workflow"].astext.label("workflow"),
+                ImportEntry.configuration["destination"]["backend"]["base_url"].astext.label(
+                    "base_url"
+                ),
+            )
+            .where(ImportEntry.run_id.in_([run.id for run in runs]))
             .order_by(ImportEntry.created_at, ImportEntry.id)
         )
     ).all()
-    return RunView(
-        id=run.id,
-        plan_id=run.plan_id,
-        created_at=run.created_at,
-        entries=[
+    by_run = {run.id: [] for run in runs}
+    by_plan = {run.id: run.plan_id for run in runs}
+    for entry in entries:
+        hold = holds[by_plan[entry.run_id]]
+        by_run[entry.run_id].append(
             EntryView.model_validate(entry).model_copy(
                 update={
-                    "bookdrop_url": entry.configuration["destination"]["backend"][
-                        "base_url"
-                    ].rstrip("/")
-                    + "/bookdrop"
-                    if (entry.configuration or {}).get("destination", {}).get("workflow")
-                    == "bookdrop"
+                    "bookdrop_url": entry.base_url.rstrip("/") + "/bookdrop"
+                    if entry.workflow == "bookdrop" and entry.base_url
                     else None,
                     "can_retry": bool(
                         not hold
                         and entry.reserved
-                        and entry.specification
+                        and entry.has_specification
                         and entry.state in {"held", "awaiting-library"}
                     ),
                     "can_cancel": not hold
@@ -95,9 +124,11 @@ async def view(db, run):
                     **({"message": hold} if hold and not entry.confirmed_at else {}),
                 }
             )
-            for entry in entries
-        ],
-    )
+        )
+    return [
+        RunView(id=run.id, plan_id=run.plan_id, created_at=run.created_at, entries=by_run[run.id])
+        for run in runs
+    ]
 
 
 @router.post("/plans/{plan_id}/imports", response_model=RunView, status_code=202)
@@ -165,21 +196,25 @@ async def cancel_entry(run_id: UUID, entry_id: UUID, admin: Admin, db: Database)
 @router.get("/plans/{plan_id}/imports", response_model=list[RunView])
 async def plan_imports(plan_id: UUID, admin: Admin, db: Database):
     rows = (
-        await db.scalars(
-            select(ImportRun)
+        await db.execute(
+            select(ImportRun.id, ImportRun.plan_id, ImportRun.created_at)
             .where(ImportRun.plan_id == plan_id, ImportRun.owner_id == admin.id)
             .order_by(ImportRun.created_at.desc())
             .limit(25)
         )
     ).all()
-    return [await view(db, row) for row in rows]
+    return await views(db, rows)
 
 
 @router.get("/imports/{run_id}", response_model=RunView)
 async def import_run(run_id: UUID, admin: Admin, db: Database):
-    row = await db.scalar(
-        select(ImportRun).where(ImportRun.id == run_id, ImportRun.owner_id == admin.id)
-    )
+    row = (
+        await db.execute(
+            select(ImportRun.id, ImportRun.plan_id, ImportRun.created_at).where(
+                ImportRun.id == run_id, ImportRun.owner_id == admin.id
+            )
+        )
+    ).one_or_none()
     if not row:
         raise HTTPException(404, "Import not found")
     return await view(db, row)

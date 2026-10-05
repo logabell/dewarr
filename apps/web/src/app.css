@@ -11,6 +11,7 @@
 @import "./book-detail.css" layer(app);
 @import "./following.css" layer(app);
 @import "./controls.css" layer(controls);
+@import "./workflows.css" layer(controls);
 
 .brand img {
   border-radius: 8px;

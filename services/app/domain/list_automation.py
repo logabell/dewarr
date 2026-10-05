@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select, text
+from sqlalchemy.orm import load_only
 
 from app.config import get_settings
 from app.db.models import (
@@ -84,29 +85,38 @@ async def schedule():
         return
     async with session_factory()() as db, db.begin():
         now = datetime.now(UTC)
-        policies = list(
-            await db.scalars(
-                select(ListAcquisitionPolicy)
-                .where(
-                    ListAcquisitionPolicy.active.is_(True),
-                    ListAcquisitionPolicy.list_id.is_not(None),
-                    ListAcquisitionPolicy.configuration["mode"].astext == "automatic",
-                    ListAcquisitionPolicy.next_check_at <= now,
-                )
-                .order_by(ListAcquisitionPolicy.next_check_at, ListAcquisitionPolicy.id)
-                .limit(20)
-                .with_for_update(skip_locked=True)
+        policies = await db.execute(
+            select(ListAcquisitionPolicy, Operation)
+            .outerjoin(Operation, Operation.id == ListAcquisitionPolicy.operation_id)
+            .options(
+                load_only(
+                    ListAcquisitionPolicy.id,
+                    ListAcquisitionPolicy.owner_id,
+                    ListAcquisitionPolicy.operation_id,
+                    ListAcquisitionPolicy.next_check_at,
+                    raiseload=True,
+                ),
+                load_only(Operation.id, Operation.status, raiseload=True),
             )
+            .where(
+                ListAcquisitionPolicy.active.is_(True),
+                ListAcquisitionPolicy.list_id.is_not(None),
+                ListAcquisitionPolicy.configuration["mode"].astext == "automatic",
+                ListAcquisitionPolicy.next_check_at <= now,
+                # Busy policies must not fill the batch ahead of eligible work.
+                text(
+                    "NOT EXISTS (SELECT 1 FROM book_queue.procrastinate_jobs j "
+                    "WHERE j.id = operations.job_id AND j.status IN ('todo', 'doing') "
+                    "AND operations.status IN ('queued', 'running'))"
+                ),
+            )
+            .order_by(ListAcquisitionPolicy.next_check_at, ListAcquisitionPolicy.id)
+            .limit(20)
+            .with_for_update(skip_locked=True, of=ListAcquisitionPolicy)
         )
-        for policy in policies:
-            previous = await db.get(Operation, policy.operation_id) if policy.operation_id else None
+        pending = []
+        for policy, previous in policies:
             if previous and previous.status in {"queued", "running"}:
-                state = await db.scalar(
-                    text("SELECT status::text FROM book_queue.procrastinate_jobs WHERE id=:id"),
-                    {"id": previous.job_id},
-                )
-                if state in {"todo", "doing"}:
-                    continue
                 previous.status, previous.message = (
                     "failed",
                     "Scheduler recovered a stopped policy worker",
@@ -119,8 +129,15 @@ async def schedule():
                 message="Checking monitored list books",
             )
             db.add(operation)
-            await db.flush()
-            operation.job_id = await enqueue(db, KIND, operation_id=str(operation.id))
+            pending.append((policy, operation))
+        await db.flush()
+        # enqueue() flushes its session; collect receipts before mutating rows so
+        # those flushes stay empty and the final updates can be batched together.
+        job_ids = [
+            await enqueue(db, KIND, operation_id=str(operation.id)) for _, operation in pending
+        ]
+        for (policy, operation), job_id in zip(pending, job_ids, strict=True):
+            operation.job_id = job_id
             policy.operation_id = operation.id
             policy.next_check_at = next_tick(now)
 

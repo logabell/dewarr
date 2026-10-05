@@ -504,6 +504,24 @@ def test_the_same_series_at_another_position_is_another_book():
     )
 
 
+@pytest.mark.parametrize("position", ["unknown", "1-3", "NaN", "Infinity", "1e2", ""])
+async def test_invalid_series_positions_cannot_break_a_title_author_tie(position):
+    chosen = hc("dark_age")
+    chosen = chosen.model_copy(
+        update={"series": [chosen.series[0].model_copy(update={"position": position})]}
+    )
+    other = chosen.model_copy(update={"external_id": "other", "series": []})
+    call, _ = catalog(chosen, other)
+    evidence = MatchEvidence(
+        title=chosen.title,
+        authors=chosen.authors,
+        series=[(chosen.series[0].name, position)],
+    )
+    result = await lookup(evidence, call)
+    assert result.status == "unmatched"
+    assert len(result.candidates) == 2
+
+
 async def test_publisher_credit_matches_through_the_series_in_the_title():
     call, calls = catalog(hc("well_of_ascension"))
     evidence = MatchEvidence(

@@ -230,6 +230,17 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
             {
               id: "result-1",
               possible_collection: true,
+              download:
+                scenario === "alternate"
+                  ? {
+                      state: "needs-review",
+                      message: "Alternative recordings need review",
+                      request_id: "request-1",
+                      operation_id: "held-selection",
+                      reasons: ["Alternative recordings need review"],
+                      prevent_download: false,
+                    }
+                  : null,
               release,
               current_connection: true,
               assessment: { blocked: [], review: [], explanation: [] },
@@ -303,7 +314,7 @@ for (const scenario of ["single", "alternate", "unmapped"]) {
     await expect(page).toHaveURL(/\/books\/work-1\?tab=sources$/);
     await page
       .getByRole("button", {
-        name: "Download Dan Brown collection",
+        name: `${scenario === "alternate" ? "Review release" : "Download"} Dan Brown collection`,
         exact: true,
       })
       .click();
