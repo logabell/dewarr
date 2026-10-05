@@ -354,15 +354,13 @@ function Home({ canEdit }: { canEdit: boolean }) {
       {!layout.isPending &&
         rows
           .filter((r) => !hidden.includes(r.id))
-          .map((row, index) =>
-            index < 2 ? (
-              <div key={row.id}>{row.content}</div>
-            ) : (
-              <DeferredShelf key={row.id} title={row.title}>
-                {row.content}
-              </DeferredShelf>
-            ),
-          )}
+          .map((row, index) => (
+            // Keep the wrapper stable when late-arriving sources reorder rows:
+            // changing wrapper types remounts shelves and restarts their requests.
+            <DeferredShelf key={row.id} title={row.title} immediate={index < 6}>
+              {row.content}
+            </DeferredShelf>
+          ))}
       {rows.length > 0 && rows.every((r) => hidden.includes(r.id)) && (
         <p className="explore-empty">
           Your home is clear. Choose shelves in Customize or add a collection.

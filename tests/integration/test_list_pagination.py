@@ -25,6 +25,42 @@ async def seed_list(database, identifier, count):
     return ids
 
 
+async def test_list_pages_resolve_chains_outside_membership_and_keep_revision(
+    client, admin, database
+):
+    item = await new_list(client)
+    other = await new_list(client)
+    ids = await seed_list(database, item["id"], 2)
+    async with database() as db, db.begin():
+        root = Work(title="External canonical root", authors=["Canonical Author"])
+        db.add(root)
+        await db.flush()
+        intermediate = Work(title="Intermediate alias", redirect_to=root.id)
+        db.add(intermediate)
+        await db.flush()
+        for identifier in ids:
+            (await db.get(Work, UUID(identifier))).redirect_to = intermediate.id
+        root_id = str(root.id)
+    path = f"/api/lists/{item['id']}"
+    response = await client.get(path)
+    assert response.status_code == 200, response.text
+    before = response.json()
+    assert before["count"] == before["matched"] == 1
+    assert [work["id"] for work in before["items"]] == [root_id]
+    page = (await client.get("/api/lists/page")).json()
+    assert {row["id"]: row["count"] for row in page["items"]} == {item["id"]: 1, other["id"]: 0}
+    assert (await client.get(path, params={"q": "canonical"})).json()["matched"] == 1
+    assert (await client.get(path, params={"offset": 1})).json()["items"] == []
+    # Unrelated membership never changes this list's optimistic concurrency token.
+    await seed_list(database, other["id"], 2)
+    assert (await client.get(path)).json()["content_revision"] == before["content_revision"]
+    async with database() as db, db.begin():
+        (await db.get(Work, UUID(ids[0]))).redirect_to = None
+    changed = (await client.get(path)).json()
+    assert changed["count"] == 2
+    assert changed["content_revision"] != before["content_revision"]
+
+
 async def test_list_index_search_and_pagination_beyond_old_limit(client, admin, database):
     async with database() as db:
         db.add_all(

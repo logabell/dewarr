@@ -70,7 +70,7 @@ def search_pattern(value):
 
 
 def ordered_roots(list_id):
-    mapping = canonical_map()
+    mapping = canonical_map(select(ListEntry.work_id).where(ListEntry.list_id == list_id))
     return (
         select(
             mapping.c.work_id,
@@ -159,7 +159,7 @@ async def list_all(
         .offset(offset)
         .limit(limit)
     )
-    mapping = canonical_map()
+    mapping = canonical_map(select(ListEntry.work_id).where(ListEntry.list_id.in_(page_ids)))
     rows = (
         await db.execute(
             select(
@@ -230,10 +230,11 @@ async def detail(
     roots = ordered_roots(list_id)
     base = select(Work).join(roots, roots.c.work_id == Work.id).where(visible_work(user))
     count = await db.scalar(select(func.count()).select_from(base.subquery()))
+    matched = count
     if q.strip():
         pattern = search_pattern(q)
         base = base.where(or_(Work.title.ilike(pattern), cast(Work.authors, Text).ilike(pattern)))
-    matched = await db.scalar(select(func.count()).select_from(base.subquery()))
+        matched = await db.scalar(select(func.count()).select_from(base.subquery()))
     order = (roots.c.position, Work.id)
     if sort == "newest":
         order = (roots.c.added_at.desc(), *order)

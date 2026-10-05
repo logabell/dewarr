@@ -47,7 +47,9 @@ def settings_revision(item):
 
 
 async def content_revision(db, list_id):
-    mapping = canonical_map()
+    # Resolve this list's origins (including roots outside the list), not the
+    # entire catalog for every shelf request.
+    mapping = canonical_map(select(ListEntry.work_id).where(ListEntry.list_id == list_id))
     # Aggregate in PostgreSQL so paging does not hydrate every membership in Python.
     row = (
         cast(ListEntry.id, Text)

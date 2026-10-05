@@ -19,11 +19,13 @@ from sqlalchemy import event, insert, select, text, update
 
 from app.db.models import (
     AssetContains,
+    BookList,
     Integration,
     InventoryItemState,
     Library,
     LibraryAsset,
     LibraryGrant,
+    ListEntry,
     Operation,
     Version,
     Work,
@@ -43,6 +45,43 @@ def save_report(kind, report):
     label = os.getenv("BOOK_BENCHMARK_LABEL", "latest")
     assert label.replace("-", "").isalnum()
     (folder / f"{kind}-10000-{label}.json").write_text(json.dumps(report, indent=2))
+
+
+async def test_parallel_discover_lists(client, admin, database):
+    await seed(database)
+    async with database() as db, db.begin():
+        lists = [BookList(name=f"Discover shelf {i}", owner_id=UUID(admin["id"])) for i in range(6)]
+        db.add_all(lists)
+        await db.flush()
+        paths = [f"/api/lists/{item.id}?limit=16&sort=newest" for item in lists]
+        db.add_all(
+            [
+                ListEntry(list_id=item.id, work_id=UUID(int=1000 + i * 100 + n), position=n)
+                for i, item in enumerate(lists)
+                for n in range(100)
+            ]
+        )
+    report = []
+    for parallel in (False, True):
+        for attempt in range(2):
+            started = time.perf_counter()
+            responses = (
+                await asyncio.gather(*(client.get(path) for path in paths))
+                if parallel
+                else [await client.get(path) for path in paths]
+            )
+            report.append(
+                {
+                    "parallel": parallel,
+                    "attempt": attempt,
+                    "ms": (time.perf_counter() - started) * 1000,
+                }
+            )
+            for response in responses:
+                assert response.status_code == 200, response.text
+                assert response.json()["count"] == 100
+                assert len(response.json()["items"]) == 16
+    await asyncio.to_thread(save_report, "discover-lists", report)
 
 
 async def seed(database):
