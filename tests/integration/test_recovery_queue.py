@@ -285,20 +285,26 @@ async def test_cleanup_and_unknown_record_reference_cannot_erase_or_bypass_histo
         assert await db.get(RecoveryQueueFence, checkpoint)
 
 
-async def test_discovery_refresh_is_held_after_restore(client, admin, database, monkeypatch):
+@pytest.mark.parametrize("task", ["discovery.refresh", "organization.ebook-companions"])
+async def test_background_task_without_activation_is_held_after_restore(
+    client, admin, database, monkeypatch, task
+):
     checkpoint = await pause(database, admin)
     async with database() as db, db.begin():
         await seal(db, checkpoint)
-        job = await enqueue(
-            db, "discovery.refresh", user_id=admin["id"], collection_id="goodreads:42", generation=1
+        kwargs = (
+            {"user_id": admin["id"], "collection_id": "goodreads:42", "generation": 1}
+            if task == "discovery.refresh"
+            else {"entry_id": str(uuid4()), "after": None}
         )
+        job = await enqueue(db, task, **kwargs)
     await close_fixture(database, checkpoint)
     called = []
 
     async def forbidden(**kwargs):
         called.append(kwargs)
 
-    monkeypatch.setattr(get_queue().tasks["discovery.refresh"], "func", forbidden)
+    monkeypatch.setattr(get_queue().tasks[task], "func", forbidden)
     await drain()
     assert not called
     async with database() as db:

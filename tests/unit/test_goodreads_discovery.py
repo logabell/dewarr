@@ -126,7 +126,9 @@ async def test_public_list_redirect_stays_on_same_identity(destination, allowed)
 def test_bundled_catalog_has_consistent_identities_and_coverage():
     from app.domain.discovery_catalog import catalog, coverage
 
-    values = catalog()
+    # This manifest and URL parser describe Goodreads coverage; official award
+    # snapshots have separate source identities and category coverage.
+    values = {key: value for key, value in catalog().items() if key.startswith("gr-")}
     for key, value in values.items():
         assert source(value["source_url"])[1] == key
         assert value["books"]

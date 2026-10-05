@@ -24,7 +24,7 @@ from app.config import Settings, get_settings
 from app.db.models import Base
 from app.recovery import MAINTENANCE_LOCK
 
-SCHEMA = "0076_oidc_account_linking"
+SCHEMA = "0079_book_coverage_index"
 CONFIG_FIELDS = {
     "public_url",
     "cookie_secure",

@@ -156,7 +156,10 @@ for (const role of ["admin", "member", "viewer"]) {
       page.getByText("No downloads yet.", { exact: true }),
     ).toBeVisible();
     await expect(
-      requestFilters.getByRole("link", { name: "Download review", exact: true }),
+      requestFilters.getByRole("link", {
+        name: "Download review",
+        exact: true,
+      }),
     ).toHaveCount(role === "admin" ? 1 : 0);
     await page.goto("/activity#downloads");
     await expect(page).toHaveURL(/\/requests#downloads$/);

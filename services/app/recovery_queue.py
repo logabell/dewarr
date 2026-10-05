@@ -25,6 +25,9 @@ ACTOR_ARGUMENTS = {"user_id"}
 RESTORE_HELD_TASK_ARGUMENTS = {
     # Discovery follows use a composite, non-UUID key and have no recovery activation yet.
     "discovery.refresh": {"user_id", "collection_id", "generation"},
+    # Companion placement can write into existing media folders. It has no
+    # recovery activation for restored import entries or placement receipts yet.
+    "organization.ebook-companions": {"entry_id", "after"},
 }
 RECOVERY_TASKS = {
     "recovery.scan",
@@ -108,7 +111,7 @@ async def denial(db, job):
     if ceiling is None:
         return None
     if job.task_name in RESTORE_HELD_TASK_ARGUMENTS:
-        return "Discovery tracking requires fresh recovery activation after restore"
+        return "This background task requires fresh recovery activation after restore"
     if not isinstance(job.id, int) or job.id <= ceiling:
         return "This job belongs to the restored queue and cannot be replayed"
     if job.task_name.startswith(("procrastinate.", "builtin:")):
