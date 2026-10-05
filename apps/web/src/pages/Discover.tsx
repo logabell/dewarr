@@ -178,12 +178,8 @@ function Home({ canEdit }: { canEdit: boolean }) {
       setCustomizing(false);
     },
   });
-  const award = index.data?.items.find(
-    (c) => c.year === index.data?.years[0] && c.category === "Fiction",
-  );
-  const fantasy = index.data?.items.find(
-    (c) => c.year === index.data?.years[0] && c.category === "Fantasy",
-  );
+  const award = index.data?.items.find((c) => c.category === "Fiction");
+  const fantasy = index.data?.items.find((c) => c.category === "Fantasy");
   const rows: { id: string; title: string; content: React.ReactNode }[] = [];
   if (account.data?.enabled)
     rows.push({

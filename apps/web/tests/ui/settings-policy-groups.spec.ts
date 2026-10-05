@@ -99,7 +99,9 @@ test("recovery is grouped with clients, keeps collapsed drafts, and saves source
   await expect(
     categories.getByRole("link", { name: "Request quotas", exact: true }),
   ).toHaveCount(0);
-  const group = page.locator(".settings-group > summary");
+  const group = page
+    .locator(".settings-group > summary")
+    .filter({ hasText: "Download recovery" });
   await expect(group).toContainText("Download recovery");
   expect(fixture.requests).not.toContain("/api/acquisition/recovery/settings");
   await group.focus();

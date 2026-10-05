@@ -75,7 +75,11 @@ test("Discover opens a full book page with safe reviews and explicit actions", a
   expect(list.ok()).toBe(true);
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST") writes.push(request.url());
+    if (
+      request.method() === "POST" &&
+      !request.url().endsWith("/api/metadata/reader-matches")
+    )
+      writes.push(request.url());
   });
   // Give this journey its own provider identity when the full suite has
   // already imported the shared discovery fixture.
@@ -183,7 +187,7 @@ test("Discover opens a full book page with safe reviews and explicit actions", a
   await page.getByRole("tab", { name: "Reviews", exact: true }).click();
   await expect(page.getByText("Reviews temporarily unavailable")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Quick add", exact: true }),
+    page.getByRole("button", { name: /^Quick add · / }),
   ).toBeEnabled();
   await page.unroute("**/reader-details");
   await page
@@ -202,13 +206,15 @@ test("Discover opens a full book page with safe reviews and explicit actions", a
     };
     return route.fulfill({ status: 202, json: quickReceipt });
   });
-  await page.getByRole("button", { name: "Quick add", exact: true }).click();
+  await page.getByRole("button", { name: /^Quick add · / }).click();
   await expect(page.getByText("Preferred downloads queued")).toBeVisible();
   expect(writes.filter((url) => url.endsWith("/import"))).toHaveLength(1);
   expect(
     writes.filter((url) => url.endsWith("/api/requests/quick-add")),
   ).toHaveLength(1);
-  await page.getByRole("button", { name: "Add to list", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Add to reading list", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Add to a reading list" }),
   ).toBeVisible();

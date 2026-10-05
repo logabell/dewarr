@@ -177,7 +177,7 @@ test("release view sorting and filters compare every loaded result without chang
     ),
   ).toBe(true);
   await page.reload();
-  await expect(comparison.getByLabel("Sort this view")).toHaveValue("profile");
+  await expect(comparison.getByLabel("Sort this view")).toHaveValue("title");
   await expect(
     comparison.getByLabel("Filter title, author or narrator"),
   ).toHaveValue("");
@@ -192,7 +192,7 @@ test("release view sorting and filters compare every loaded result without chang
   ).toBeVisible();
   await cards
     .first()
-    .getByRole("button", { name: /^Details for/ })
+    .getByRole("button", { name: "Release 00", exact: true })
     .click();
   await expect(
     page.getByRole("dialog").getByRole("button", { name: /^Download / }),

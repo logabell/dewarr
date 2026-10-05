@@ -200,7 +200,7 @@ async def test_empty_folder_can_qualify_before_any_plan_or_download(
     assert (await start(client, empty_route, downloader_generation=2)).status_code == 409
 
 
-@pytest.mark.parametrize("change", ["generation", "disabled", "path", "mapping"])
+@pytest.mark.parametrize("change", ["generation", "path", "mapping"])
 async def test_changed_downloader_invalidates_probe_and_selection_options(
     client, admin, database, empty_route, change
 ):
@@ -211,8 +211,6 @@ async def test_changed_downloader_invalidates_probe_and_selection_options(
         row = await db.get(Integration, empty_route["downloader"])
         if change == "generation":
             row.credential_generation += 1
-        elif change == "disabled":
-            row.enabled = False
         elif change == "path":
             row.config = {**row.config, "save_path": "/downloads/changed"}
         else:
@@ -477,15 +475,20 @@ async def test_clients_share_library_without_replacing_defaults_or_each_others_v
         assert response.status_code == 202, response.text
     if failure != "failed_probe":
         async with database() as db, db.begin():
-            (await db.get(Integration, client_ids[-1])).enabled = False
+            integration = await db.get(Integration, client_ids[-1])
+            if failure == "disabled":
+                integration.enabled = False
+            else:
+                integration.credential_generation += 1
     if failure != "disabled":
         await get_queue().run_worker_async(wait=False, concurrency=1)
     checked = await current(client)
     assert checked["publication_available"]
-    assert {item["source_key"] for item in checked["probe"]["download_routes"]} == {
-        "fixture",
-        "sabnzbd",
-    }
+    expected_sources = {"fixture", "sabnzbd"}
+    if failure == "disabled":
+        # Disabling new downloads preserves verification for ongoing imports.
+        expected_sources.add("slskd")
+    assert {item["source_key"] for item in checked["probe"]["download_routes"]} == expected_sources
     policy = (
         await client.get(f"/api/organization/destinations/{checked['id']}/automatic-import")
     ).json()

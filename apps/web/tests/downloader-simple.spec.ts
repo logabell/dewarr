@@ -60,7 +60,7 @@ test("qBittorrent setup only needs an address and category", async ({
   const form = page.getByRole("form", {
     name: "qBittorrent connection settings",
   });
-  await expect(form.locator("input")).toHaveCount(4);
+  await expect(form.locator("input:not([type=checkbox])")).toHaveCount(4);
   await form
     .getByLabel("qBittorrent URL or IP address", { exact: true })
     .fill("10.0.0.2:8080");
@@ -94,7 +94,7 @@ test("qBittorrent setup only needs an address and category", async ({
   await card
     .getByRole("button", { name: "Edit downloader", exact: true })
     .click();
-  await expect(form.locator("input")).toHaveCount(4);
+  await expect(form.locator("input:not([type=checkbox])")).toHaveCount(4);
   await expect(
     form.getByLabel("Download category", { exact: true }),
   ).toHaveValue("simple-books");
@@ -116,7 +116,7 @@ test("qBittorrent setup only needs an address and category", async ({
     .getByRole("button", { name: "Connect SABnzbd", exact: true })
     .click();
   const sab = page.getByRole("form", { name: "SABnzbd connection settings" });
-  await expect(sab.locator("input")).toHaveCount(3);
+  await expect(sab.locator("input:not([type=checkbox])")).toHaveCount(3);
   await expect(
     sab.getByLabel("SABnzbd API key", { exact: true }),
   ).toHaveAttribute("required", "");
@@ -156,7 +156,7 @@ test("qBittorrent setup only needs an address and category", async ({
     .getByRole("button", { name: "Connect NZBGet", exact: true })
     .click();
   const nzb = page.getByRole("form", { name: "NZBGet connection settings" });
-  await expect(nzb.locator("input")).toHaveCount(4);
+  await expect(nzb.locator("input:not([type=checkbox])")).toHaveCount(4);
   await expect(
     nzb.getByLabel("NZBGet username (optional)", { exact: true }),
   ).not.toHaveAttribute("required");

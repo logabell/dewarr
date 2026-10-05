@@ -61,6 +61,9 @@ test("awards, filtering, pinning and persisted layout form one discovery flow", 
   await page
     .getByRole("combobox", { name: "Category", exact: true })
     .selectOption("Fiction");
+  await page
+    .getByRole("combobox", { name: "Source", exact: true })
+    .selectOption("goodreads");
   await expect(page.locator(".explore-collection")).toHaveCount(1);
   await page.locator(".explore-collection").click();
   await expect(
@@ -74,16 +77,21 @@ test("awards, filtering, pinning and persisted layout form one discovery flow", 
   await expect(
     page.getByRole("button", { name: "On For you", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Tracking on", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Follow updates", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Following updates", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "Tracking paused", exact: true }),
+    page.getByRole("button", { name: "Follow updates", exact: true }),
   ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("button", { name: "On For you", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Tracking paused", exact: true }),
+    page.getByRole("button", { name: "Follow updates", exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "For you", exact: true }).click();
   await page.getByRole("button", { name: "Customize", exact: true }).click();
@@ -138,7 +146,7 @@ test("manual list preview is bounded and mobile navigation fits", async ({
   await dialog.getByLabel("Keep updated").uncheck();
   await dialog.getByRole("button", { name: "Add list", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Tracking paused", exact: true }),
+    page.getByRole("button", { name: "Follow updates", exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(
@@ -151,7 +159,10 @@ test("manual list preview is bounded and mobile navigation fits", async ({
   });
   await page.getByRole("link", { name: "Awards", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Goodreads Choice Awards", exact: true }),
+    page.getByRole("heading", {
+      name: "Stories worth celebrating",
+      exact: true,
+    }),
   ).toBeVisible();
   expect(
     await page.evaluate(
@@ -228,7 +239,7 @@ test("Goodreads cards open verified Hardcover details and lists navigation is co
     page.getByRole("heading", { name: "Ender's Game", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Quick add", exact: true }),
+    page.getByRole("button", { name: /^Quick add · / }),
   ).toBeVisible();
   await expect(
     page.getByText("Verified Hardcover book description.", { exact: true }),
@@ -280,7 +291,7 @@ test("visible Goodreads cards replace thumbnails with Hardcover art", async ({
   await expect(card).toHaveAttribute("href", "/discover/books/hardcover/42");
   await expect(card.locator("..").locator(".book-cover img")).toHaveAttribute(
     "src",
-    "/api/catalog/cover-image?url=" +
+    "/api/catalog/cover-image?size=320&url=" +
       encodeURIComponent(
         "https://assets.hardcover.app/discovery-test-cover.svg",
       ),

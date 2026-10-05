@@ -30,6 +30,16 @@ test.beforeEach(async ({ page }) => {
 test("customizer aligns controls, reorders, adds shelves and saves only on request", async ({
   page,
 }, info) => {
+  let saved: { order: string[]; hidden: string[] } | undefined;
+  await page.route("**/api/discovery/home", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      json: {
+        ...(await response.json()),
+        layout: saved || { order: [], hidden: [] },
+      },
+    });
+  });
   await page.route("**/api/discovery/layout", (route) =>
     route.fulfill({ json: { order: [], hidden: [] } }),
   );
@@ -128,7 +138,6 @@ test("customizer aligns controls, reorders, adds shelves and saves only on reque
     true,
   );
   await page.screenshot({ path: info.outputPath("customizer-mobile.png") });
-  let saved: { order: string[]; hidden: string[] } | undefined;
   await page.unroute("**/api/discovery/layout");
   await page.route("**/api/discovery/layout", (route) => {
     if (route.request().method() === "PUT")

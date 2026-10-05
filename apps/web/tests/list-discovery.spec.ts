@@ -100,8 +100,10 @@ test("followed lists expose saved books and ownership without starting acquisiti
     card.getByRole("button", { name: `Refresh ${latest!.name}`, exact: true }),
   ).toBeDisabled();
   await shelf.scrollIntoViewIfNeeded();
-  if (await shelf.locator(".infinite-scroll").count())
-    await shelf.locator(".infinite-scroll").scrollIntoViewIfNeeded();
+  await shelf
+    .locator(":scope > .discovery-section")
+    .last()
+    .scrollIntoViewIfNeeded();
   await expect
     .poll(() => shelf.locator(":scope > .discovery-section").count())
     .toBeGreaterThanOrEqual(6);

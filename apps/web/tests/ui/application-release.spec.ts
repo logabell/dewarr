@@ -147,6 +147,7 @@ for (const state of ["update", "current", "offline", "unconfigured"]) {
       await notes.getByRole("button", { name: "Close release notes" }).click();
     }
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Menu", exact: true }).click();
     await expect(footer).toBeVisible();
     if (state === "update") {
       await footer.getByRole("button", { name: "Update", exact: true }).click();

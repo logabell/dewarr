@@ -420,6 +420,7 @@ test("connect StoryGraph, follow a shelf, and paste a tag list", async ({
   await expect(
     storygraph.getByRole("link", { name: "To-read", exact: true }),
   ).toBeVisible();
+  await page.goto("/discover?view=yours");
   await page.getByRole("button", { name: "Add list" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a list" });
   await dialog

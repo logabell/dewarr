@@ -1,8 +1,11 @@
-import { expect, test } from "../fixtures";
+import { emptyDiscoveryHome, expect, test } from "../fixtures";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/**", (route) =>
     route.fulfill({ json: { items: [], total: 0, statuses: [], kinds: [] } }),
+  );
+  await page.route("**/api/discovery/home", (route) =>
+    route.fulfill({ json: emptyDiscoveryHome() }),
   );
   await page.route("**/api/request-quotas/me", (route) =>
     route.fulfill({
@@ -109,7 +112,7 @@ for (const scenario of [
         ? route.fulfill({ status: 409, json: { detail: "Shelf was paused" } })
         : route.fulfill({ status: 202, json: { id, status: "queued" } });
     });
-    await page.goto("/requests");
+    await page.goto("/discover");
     const button = page.getByRole("button", {
       name: "Refresh lists",
       exact: true,
@@ -172,7 +175,7 @@ test("topbar refresh can update StoryGraph lists only", async ({ page }) => {
     calls.push(route.request().url().split("/").at(-3)!);
     return route.fulfill({ status: 202, json: { status: "queued" } });
   });
-  await page.goto("/requests");
+  await page.goto("/discover");
   await page
     .getByRole("button", { name: "Choose which lists to refresh" })
     .click();

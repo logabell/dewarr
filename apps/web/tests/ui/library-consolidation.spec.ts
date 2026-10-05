@@ -76,7 +76,7 @@ test("one bookshelf preserves filters and keeps library review for admins", asyn
   await expect(
     page
       .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", { name: "Review", exact: true }),
+      .getByRole("link", { name: "Library review", exact: true }),
   ).toBeVisible();
   role = "member";
   await page.goto("/review");
@@ -84,7 +84,7 @@ test("one bookshelf preserves filters and keeps library review for admins", asyn
   await expect(
     page
       .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", { name: /^Review/ }),
+      .getByRole("link", { name: /^Library review/ }),
   ).toHaveCount(0);
   role = "admin";
   expect(requests.some((url) => url.pathname === "/api/library/books")).toBe(

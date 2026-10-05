@@ -80,11 +80,12 @@ test("manual search shares defaults and confirmed Quick Add feedback retires", a
     await route.fulfill({ json: data });
   });
   await page.clock.install();
-  await page.goto("/books/work-1?tab=sources");
-  const query = page.getByRole("textbox", { name: "Release search query" });
-  await expect(query).toHaveValue("Enshittification");
+  await page.goto("/books/work-1");
   const feedback = page.getByRole("region", { name: "Quick add progress" });
   await expect(feedback).toContainText("automatic download queued");
+  await page.getByRole("tab", { name: "Sources", exact: true }).click();
+  const query = page.getByRole("textbox", { name: "Release search query" });
+  await expect(query).toHaveValue("Enshittification");
   expect(searches).toHaveLength(1);
   expect(searches[0]).not.toHaveProperty("q");
   await query.fill("Enshittification Cory Doctorow epub");
@@ -93,9 +94,12 @@ test("manual search shares defaults and confirmed Quick Add feedback retires", a
   expect(searches[1].q).toBe("Enshittification Cory Doctorow epub");
   // The API returns no current receipt after inventory confirms every format.
   // The banner must disappear on the open page, without a manual reload.
+  await page.getByRole("tab", { name: "Overview", exact: true }).click();
+  await expect(feedback).toContainText("automatic download queued");
   receipt = null;
   await page.clock.fastForward(5000);
   await expect(feedback).toHaveCount(0);
+  await page.getByRole("tab", { name: "Sources", exact: true }).click();
   await page.reload();
   await expect(query).toHaveValue("Enshittification Cory Doctorow epub");
   expect(searches).toHaveLength(2);

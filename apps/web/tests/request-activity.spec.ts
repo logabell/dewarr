@@ -204,11 +204,12 @@ test("activity requests preserve independent reasons and route missing media to 
     .getByRole("link", { name: "Activity Journey Alpha", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Quick add", exact: true }),
+    page.getByRole("button", { name: /^Quick add · / }),
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Quick add progress" }),
   ).toHaveCount(0);
+  await page.getByRole("button", { name: "Menu", exact: true }).click();
   await page.getByRole("link", { name: "Requests", exact: true }).click();
   await page.getByRole("link", { name: "Withdrawn", exact: true }).click();
   await expect(card).toBeVisible();
@@ -250,9 +251,11 @@ test("activity requests preserve independent reasons and route missing media to 
   await expect(
     filters.getByRole("link", { name: "Downloading", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  await filters.getByRole("link", { name: "Review", exact: true }).click();
+  await filters
+    .getByRole("link", { name: "Download review", exact: true })
+    .click();
   await expect(
-    filters.getByRole("link", { name: "Review", exact: true }),
+    filters.getByRole("link", { name: "Download review", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("region", { name: "Requests", exact: true }),

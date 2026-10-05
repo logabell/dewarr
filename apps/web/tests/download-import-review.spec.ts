@@ -160,7 +160,11 @@ test("linked downloads resume their saved import instead of asking for catalog m
   await expect(
     files.getByText("Project Hail Mary.m4b", { exact: true }),
   ).toBeVisible();
-  await expect(files.getByText("Ready", { exact: true })).toHaveCount(1);
+  await expect(
+    files.getByText("Readable · completeness still requires verification", {
+      exact: true,
+    }),
+  ).toHaveCount(1);
   await expect(files.getByText("Extra file", { exact: true })).toHaveCount(3);
   await files.getByRole("button", { name: "Close downloaded files" }).click();
   await page.getByRole("button", { name: "Retry import", exact: true }).click();

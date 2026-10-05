@@ -78,6 +78,7 @@ async def test_grouped_covers_prefer_requested_format_and_fall_back(
 
     from app.db.models import ProviderCache
     from app.domain import library_covers
+    from app.domain.image_memory import image_memory
 
     async with database() as db, db.begin():
         ebook, audio, ebook_library, audio_library = await copies(db)
@@ -112,6 +113,8 @@ async def test_grouped_covers_prefer_requested_format_and_fall_back(
         await db.execute(
             update(ProviderCache).values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
         )
+    # Simulate expiry of both cache tiers before checking upstream fallback.
+    image_memory.cache_clear()
     assert (await client.get(f"/api/catalog/works/{ebook_id}/cover")).content == b"audio"
     assert calls == ["ebook", "audio", "ebook", "audio"]
 

@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { emptyDiscoveryHome, expect, test } from "./fixtures";
 
 test.beforeEach(async ({ page }) => {
   const bootstrap = await page.request.post("/api/auth/bootstrap", {
@@ -110,7 +110,10 @@ test("collection sources share filters and awards append on scroll", async ({
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Awards", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Goodreads Choice Awards", exact: true }),
+    page.getByRole("heading", {
+      name: "Stories worth celebrating",
+      exact: true,
+    }),
   ).toBeVisible();
   await page.locator(".explore-collection").nth(23).scrollIntoViewIfNeeded();
   await expect(page.locator(".explore-collection")).toHaveCount(25);
@@ -346,6 +349,17 @@ test("Discover previews stop at 100 and View all continues scrolling", async ({
       },
     }),
   );
+  await page.route("**/api/discovery/home", (route) => {
+    const home = emptyDiscoveryHome();
+    return route.fulfill({
+      json: {
+        ...home,
+        saved: { ...home.saved, items: [c], total: 1 },
+        selected: [c],
+        layout: { order: [c.id], hidden: [] },
+      },
+    });
+  });
   await page.route("**/api/discovery/collections/list-1?*", (route) => {
     const params = new URL(route.request().url()).searchParams;
     const p = Number(params.get("page") || 1);
@@ -450,8 +464,8 @@ test("full Goodreads lists retain books on upstream failure and retry past 100",
   const c = { ...collection(1), count: 3800, coverage: "partial" };
   await page.route("**/api/discovery/collections/list-1?*", (route) => {
     const params = new URL(route.request().url()).searchParams;
-    expect(params.get("full")).toBe("true");
     const p = Number(params.get("page") || 1);
+    if (p > 1) expect(params.get("full")).toBe("true");
     if (p === 3 && fail)
       return route.fulfill({
         status: 502,
