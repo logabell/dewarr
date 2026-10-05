@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
-from fastapi import HTTPException, Response
+from fastapi import HTTPException
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import defer, with_expression
 
@@ -29,6 +29,7 @@ from app.db.models import (
 from app.domain.availability import availability_rows
 from app.domain.cache_entries import read_through
 from app.domain.catalog_display import display_map
+from app.domain.image_memory import image_memory, image_response
 from app.domain.primary_editions import asset_narrators, edition_order
 from app.domain.visibility import visible_origin_work
 from app.security import decrypt_secrets
@@ -189,15 +190,30 @@ async def library_cover(db, user, work_id: UUID, medium: str, if_none_match=None
     # preferred cover in favor of a cached lower-priority edition.
     if candidates:
         key = candidates[0][0]
+        memory = image_memory(db.bind)
+        hit = memory.get(key)
+        if hit:
+            await db.rollback()
+            return image_response(*hit, "private, no-cache", "memory", if_none_match)
         cached = await db.get(ProviderCache, key)
         if cached and cached.expires_at > datetime.now(UTC):
-            response = cover_response(cached.value, key, if_none_match)
+            response = cover_response(cached.value, key, if_none_match, source="database")
+            memory.put(
+                key,
+                base64.b64decode(cached.value["body"]),
+                cached.value["type"],
+                cached.expires_at,
+                response.headers["etag"],
+            )
             await db.rollback()
             return response
     await db.rollback()
     for key, url, backend, encrypted, external in candidates:
+        fetched = False
 
         async def load(url=url, encrypted=encrypted, external=external, backend=backend, key=key):
+            nonlocal fetched
+            fetched = True
             secrets = decrypt_secrets(encrypted)
             data, kind = await fetch_cover(
                 url, secrets.get("token", ""), external, kind=backend, secrets=secrets
@@ -226,22 +242,21 @@ async def library_cover(db, user, work_id: UUID, medium: str, if_none_match=None
         await db.rollback()
         if key not in {candidate[0] for candidate in current}:
             raise HTTPException(404, "Cover unavailable")
-        return cover_response(cached, key, if_none_match)
+        return cover_response(cached, key, if_none_match, source="fill" if fetched else "database")
     raise HTTPException(404, "Cover unavailable")
 
 
-def cover_response(cached, key, if_none_match):
+def cover_response(cached, key, if_none_match, source="fill"):
     etag = cached.get("etag")
     if not etag:
         etag = (
             '"' + hashlib.sha256(key.encode() + base64.b64decode(cached["body"])).hexdigest() + '"'
         )
-    headers = {
-        "Cache-Control": "private, no-cache",
-        "ETag": etag,
-        "X-Content-Type-Options": "nosniff",
-    }
-    tags = {tag.strip().removeprefix("W/") for tag in (if_none_match or "").split(",")}
-    if etag in tags or "*" in tags:
-        return Response(status_code=304, headers=headers)
-    return Response(base64.b64decode(cached["body"]), media_type=cached["type"], headers=headers)
+    return image_response(
+        base64.b64decode(cached["body"]),
+        cached["type"],
+        etag,
+        "private, no-cache",
+        source,
+        if_none_match,
+    )

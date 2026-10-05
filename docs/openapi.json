@@ -3646,6 +3646,22 @@
               "default": 1200,
               "title": "Size"
             }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
           }
         ],
         "responses": {
@@ -20416,6 +20432,16 @@
               }
             ],
             "title": "Primary Audio Version Id"
+          },
+          "primary_ebook_selected": {
+            "type": "boolean",
+            "title": "Primary Ebook Selected",
+            "default": false
+          },
+          "primary_audio_selected": {
+            "type": "boolean",
+            "title": "Primary Audio Selected",
+            "default": false
           },
           "primary_audio_narrators": {
             "items": {

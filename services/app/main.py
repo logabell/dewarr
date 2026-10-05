@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -123,7 +124,10 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def response_headers(request: Request, call_next):
         request.state.request_id = str(uuid4())
+        started = perf_counter()
         response = await call_next(request)
+        if "X-Cover-Cache" in response.headers:
+            response.headers["Server-Timing"] = f"app;dur={(perf_counter() - started) * 1000:.1f}"
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"

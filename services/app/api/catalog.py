@@ -195,7 +195,8 @@ async def cover_image(
     db: Database,
     url: str = Query(max_length=2000),
     size: int = Query(default=1200, ge=320, le=1200),
+    if_none_match: str | None = Header(default=None),
 ):
     from app.domain.cover_cache import cached_cover
 
-    return await cached_cover(db, url, size)
+    return await cached_cover(db, url, size, if_none_match)

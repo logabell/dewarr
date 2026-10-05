@@ -7,6 +7,7 @@ test("cover shortcuts acquire missing formats without navigating, including prov
   page.on("pageerror", (error) => errors.push(error.message));
   const writes: { work_id: string; specification: { mode?: string } }[] = [];
   const imports: string[] = [];
+  const libraryCoverReads: string[] = [];
   let role = "admin";
   let fail = false;
   let queued = false;
@@ -29,7 +30,13 @@ test("cover shortcuts acquire missing formats without navigating, including prov
               title: id,
               authors: ["Test Author"],
               cover_url: art,
-              availability: { owned: i > 0, ebook: i > 0, audio: i === 2 },
+              availability: {
+                owned: i > 0,
+                ebook: i > 0,
+                audio: i === 2,
+                primary_ebook_version_id: i > 0 ? "edition" : null,
+                primary_ebook_selected: i === 2,
+              },
             },
     }),
   );
@@ -50,8 +57,10 @@ test("cover shortcuts acquire missing formats without navigating, including prov
       };
     else if (path === "/api/setup/onboarding") data = { status: "completed" };
     else if (path === "/api/metadata/account") data = { enabled: true };
-    else if (path.endsWith("/cover")) return route.fulfill({ status: 404 });
-    else if (path === "/api/discovery/hardcover/trending")
+    else if (path.endsWith("/cover")) {
+      libraryCoverReads.push(path);
+      return route.fulfill({ status: 404 });
+    } else if (path === "/api/discovery/hardcover/trending")
       data = { title: "Trending on Hardcover", status: "ready", items };
     else if (path.startsWith("/api/discovery/"))
       data = { title: "Other books", status: "ready", items: [], total: 0 };
@@ -92,6 +101,11 @@ test("cover shortcuts acquire missing formats without navigating, including prov
     has: page.getByRole("heading", { name: "provider", exact: true }),
   });
   await expect(missing).toBeVisible();
+  await expect(owned.locator(".book-cover img")).toHaveAttribute("src", art);
+  await expect(complete.locator(".book-cover img")).toHaveAttribute("src", art);
+  // Automatic edition selection must not block public artwork behind the library.
+  // An explicitly selected edition still gets its library image first.
+  expect(libraryCoverReads).toEqual(["/api/catalog/works/complete/cover"]);
   await expect(
     missing.getByRole("button", { name: "Quick add from cover" }),
   ).toBeHidden();

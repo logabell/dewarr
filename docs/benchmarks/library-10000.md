@@ -20,6 +20,14 @@ edition preferences in the candidate query, and reads the preferred cached image
 without a second candidate calculation. Cold fills retain the access recheck;
 warm responses still validate current grants before returning either bytes or 304.
 
+A subsequent bounded in-memory cache run measured public artwork at 1.7–2.0 ms
+across four warm requests (3 authentication/recovery SQL statements, no image
+query). Library artwork took 8.1–8.8 ms across three memory hits (4 statements,
+including current library access and artwork selection). The first library
+database hit took 9.1 ms / 5 statements. These use synthetic image bytes and
+exclude remote downloads, conversion, browser queuing and NAS load. The benchmark
+now records `X-Cover-Cache` alongside timing to distinguish these paths.
+
 ## Fixture and method
 
 - Apple M5 Pro, 24 GiB RAM, PostgreSQL 16.14 (Homebrew).

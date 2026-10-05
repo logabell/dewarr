@@ -147,6 +147,7 @@ async def test_primary_edition_and_format_freshness(client, admin, database):
     assert response.status_code == 204, response.text
     data = (await client.get(f"/api/catalog/works/{work_id}")).json()["availability"]
     assert data["primary_audio_version_id"] == version_id
+    assert data["primary_audio_selected"] is True
     assert data["primary_audio_narrators"] == ["Chosen Reader"]
     from app.db.models import LibraryAsset
 

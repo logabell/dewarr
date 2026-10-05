@@ -56,6 +56,8 @@ class Availability(BaseModel):
     audio_stale: bool = False
     primary_ebook_version_id: UUID | None = None
     primary_audio_version_id: UUID | None = None
+    primary_ebook_selected: bool = False
+    primary_audio_selected: bool = False
     primary_audio_narrators: list[str] = Field(default_factory=list)
     # Some parts of the book but not all: "2 of 3 parts". Not owned in that format.
     parts_owned: int = 0
@@ -128,6 +130,12 @@ async def availability_for(
             result[origin].audio_versions = len(formats["audio"])
             for medium in ("ebook", "audio"):
                 rows = copies[root][medium]
+                setattr(
+                    result[origin],
+                    "primary_" + medium + "_selected",
+                    bool(primary[medium])
+                    and choices.get(root, {}).get(medium) == str(primary[medium][0].version_id),
+                )
                 setattr(
                     result[origin],
                     medium + "_stale",

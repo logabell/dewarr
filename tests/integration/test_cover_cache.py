@@ -21,12 +21,25 @@ async def test_cover_is_durable_and_browser_cacheable(client, admin, database, m
         return b"normalized-jpeg"
 
     monkeypatch.setattr(cover_cache, "fetch_cover", fetch)
-    for _ in range(2):
+    for source in ("fill", "memory", "database"):
+        if source == "database":
+            from app.domain.image_memory import image_memory
+
+            image_memory.cache_clear()  # Simulate a restarted API process.
         response = await client.get("/api/catalog/cover-image", params={"url": URL})
         assert response.status_code == 200
         assert response.content == b"normalized-jpeg"
         assert response.headers["content-type"] == "image/jpeg"
         assert response.headers["cache-control"] == "private, max-age=86400"
+        assert response.headers["x-cover-cache"] == source
+        assert "app;dur=" in response.headers["server-timing"]
+    unchanged = await client.get(
+        "/api/catalog/cover-image",
+        params={"url": URL},
+        headers={"If-None-Match": response.headers["etag"]},
+    )
+    assert unchanged.status_code == 304 and not unchanged.content
+    assert unchanged.headers["x-cover-cache"] == "memory"
     assert calls == [URL]
     async with database() as db:
         assert await db.scalar(select(func.count()).select_from(ProviderCache)) == 1
@@ -69,6 +82,10 @@ async def test_expired_cover_refresh_releases_database_during_network_io(databas
         row = await db.scalar(select(ProviderCache))
         row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await db.commit()
+
+        from app.domain.image_memory import image_memory
+
+        image_memory.cache_clear()  # Expire the process cache along with the fixture row.
 
         async def refreshed(url):
             assert not db.in_transaction()

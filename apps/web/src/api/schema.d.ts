@@ -6476,6 +6476,16 @@ export interface components {
       primary_ebook_version_id?: string | null;
       /** Primary Audio Version Id */
       primary_audio_version_id?: string | null;
+      /**
+       * Primary Ebook Selected
+       * @default false
+       */
+      primary_ebook_selected: boolean;
+      /**
+       * Primary Audio Selected
+       * @default false
+       */
+      primary_audio_selected: boolean;
       /** Primary Audio Narrators */
       primary_audio_narrators?: string[];
       /**
@@ -17732,7 +17742,9 @@ export interface operations {
         url: string;
         size?: number;
       };
-      header?: never;
+      header?: {
+        "if-none-match"?: string | null;
+      };
       path?: never;
       cookie?: never;
     };

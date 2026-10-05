@@ -100,6 +100,22 @@ response. Access and backend configuration are checked again after a cache fill.
 Warm artwork uses a single scoped candidate query and a direct cache read; cold
 fills still recheck access after network I/O. Public card artwork requests 320px
 or 640px variants, while book detail and export paths retain 1200px originals.
+
+API processes also retain up to 32 MiB / 2,048 artwork entries in memory for at
+most five minutes. Public-image hits skip the database image read and base64
+decode; library-image hits still resolve current access and artwork revisions.
+The durable database cache survives API/container restarts. Public images carry
+an ETag for 304 revalidation, alongside their one-day browser freshness.
+Cards prefer available public artwork over automatically chosen library artwork;
+an explicitly selected library edition and book detail retain library priority.
+
+To diagnose a slow cover in browser Network tools, inspect `X-Cover-Cache`:
+`memory` uses the process cache, `database` uses durable bytes, and `fill` fetched
+or generated a missing image. `Server-Timing: app;dur=...` reports server request
+time including authentication. A long browser queue with low server duration
+points to browser/connection contention; a slow `fill` points to the cold image
+path. Browser disk/memory hits make no server request, so any displayed response
+headers on those entries describe the earlier request that populated the cache.
 Unchanged JSON responses update freshness without rewriting their JSON value.
 
 The UI retains browsed queries for ten minutes after becoming inactive, separately

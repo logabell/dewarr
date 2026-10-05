@@ -39,6 +39,9 @@ async def test_covers_require_library_access_and_keep_credentials_server_side(
     assert response.headers["etag"]
     again = await client.get(url, headers={"If-None-Match": response.headers["etag"]})
     assert again.status_code == 304 and not again.content
+    assert again.headers["x-cover-cache"] == "database"
+    warm = await client.get(url, headers={"If-None-Match": response.headers["etag"]})
+    assert warm.status_code == 304 and warm.headers["x-cover-cache"] == "memory"
     assert calls == [("http://fixture.invalid", "private-token", "one")]
     assert "private-token" not in response.text
     member = await login_member(client)

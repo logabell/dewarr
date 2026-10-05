@@ -98,9 +98,15 @@ export default function BookCover({
       : format === "audio"
         ? display.audioShape
         : display.ebookShape;
-  const candidates = [libraryCover, work?.cover_url, cover].filter(
-    (url): url is string => !!url && !failed.includes(url),
-  );
+  const selectedEdition =
+    format === "audio"
+      ? availability?.primary_audio_selected
+      : availability?.primary_ebook_selected;
+  const candidates = (
+    detail || selectedEdition
+      ? [libraryCover, work?.cover_url, cover]
+      : [work?.cover_url, cover, libraryCover]
+  ).filter((url): url is string => !!url && !failed.includes(url));
   const src =
     shape === "portrait"
       ? candidates.find((url) => !nonPortrait.includes(url)) || candidates[0]

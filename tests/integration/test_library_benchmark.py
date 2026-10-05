@@ -125,6 +125,11 @@ async def test_ten_thousand_book_pages(client, admin, database, monkeypatch):
         return b"synthetic-image", "image/jpeg"
 
     monkeypatch.setattr("app.domain.library_covers.fetch_cover", cover)
+
+    async def public_cover(*args):
+        return b"synthetic-public-image"
+
+    monkeypatch.setattr("app.domain.cover_cache.fetch_cover", public_cover)
     report = {"books": 10_000, "platform": platform.platform(), "requests": []}
     engine = get_engine().sync_engine
     statements = []
@@ -146,9 +151,10 @@ async def test_ten_thousand_book_pages(client, admin, database, monkeypatch):
             "/api/catalog/works?limit=40&q=Book%200001",
             "/api/discovery/library",
             f"/api/catalog/works/{UUID(int=1000)}/cover",
+            "/api/catalog/cover-image?url=https%3A%2F%2Fi.gr-assets.com%2Fbooks%2Fbenchmark.jpg",
         ):
             # A few warm cover samples separate SQL savings from Python warmup/GC.
-            for attempt in range(5 if path.endswith("/cover") else 2):
+            for attempt in range(5 if "/cover" in path else 2):
                 statements.clear()
                 started = time.perf_counter()
                 response = await client.get(path)
@@ -157,6 +163,7 @@ async def test_ten_thousand_book_pages(client, admin, database, monkeypatch):
                     "attempt": attempt,
                     "ms": (time.perf_counter() - started) * 1000,
                     "status": response.status_code,
+                    "cover_cache": response.headers.get("X-Cover-Cache"),
                     "sql_count": len(statements),
                     "sql_ms": sum(row["ms"] for row in statements),
                     "slowest": sorted(statements, key=lambda row: row["ms"], reverse=True)[:3],

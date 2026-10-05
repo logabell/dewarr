@@ -94,6 +94,8 @@ async def test_followed_lists_group_aliases_preview_order_and_count_scoped_holdi
         "audio_versions": 1,
         "primary_audio_narrators": [],
         "primary_audio_version_id": None,
+        "primary_ebook_selected": False,
+        "primary_audio_selected": False,
         "primary_ebook_version_id": None,
         "ebook_stale": True,
         "audio_stale": False,

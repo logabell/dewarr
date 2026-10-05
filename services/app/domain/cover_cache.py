@@ -5,17 +5,19 @@ import base64
 import hashlib
 from datetime import UTC, datetime, timedelta
 
-from fastapi import HTTPException, Response
+from fastapi import HTTPException
 from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.models import ProviderBudget, ProviderCache
 from app.domain.cache_entries import prune
+from app.domain.image_memory import image_memory
+from app.domain.image_memory import image_response as response_bytes
 from app.domain.operations import transaction_lock
 from app.importing.covers import CoverError, fetch_cover, normalize_cover, validated_url
 
 
-async def cached_cover(db, url, size=1200):
+async def cached_cover(db, url, size=1200, if_none_match=None):
     try:
         validated_url(url)
     except CoverError as error:
@@ -24,14 +26,21 @@ async def cached_cover(db, url, size=1200):
         raise HTTPException(422, "Unsupported cover size")
     material = f"cover-image:v1:{url}" if size == 1200 else f"cover-thumbnail:v1:{size}:{url}"
     key = hashlib.sha256(material.encode()).hexdigest()
+    memory = image_memory(db.bind)
+    hit = memory.get(key)
+    if hit:
+        await db.rollback()
+        return response_bytes(*hit, "private, max-age=86400", "memory", if_none_match)
+    source = "fill"
     lease_key = f"cover-fetch:{key}"
     deadline = asyncio.get_running_loop().time() + 55
     # Warm reads do not take an advisory lock or write a transaction.
     cached = await db.get(ProviderCache, key)
     if cached and cached.expires_at > datetime.now(UTC):
         data = base64.b64decode(cached.value["jpeg"])
+        memory.put(key, data, "image/jpeg", cached.expires_at)
         await db.rollback()
-        return image_response(data)
+        return image_response(data, "database", if_none_match)
     while True:
         # A short durable lease coalesces API workers without occupying a database
         # connection or holding an advisory lock during DNS, HTTP or conversion.
@@ -40,6 +49,8 @@ async def cached_cover(db, url, size=1200):
         cached = await db.get(ProviderCache, key, populate_existing=True)
         if cached and cached.expires_at > now:
             data = base64.b64decode(cached.value["jpeg"])
+            memory.put(key, data, "image/jpeg", cached.expires_at)
+            source = "database"
             await db.commit()
             break
         lease = await db.get(ProviderBudget, lease_key, populate_existing=True)
@@ -77,6 +88,7 @@ async def cached_cover(db, url, size=1200):
             raise
         await transaction_lock(db, lease_key)
         lease = await db.get(ProviderBudget, lease_key, populate_existing=True)
+        published = False
         if lease and lease.next_request_at == until:
             now = datetime.now(UTC)
             statement = insert(ProviderCache).values(
@@ -96,17 +108,14 @@ async def cached_cover(db, url, size=1200):
             )
             await db.delete(lease)
             await prune(db, now)
+            published = True
         await db.commit()
+        if published:
+            memory.put(key, data, "image/jpeg", now + timedelta(days=365))
         break
-    return image_response(data)
+    return image_response(data, source, if_none_match)
 
 
-def image_response(data):
-    return Response(
-        data,
-        media_type="image/jpeg",
-        headers={
-            "Cache-Control": "private, max-age=86400",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+def image_response(data, source, if_none_match):
+    etag = '"' + hashlib.sha256(data).hexdigest() + '"'
+    return response_bytes(data, "image/jpeg", etag, "private, max-age=86400", source, if_none_match)
