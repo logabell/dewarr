@@ -26,6 +26,7 @@ from app.domain.catalog_display import display_family, display_map
 from app.domain.catalog_titles import title_narrators
 from app.domain.corrections import asset_state, correct_asset, revision
 from app.domain.library_access import lock_access
+from app.domain.library_review import CLOSED_STATES
 from app.domain.visibility import visible_library, visible_work
 from app.domain.work_graph import canonical_map
 
@@ -195,7 +196,7 @@ async def replace_grants(library_id: UUID, body: GrantInput, admin: Admin, db: D
     await db.commit()
 
 
-def asset_conditions(user, work_id, library_id, needs_review, q, medium, state):
+def asset_conditions(user, work_id, library_id, needs_review, q, medium, state, hide_closed=False):
     conditions = [
         visible_library(user),
         Integration.enabled.is_(True),
@@ -217,13 +218,21 @@ def asset_conditions(user, work_id, library_id, needs_review, q, medium, state):
         conditions.append(LibraryAsset.medium == medium)
     if state != "any":
         conditions.append(LibraryAsset.state == state)
+    elif hide_closed:
+        conditions.append(LibraryAsset.state.not_in(CLOSED_STATES))
     if q.strip():
         # Search only declared title/credit fields, never arbitrary provider payloads.
         pattern = (
             "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         )
         mapping = canonical_map(
-            library_work_ids(user, library_id=library_id, medium=medium, state=state)
+            library_work_ids(
+                user,
+                library_id=library_id,
+                medium=medium,
+                state=state,
+                hide_closed=hide_closed,
+            )
         )
         catalog_matches = (
             select(AssetContains.asset_id)
@@ -266,7 +275,8 @@ async def library_books(
     limit: int = Query(default=40, ge=1, le=100),
 ):
     mapping = display_map(
-        user, library_work_ids(user, library_id=library_id, medium=medium, state=state)
+        user,
+        library_work_ids(user, library_id=library_id, medium=medium, state=state, hide_closed=True),
     )
     matching = (
         select(mapping.c.work_id, func.max(LibraryAsset.created_at).label("observed_at"))
@@ -275,7 +285,7 @@ async def library_books(
         .join(Integration, Library.integration_id == Integration.id)
         .join(AssetContains, AssetContains.asset_id == LibraryAsset.id)
         .join(mapping, mapping.c.origin_id == AssetContains.work_id)
-        .where(*asset_conditions(user, None, library_id, False, q, medium, state))
+        .where(*asset_conditions(user, None, library_id, False, q, medium, state, hide_closed=True))
         .group_by(mapping.c.work_id)
         .subquery()
     )

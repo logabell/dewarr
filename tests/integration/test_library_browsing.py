@@ -12,7 +12,7 @@ from app.db.models import (
     Operation,
     Work,
 )
-from tests.integration.test_discovery import login_member
+from tests.integration.test_discovery import add_owned, login_member
 from tests.integration.test_library_discovery import NOW
 from tests.integration.test_library_discovery import add as add_observed
 
@@ -182,3 +182,29 @@ async def test_file_locations_only_appear_for_accessible_library_copies(client, 
     ]
     await login_member(client)
     assert (await browse(client, work_id=work_id))["items"] == []
+
+
+async def test_bookshelf_leaves_out_books_whose_only_copies_are_gone(client, admin, database):
+    async with database() as db, db.begin():
+        await add(db, "Still on disk")
+        await add(db, "Deleted file", state="intentionally-removed")
+        await add(db, "Lost file", state="missing-confirmed")
+        await add(db, "Same title")
+        await add(db, "Same title", state="intentionally-removed")
+        reorganised, _, _ = await add(db, "Reorganised copy")
+        old_library = await add_owned(db, reorganised)
+        await db.execute(
+            update(LibraryAsset)
+            .where(LibraryAsset.library_id == old_library.id)
+            .values(state="intentionally-removed")
+        )
+    books = (await client.get("/api/library/books")).json()
+    assert sorted(item["title"] for item in books["items"]) == [
+        "Reorganised copy",
+        "Same title",
+        "Still on disk",
+    ]
+    assert books["total"] == 3
+    lost = (await client.get("/api/library/books", params={"state": "missing-confirmed"})).json()
+    assert [item["title"] for item in lost["items"]] == ["Lost file"]
+    assert (await browse(client))["total"] == 7

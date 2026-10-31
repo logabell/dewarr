@@ -15,11 +15,15 @@ from app.db.models import (
     Version,
 )
 from app.domain.catalog_display import display_map
+from app.domain.library_review import CLOSED_STATES
 from app.domain.primary_editions import asset_narrators, edition_order, primary_choices
 
 
-def library_work_ids(user, *, library_id=None, medium="any", state="any"):
+def library_work_ids(user, *, library_id=None, medium="any", state="any", hide_closed=False):
     """Origins in accessible inventory, including incomplete and missing copies.
+
+    hide_closed leaves out copies that are gone for good (CLOSED_STATES) when no state is
+    asked for, so a bookshelf doesn't list removed files as unowned books.
 
     This bounds library browsing projections; fulfillment still uses the stricter
     availability_rows() relation to establish complete, verified ownership.
@@ -41,6 +45,8 @@ def library_work_ids(user, *, library_id=None, medium="any", state="any"):
         query = query.where(LibraryAsset.medium == medium)
     if state != "any":
         query = query.where(LibraryAsset.state == state)
+    elif hide_closed:
+        query = query.where(LibraryAsset.state.not_in(CLOSED_STATES))
     return query
 
 
