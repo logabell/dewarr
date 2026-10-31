@@ -89,8 +89,12 @@ async def test_metadata_resolution_holds_on_timeout_or_inconsistent_evidence(fai
         "http://qbit.test", "fixture", "fixture", transport=httpx.MockTransport(handler)
     ) as client:
         with pytest.raises(AdapterError) as error:
+            # Only the pending case should run out of time. The others start a torrent probe
+            # process, which can take longer than 0.2 seconds on a busy machine.
             await client.resolve_magnet(
-                "magnet:?xt=urn:btih:" + "a" * 40, interval=0.01, wait_seconds=0.2
+                "magnet:?xt=urn:btih:" + "a" * 40,
+                interval=0.01,
+                wait_seconds=0.2 if failure == "pending" else 10,
             )
         assert error.value.kind == (
             FailureKind.TIMEOUT if failure == "pending" else FailureKind.PARSER
