@@ -19,6 +19,7 @@ from app.api import (
     auth,
     automatic_imports,
     automatic_selection,
+    background_work,
     book_sources,
     capacity,
     catalog,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Dewarr", version="0.3.0", lifespan=lifespan)
     app.include_router(application_release.router, prefix="/api")
     app.include_router(notifications.router, prefix="/api")
+    app.include_router(background_work.router, prefix="/api")
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exception: RequestValidationError):

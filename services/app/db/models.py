@@ -713,6 +713,15 @@ class Operation(Identity, Base):
             "created_at",
             postgresql_where=text("kind = 'lists.writeback'"),
         ),
+        # Background jobs look operations up by kind and status, and request pages by the
+        # request id inside the command payload.
+        Index("ix_operations_kind_status_created", "kind", "status", "created_at"),
+        Index(
+            "ix_operations_command_intent",
+            text("(payload['command'] ->> 'intent_id')"),
+            "kind",
+            "created_at",
+        ),
     )
     owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(60))
@@ -1211,6 +1220,19 @@ class OnboardingSettings(Base):
     show_member_onboarding: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+
+
+class BackgroundWorkSettings(Base):
+    __tablename__ = "background_work_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="background_work_settings_id_check"),
+        CheckConstraint(
+            "pace IN ('normal', 'relaxed', 'light', 'minimal')",
+            name="background_work_settings_pace_check",
+        ),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pace: Mapped[str] = mapped_column(String(20), default="normal", server_default="normal")
 
 
 class OrganizationSettings(Base):

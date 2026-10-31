@@ -1,3 +1,4 @@
+import BackgroundWork from "./BackgroundWork";
 import { lazy } from "react";
 import SettingsGroup from "../components/SettingsGroup";
 
@@ -102,6 +103,15 @@ export function settingsSections(role: string, permissions: string[] = []) {
       title: "Notifications",
       content: <Notifications admin={admin} />,
     },
+    ...(admin
+      ? [
+          {
+            id: "background-work",
+            title: "Background work",
+            content: <BackgroundWork />,
+          },
+        ]
+      : []),
     { id: "logs", title: "Logs", content: <Logs admin={admin} /> },
   ];
 }
