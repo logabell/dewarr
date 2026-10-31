@@ -76,6 +76,7 @@ from app.api import (
 from app.config import get_settings
 from app.db.session import get_engine, session_factory
 from app.diagnostics import auth_configuration
+from app.disconnect import CancelOnDisconnect
 from app.jobs.queue import get_queue
 from app.recovery import active_restore, restore_pending, runtime_lease
 
@@ -234,6 +235,8 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": "Not found"}, 404)
         return FileResponse(dist / "index.html")
 
+    # Added last so it is the outermost layer and sees the browser's disconnect first.
+    app.add_middleware(CancelOnDisconnect)
     return app
 
 
