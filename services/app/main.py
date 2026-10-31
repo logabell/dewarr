@@ -19,6 +19,7 @@ from app.api import (
     auth,
     automatic_imports,
     automatic_selection,
+    background_work,
     book_sources,
     capacity,
     catalog,
@@ -76,6 +77,7 @@ from app.api import (
 from app.config import get_settings
 from app.db.session import get_engine, session_factory
 from app.diagnostics import auth_configuration
+from app.disconnect import CancelOnDisconnect
 from app.jobs.queue import get_queue
 from app.recovery import active_restore, restore_pending, runtime_lease
 
@@ -112,6 +114,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Dewarr", version="0.3.0", lifespan=lifespan)
     app.include_router(application_release.router, prefix="/api")
     app.include_router(notifications.router, prefix="/api")
+    app.include_router(background_work.router, prefix="/api")
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exception: RequestValidationError):
@@ -234,6 +237,8 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": "Not found"}, 404)
         return FileResponse(dist / "index.html")
 
+    # Added last so it is the outermost layer and sees the browser's disconnect first.
+    app.add_middleware(CancelOnDisconnect)
     return app
 
 

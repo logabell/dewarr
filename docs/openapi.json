@@ -321,6 +321,66 @@
         }
       }
     },
+    "/api/background-work": {
+      "get": {
+        "tags": [
+          "background work"
+        ],
+        "summary": "Background Work",
+        "operationId": "background_work_api_background_work_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundWork"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "background work"
+        ],
+        "summary": "Save Background Work",
+        "operationId": "save_background_work_api_background_work_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackgroundWork"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundWork"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health/live": {
       "get": {
         "tags": [
@@ -20561,6 +20621,23 @@
         },
         "type": "object",
         "title": "Availability"
+      },
+      "BackgroundWork": {
+        "properties": {
+          "pace": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "relaxed",
+              "light",
+              "minimal"
+            ],
+            "title": "Pace",
+            "default": "normal"
+          }
+        },
+        "type": "object",
+        "title": "BackgroundWork"
       },
       "BatchInput": {
         "properties": {

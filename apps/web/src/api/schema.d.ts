@@ -141,6 +141,24 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/background-work": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Background Work */
+    get: operations["background_work_api_background_work_get"];
+    /** Save Background Work */
+    put: operations["save_background_work_api_background_work_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/health/live": {
     parameters: {
       query?: never;
@@ -6523,6 +6541,15 @@ export interface components {
       parts_total: number;
       /** Parts Medium */
       parts_medium?: string | null;
+    };
+    /** BackgroundWork */
+    BackgroundWork: {
+      /**
+       * Pace
+       * @default normal
+       * @enum {string}
+       */
+      pace: "normal" | "relaxed" | "light" | "minimal";
     };
     /** BatchInput */
     BatchInput: {
@@ -15453,6 +15480,59 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["NotificationChannelView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  background_work_api_background_work_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BackgroundWork"];
+        };
+      };
+    };
+  };
+  save_background_work_api_background_work_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BackgroundWork"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BackgroundWork"];
         };
       };
       /** @description Validation Error */

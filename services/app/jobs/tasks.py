@@ -8,6 +8,7 @@ from sqlalchemy.orm import load_only
 from app.config import get_settings
 from app.db.models import AuditEvent, Integration, Operation, User
 from app.db.session import session_factory
+from app.jobs import pace
 from app.jobs.queue import tasks
 from app.jobs.retry import (
     CatalogRetryStrategy,
@@ -58,6 +59,8 @@ async def confirm_batch(operation_ids: list[str]) -> None:
 @tasks.periodic(cron="* * * * *")
 @tasks.task(name="organization.confirm", queue="system", retry=3)
 async def schedule_import_confirmation(timestamp: int) -> None:
+    if not await pace.due(timestamp, 60):
+        return
     from sqlalchemy import text
 
     from app.db.models import ImportDestination, ImportEntry, Library
@@ -279,6 +282,8 @@ async def evaluate_acquisition(operation_id: str) -> None:
 @tasks.periodic(cron="*/5 * * * *")
 @tasks.task(name="acquisition.reconcile", queue="acquisition", retry=3)
 async def reconcile_acquisition(timestamp: int) -> None:
+    if not await pace.due(timestamp, 300):
+        return
     from app.domain.acquisition import reconcile_requests
 
     await reconcile_requests()
@@ -287,6 +292,8 @@ async def reconcile_acquisition(timestamp: int) -> None:
 @tasks.periodic(cron="*/5 * * * *")
 @tasks.task(name="library.schedule", queue="system", retry=3)
 async def schedule_inventory(timestamp: int) -> None:
+    if not await pace.due(timestamp, 300):
+        return
     if get_settings().recovery_mode:
         return
     from app.domain.operations import enqueue_sync
@@ -342,6 +349,8 @@ async def reconcile_fulfillment(work_id: str) -> None:
 @tasks.periodic(cron="* * * * * */10")
 @tasks.task(name="acquisition.downloads.schedule", queue="acquisition", retry=3)
 async def schedule_downloads(timestamp: int) -> None:
+    if not await pace.due(timestamp, 10):
+        return
     from sqlalchemy import or_, text
 
     from app.db.models import AutomaticImport, AutomaticImportContinuation, DownloadAttempt
@@ -448,6 +457,8 @@ async def compare_list_membership(operation_id: str) -> None:
 @tasks.periodic(cron="* * * * *")
 @tasks.task(name="lists.schedule", queue="lists", retry=3)
 async def schedule_shelves(timestamp: int) -> None:
+    if not await pace.due(timestamp, 60):
+        return
     from app.domain.list_subscriptions import schedule
 
     await schedule()
@@ -481,6 +492,8 @@ async def select_best_release(operation_id: str) -> None:
 @tasks.periodic(cron="* * * * *")
 @tasks.task(name="lists.acquisition.schedule", queue="lists", retry=3)
 async def schedule_list_acquisition(timestamp: int) -> None:
+    if not await pace.due(timestamp, 60):
+        return
     from app.domain.list_automation import schedule
 
     await schedule()
@@ -543,6 +556,8 @@ async def reuse_completed_transfer(continuation_id: str) -> None:
 @tasks.periodic(cron="*/10 * * * *")
 @tasks.task(name="releases.schedule", queue="metadata", retry=3)
 async def schedule_releases(timestamp: int) -> None:
+    if not await pace.due(timestamp, 600):
+        return
     from app.domain.libro_library import schedule as schedule_enrichment
     from app.domain.release_monitor import schedule as schedule_monitors
 
@@ -553,6 +568,8 @@ async def schedule_releases(timestamp: int) -> None:
 @tasks.periodic(cron="*/10 * * * *")
 @tasks.task(name="discovery.schedule", queue="metadata", retry=3)
 async def schedule_discovery(timestamp: int) -> None:
+    if not await pace.due(timestamp, 600):
+        return
     from app.domain.discovery_catalog import schedule
 
     await schedule()
@@ -568,6 +585,8 @@ async def refresh_discovery(user_id: str, collection_id: str, generation: int) -
 @tasks.periodic(cron="*/15 * * * *")
 @tasks.task(name="series.gap-schedule", queue="metadata", retry=3)
 async def schedule_series_gaps(timestamp: int) -> None:
+    if not await pace.due(timestamp, 900):
+        return
     from app.domain.series_gap_watch import schedule
 
     await schedule()
@@ -590,6 +609,8 @@ async def quick_add_book(operation_id: str) -> None:
 @tasks.periodic(cron="* * * * *")
 @tasks.task(name="sources.mam.account", queue="system", retry=3)
 async def schedule_mam_account(timestamp: int) -> None:
+    if not await pace.due(timestamp, 60):
+        return
     if get_settings().recovery_mode:
         return
     from app.domain.account_automation import run
@@ -600,6 +621,8 @@ async def schedule_mam_account(timestamp: int) -> None:
 @tasks.periodic(cron="* * * * *")
 @tasks.task(name="notifications.dispatch", queue="notifications", lock="notifications.dispatch")
 async def dispatch_notifications(timestamp: int = 0) -> None:
+    if not await pace.due(timestamp, 60):
+        return
     from app.notifications.delivery import tick
 
     await tick()
@@ -622,6 +645,8 @@ async def reject_failed_import(attempt_id: str) -> None:
 @tasks.periodic(cron="*/5 * * * *")
 @tasks.task(name="connections.health", queue="system", lock="connections.health")
 async def check_connection_health(timestamp: int = 0) -> None:
+    if not await pace.due(timestamp, 300):
+        return
     from app.domain.connection_health import run
 
     await run()

@@ -20,7 +20,8 @@ def get_engine() -> AsyncEngine:
         pool_size=settings.db_pool_size,
         max_overflow=2,
         hide_parameters=True,
-        connect_args={"options": "-csearch_path=public,book_queue"},
+        # JIT compiling the large status queries cost more than it saved (17 s on one count).
+        connect_args={"options": "-csearch_path=public,book_queue -cjit=off"},
     )
 
 
