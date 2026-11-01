@@ -1,5 +1,6 @@
 """Collection-only author and series shelves, grouped before pagination."""
 
+import re
 from typing import Literal
 from uuid import UUID
 
@@ -38,6 +39,28 @@ class LibraryGroupPage(BaseModel):
 
 def normalized(value):
     return func.lower(func.trim(func.regexp_replace(value, r"\s+", " ", "g")))
+
+
+# One shelf whatever the punctuation: "Discworld: Industrial Revolution" and
+# "Discworld - Industrial Revolution". Series also drop a leading "The" and a
+# trailing "Series", so "The Silver Ships" and "Silver Ships Series" meet.
+SERIES_SUFFIX = r"^(.+?) series$"
+
+
+def group_key(kind, value):
+    key = func.lower(value)
+    key = func.regexp_replace(key, "&", " and ", "g")
+    key = func.trim(func.regexp_replace(key, "[^[:alnum:]]+", " ", "g"))
+    if kind == "series":
+        key = func.regexp_replace(func.regexp_replace(key, "^the ", ""), SERIES_SUFFIX, r"\1")
+    return key
+
+
+def name_key(kind, name):
+    key = re.sub(r"[\W_]+", " ", name.lower().replace("&", " and ")).strip()
+    if kind == "series":
+        key = re.sub(SERIES_SUFFIX, r"\1", re.sub(r"^the ", "", key))
+    return key
 
 
 def array(value):
@@ -120,10 +143,10 @@ def group_rows(user, kind, medium, library_id):
         select(
             raw.c.work_id,
             func.trim(raw.c.name).label("name"),
-            normalized(raw.c.name).label("key"),
+            group_key(kind, raw.c.name).label("key"),
             raw.c.external_id,
         )
-        .where(normalized(raw.c.name) != "")
+        .where(group_key(kind, raw.c.name) != "")
         .distinct()
         .subquery()
     )
@@ -151,7 +174,12 @@ async def groups(
         ).label("external_id"),
     ).group_by(rows.c.key)
     if q.strip():
-        grouped = grouped.where(rows.c.key.contains(" ".join(q.lower().split()), autoescape=True))
+        # Match any spelling in the group, but count the whole group.
+        grouped = grouped.having(
+            func.bool_or(
+                normalized(rows.c.name).contains(" ".join(q.lower().split()), autoescape=True)
+            )
+        )
     grouped = grouped.subquery()
     total = await db.scalar(select(func.count()).select_from(grouped))
     selected = (
@@ -240,7 +268,7 @@ async def group_books(
     limit: int = Query(default=40, ge=1, le=100),
 ):
     rows = group_rows(user, kind, medium, library_id)
-    ids = select(rows.c.work_id).where(rows.c.key == " ".join(name.lower().split())).distinct()
+    ids = select(rows.c.work_id).where(rows.c.key == name_key(kind, name)).distinct()
     query = select(Work).where(Work.id.in_(ids))
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
     books = list(await db.scalars(query.order_by(Work.title, Work.id).offset(offset).limit(limit)))
