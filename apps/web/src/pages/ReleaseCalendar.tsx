@@ -586,7 +586,7 @@ export default function ReleaseCalendar({ canEdit }: { canEdit: boolean }) {
     >
       <div className="explore-view-heading">
         <div>
-          <h1>Calendar</h1>
+          <h2>Calendar</h2>
           <p className="muted">
             Audiobook release days for the genres you follow. A work date is
             labeled when the audiobook day is still unknown.
