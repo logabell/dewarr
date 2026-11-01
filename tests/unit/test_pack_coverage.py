@@ -263,3 +263,18 @@ def test_target_format_preference_cannot_be_satisfied_by_a_siblings_encoding():
         descriptor=files,
         catalog=CATALOG,
     )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "The Long Earth Series By Stephen Baxter and Terry Pratchett",
+        "The Long Earth series, books 1 to 5 - Terry Pratchett & Stephen Baxter",
+    ],
+)
+def test_whole_series_names_are_collections(title):
+    work = {"title": "The Long Earth", "authors": ["Terry Pratchett", "Stephen Baxter"]}
+    value = release().model_copy(
+        update={"title": title, "raw_title": title, "authors": work["authors"]}
+    )
+    assert collection_candidate(value, work)
