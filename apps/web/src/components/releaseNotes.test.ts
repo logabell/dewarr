@@ -37,6 +37,7 @@ test("release notes keep headings, lists, code, and safe links", () => {
   );
   assert.deepEqual(blocks[2], {
     type: "list",
+    ordered: false,
     items: [
       [{ type: "text", value: "Reading lists" }],
       [
@@ -56,4 +57,51 @@ test("only a higher stable version counts as newer", () => {
   assert.equal(releaseIsNewer("1.10.0", "v1.10.0"), false);
   assert.equal(releaseIsNewer("v2.0.0", "v1.10.0"), false);
   assert.equal(releaseIsNewer("1.0.0-dev", "v1.10.0"), false);
+});
+
+test("list items continue on indented lines, and numbered lists keep their order", () => {
+  const blocks = releaseNoteBlocks(
+    [
+      "- A release history window for each version, with a",
+      "  link to the notes on GitHub.",
+      "  - A nested point.",
+      "- Second item.",
+      "",
+      "1. **Back up** first.",
+      "2. Pull the new image.",
+      "   Then restart.",
+      "",
+      "After the list.",
+    ].join("\n"),
+  );
+  assert.deepEqual(blocks[0], {
+    type: "list",
+    ordered: false,
+    items: [
+      [
+        {
+          type: "text",
+          value:
+            "A release history window for each version, with a link to the notes on GitHub.",
+        },
+      ],
+      [{ type: "text", value: "A nested point." }],
+      [{ type: "text", value: "Second item." }],
+    ],
+  });
+  assert.deepEqual(blocks[1], {
+    type: "list",
+    ordered: true,
+    items: [
+      [
+        { type: "strong", value: "Back up" },
+        { type: "text", value: " first." },
+      ],
+      [{ type: "text", value: "Pull the new image. Then restart." }],
+    ],
+  });
+  assert.deepEqual(blocks[2], {
+    type: "paragraph",
+    inlines: [{ type: "text", value: "After the list." }],
+  });
 });
