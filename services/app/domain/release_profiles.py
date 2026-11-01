@@ -2,6 +2,7 @@
 
 import re
 import unicodedata
+from itertools import permutations
 from typing import Literal
 from uuid import UUID
 
@@ -391,6 +392,21 @@ def identifier_values(value):
     )
 
 
+def co_author_credits(names):
+    """Every author together, in any order, joined by a space, " and " or ", ".
+
+    "&" needs no joiner of its own: normalising turns it into a space.
+    """
+    names = [name for name in names if normalized(name)]
+    if not 2 <= len(names) <= 3:
+        return set()
+    return {
+        normalized(joiner.join(order))
+        for order in permutations(names)
+        for joiner in (" ", " and ", ", ")
+    }
+
+
 def indexer_title_authors(release, work):
     """An exact author/title pair can supply the missing structured indexer fields.
 
@@ -426,14 +442,18 @@ def indexer_title_authors(release, work):
     authors = {}
     for value in work["authors"]:
         if author := normalized(value):
-            authors[author] = value
+            authors[author] = (value,)
         # Inverted credits must carry the comma: don't accept arbitrary word
         # permutations as an author match. Splits also cover compound surnames.
         words = value.split()
         for split in range(1, len(words)):
             given, surname = " ".join(words[:split]), " ".join(words[split:])
             if re.search(rf"\b{re.escape(surname)},\s*{re.escape(given)}\b", title, re.I):
-                authors[normalized(f"{surname} {given}")] = value
+                authors[normalized(f"{surname} {given}")] = (value,)
+    # Co-written books often credit every author before the title:
+    # "Terry Pratchett & Stephen Baxter - The Long Earth".
+    for credit in co_author_credits(work["authors"]):
+        authors[credit] = tuple(work["authors"])
     matched = set()
     for expected in expected_titles - {""}:
         for author in authors:
@@ -443,7 +463,7 @@ def indexer_title_authors(release, work):
                 if pair in labelled_titles or re.fullmatch(
                     rf"{re.escape(pair)}(?: (?:19|20)\d{{2}})?(?: retail)?", actual
                 ):
-                    matched.add(authors[author])
+                    matched.update(authors[author])
     if not matched and not re.search(r"\.(?:rar|zip|7z|par2)$", title, re.I):
         # Indexers often use "Author - Title- Subtitle" when the catalog has
         # only the short title. Keep the author exact and use the shared subtitle
@@ -454,7 +474,7 @@ def indexer_title_authors(release, work):
             if compatible_title(
                 source_title, work["title"], allow_extra_subtitle=True
             ) or title_outside_series_prefix(parts[1], work):
-                matched.add(authors[credit])
+                matched.update(authors[credit])
     # AudiobookBay names, including Prowlarr's copy of them, are
     # "Title - Author, Narrator". The catalog author is the first credit.
     if not matched:
@@ -470,7 +490,7 @@ def indexer_title_authors(release, work):
                 normalized(head) in expected_titles
                 or (bare is not None and full_title and normalized(bare) == full_title)
             ):
-                matched.add(authors[credit])
+                matched.update(authors[credit])
     # "Series 5 - Author" omits the catalog subtitle. Accept it only when that
     # series and position are already on the work and the first credit matches.
     if not matched:
@@ -488,7 +508,7 @@ def indexer_title_authors(release, work):
                 if isinstance(entry, dict)
             )
         ):
-            matched.add(authors[credit])
+            matched.update(authors[credit])
     return sorted(matched)
 
 
@@ -508,7 +528,9 @@ def catalog_language_release(release, work):
         normalized(parse_title_labels(work["title"]).title),
         normalized(optional_subtitle_base(work["title"])),
     } - {""}
-    authors = {normalized(author) for author in work["authors"]} - {""}
+    authors = ({normalized(author) for author in work["authors"]} - {""}) | co_author_credits(
+        work["authors"]
+    )
     for author in work["authors"]:
         words = author.split()
         for split in range(1, len(words)):

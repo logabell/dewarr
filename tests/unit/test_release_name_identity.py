@@ -1,10 +1,16 @@
 """Reported indexer layouts must preserve the full catalog-backed identity."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
-from app.domain.release_profiles import indexer_title_authors
+from app.adapters.prowlarr import ProwlarrRelease
+from app.domain.release_profiles import (
+    catalog_language_release,
+    co_author_credits,
+    indexer_title_authors,
+)
 from app.domain.series_identity import series_note_agrees
 
 
@@ -151,3 +157,58 @@ def test_supported_layout_still_requires_structured_author_agreement_and_catalog
     assert authors(title, authors=["Other Writer"]) == []
     assert authors(title, position=None) == []
     assert authors(title) == ["Stephen King"]
+
+
+CO_WRITTEN = {"title": "The Long Earth", "authors": ["Terry Pratchett", "Stephen Baxter"]}
+
+
+def co_written(title):
+    release = SimpleNamespace(source="prowlarr", title=title, raw_title=title, authors=[])
+    return indexer_title_authors(release, CO_WRITTEN)
+
+
+def test_every_co_author_together_is_one_credit():
+    credits = co_author_credits(CO_WRITTEN["authors"])
+    assert "terry pratchett stephen baxter" in credits
+    assert "stephen baxter and terry pratchett" in credits
+    assert co_author_credits(["Terry Pratchett"]) == set()
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Terry Pratchett  Stephen Baxter - The Long Earth 2012 MP3",
+        "Terry Pratchett & Stephen Baxter - The Long Earth",
+        "Stephen Baxter and Terry Pratchett - The Long Earth",
+        "The Long Earth - Terry Pratchett & Stephen Baxter",
+    ],
+)
+def test_release_names_crediting_every_co_author_match(title):
+    assert co_written(title) == ["Stephen Baxter", "Terry Pratchett"]
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Terry Pratchett Neil Gaiman - The Long Earth",
+        "Terry Pratchett & Stephen Baxter - The Long Mars",
+    ],
+)
+def test_another_co_author_or_book_does_not_match(title):
+    assert co_written(title) == []
+
+
+def test_language_after_every_co_author_and_title_is_inferred():
+    title = "Terry Pratchett & Stephen Baxter - The Long Earth German Hoerbuch"
+    source = ProwlarrRelease(
+        source_id="co-author-fixture",
+        acquisition_supported=True,
+        title=title,
+        raw_title=title,
+        medium="audio",
+        protocol="nzb",
+        indexer_name="Fixture",
+        categories=[3030],
+        observed_at=datetime.now(UTC),
+    )
+    assert catalog_language_release(source, CO_WRITTEN).language == "de"
