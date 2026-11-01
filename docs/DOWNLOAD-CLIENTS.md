@@ -4,6 +4,21 @@ Settings → Download clients supports qBittorrent, Transmission, and Deluge, al
 the existing Usenet clients. Save and test a connection, map its download folder to a
 folder the worker can read. Torrent and Usenet sources use their respective default
 client; Soulseek uses slskd. A sole enabled client of a type is the automatic default.
+
+slskd needs an API key with the **administrator** role. slskd only shares its download folder with
+administrator keys, and Dewarr needs that folder to import finished downloads. A read-write key passes the
+first checks and then fails with "slskd only shares its download folder with an administrator API key". In
+slskd's `slskd.yml`:
+
+```yaml
+web:
+  authentication:
+    api_keys:
+      dewarr:
+        key: <a long random key>
+        role: administrator
+        cidr: 192.168.0.0/16
+```
 With multiple clients of the same type, choose the default in Settings → Download clients.
 
 To disable any client, choose **Edit downloader**, clear **Enabled**, and save.

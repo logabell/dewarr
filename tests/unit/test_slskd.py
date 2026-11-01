@@ -495,3 +495,24 @@ async def test_an_errored_transfer_fails_the_batch():
         state = await client.batch("attempt-1", release)
     assert state.state == "failed"
     assert state.completed is False
+
+
+@pytest.mark.asyncio
+async def test_a_key_that_cannot_read_options_asks_for_an_administrator_key():
+    """slskd 0.26 answers /options with 403 for read-write keys."""
+
+    def handler(request: httpx.Request):
+        path = request.url.path
+        if path.endswith("/application"):
+            return httpx.Response(200, json={"server": {"state": "Connected, LoggedIn"}})
+        if path.endswith("/application/version"):
+            return httpx.Response(200, json="0.26.2.0")
+        return httpx.Response(403)
+
+    async with SlskdClient(
+        "http://slskd.test:5030", KEY, transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(AdapterError) as raised:
+            await client.test()
+    assert raised.value.kind is FailureKind.AUTHENTICATION
+    assert "administrator" in str(raised.value)

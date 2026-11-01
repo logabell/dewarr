@@ -71,9 +71,11 @@ export function SlskdConnectionForm({
       <p>
         <SettingHelp label="Soulseek connection">
           slskd is both the search source and the downloader. Soulseek login
-          stays in slskd. Dewarr uses a read-write API key, reads the download
-          folder, and checks whether Dewarr can access the same path. If the
-          paths differ, configure the folder mapping under Download clients.
+          stays in slskd. Dewarr needs an API key with the administrator role,
+          because slskd only shares its download folder with administrator keys.
+          Dewarr reads that folder and checks whether it can reach the same
+          path. If the paths differ, configure the folder mapping under Download
+          clients.
         </SettingHelp>
       </p>
       <label>
@@ -98,7 +100,7 @@ export function SlskdConnectionForm({
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
           autoComplete="off"
-          placeholder={value.has_api_key ? "••••••••" : "Read-write API key"}
+          placeholder={value.has_api_key ? "••••••••" : "Administrator API key"}
           minLength={apiKey ? 16 : undefined}
           maxLength={255}
         />
