@@ -7,7 +7,7 @@ export type Inline =
 export type NoteBlock =
   | { type: "heading"; level: 1 | 2 | 3; inlines: Inline[] }
   | { type: "paragraph"; inlines: Inline[] }
-  | { type: "list"; items: Inline[][] }
+  | { type: "list"; ordered: boolean; items: Inline[][] }
   | { type: "code"; value: string };
 
 const LINK = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]{1,2000})\)/;
@@ -80,13 +80,21 @@ export function releaseNoteBlocks(source: string): NoteBlock[] {
       index += 1;
       continue;
     }
-    if (/^[-*] /.test(line)) {
-      const items: Inline[][] = [];
-      while (index < lines.length && /^[-*] /.test(lines[index])) {
-        items.push(noteInlines(lines[index].slice(2)));
+    const marker = /^\s*([-*]|\d{1,3}\.) /;
+    if (marker.test(line)) {
+      // Items may continue on indented lines, and nested items are flattened into the list.
+      const ordered = /^\s*\d/.test(line);
+      const items: string[] = [];
+      while (index < lines.length) {
+        const current = lines[index];
+        if (marker.test(current))
+          items.push(current.replace(marker, "").trim());
+        else if (current.trim() && /^\s/.test(current) && items.length)
+          items[items.length - 1] += ` ${current.trim()}`;
+        else break;
         index += 1;
       }
-      blocks.push({ type: "list", items });
+      blocks.push({ type: "list", ordered, items: items.map(noteInlines) });
       continue;
     }
     const paragraph: string[] = [];
@@ -95,7 +103,7 @@ export function releaseNoteBlocks(source: string): NoteBlock[] {
       lines[index].trim() &&
       !lines[index].startsWith("```") &&
       !/^#{1,3} /.test(lines[index]) &&
-      !/^[-*] /.test(lines[index])
+      !/^\s*([-*]|\d{1,3}\.) /.test(lines[index])
     ) {
       paragraph.push(lines[index].trim());
       index += 1;

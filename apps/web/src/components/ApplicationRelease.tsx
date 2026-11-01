@@ -34,14 +34,16 @@ function NoteBlockView({ block }: { block: NoteBlock }) {
     const Tag = block.level === 1 ? "h3" : block.level === 2 ? "h4" : "h5";
     return <Tag>{renderInlines(block.inlines)}</Tag>;
   }
-  if (block.type === "list")
+  if (block.type === "list") {
+    const List = block.ordered ? "ol" : "ul";
     return (
-      <ul>
+      <List>
         {block.items.map((item, index) => (
           <li key={index}>{renderInlines(item)}</li>
         ))}
-      </ul>
+      </List>
     );
+  }
   if (block.type === "code")
     return (
       <pre>
@@ -51,8 +53,20 @@ function NoteBlockView({ block }: { block: NoteBlock }) {
   return <p>{renderInlines(block.inlines)}</p>;
 }
 
-function ReleaseNotes({ source }: { source: string }) {
-  const blocks = releaseNoteBlocks(source);
+function headingText(block: NoteBlock) {
+  return block.type === "heading"
+    ? block.inlines
+        .map((item) => (item.type === "link" ? item.text : item.value))
+        .join("")
+        .trim()
+    : "";
+}
+
+function ReleaseNotes({ source, title }: { source: string; title: string }) {
+  const all = releaseNoteBlocks(source);
+  // Notes often start with the release's own name, which the entry already shows as its title.
+  const blocks =
+    all[0] && headingText(all[0]) === title.trim() ? all.slice(1) : all;
   if (!blocks.length)
     return <p className="muted">No notes for this release.</p>;
   return (
@@ -86,7 +100,7 @@ function ReleaseEntry({
           <span className="available-tag">Available</span>
         )}
       </p>
-      <ReleaseNotes source={release.notes} />
+      <ReleaseNotes source={release.notes} title={release.name} />
       <a href={release.url} target="_blank" rel="noreferrer">
         View on GitHub
       </a>
