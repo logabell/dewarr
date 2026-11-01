@@ -96,3 +96,41 @@ async def test_groups_and_book_details_respect_library_grants(client, admin, dat
 
 async def test_groups_require_login(client):
     assert (await client.get("/api/library/groups/authors")).status_code == 401
+
+
+async def test_names_differing_only_in_punctuation_the_or_series_share_one_shelf(
+    client, admin, database
+):
+    async with database() as db, db.begin():
+        for title, series, author in [
+            ("Dead Man Walking", "Dan Deadman Space Detective", "J.R.R. Writer"),
+            ("Dead Man Talking", "Dan Deadman Space Detective Series", "J. R. R. Writer"),
+            ("Raising Steam", "Discworld: Industrial Revolution", "Library writer"),
+            ("Going Postal", "Discworld - Industrial Revolution", "Library writer"),
+            ("Mutiny", "The Silver Ships", "Library writer"),
+            ("Liberation", "Silver Ships", "Library writer"),
+            ("Origin", "Dan Deadman", "Library writer"),
+        ]:
+            work, _, _ = await add(db, title, metadata_snapshot={"series": [{"name": series}]})
+            work.authors = [author]
+    shelves = (await browse(client, "series"))["items"]
+    assert [(s["name"], s["book_count"]) for s in shelves] == [
+        ("Dan Deadman", 1),
+        ("Dan Deadman Space Detective", 2),
+        ("Discworld - Industrial Revolution", 2),
+        ("Silver Ships", 2),
+    ]
+    found = await browse(client, "series", q="detective series")
+    assert [(s["name"], s["book_count"]) for s in found["items"]] == [
+        ("Dan Deadman Space Detective", 2)
+    ]
+    for name in ("Discworld: Industrial Revolution", "Discworld - Industrial Revolution"):
+        books = await client.get("/api/library/groups/series/books", params={"name": name})
+        assert books.json()["total"] == 2
+    authors = (await browse(client))["items"]
+    assert [(a["name"], a["book_count"]) for a in authors] == [
+        ("J. R. R. Writer", 2),
+        ("Library writer", 5),
+    ]
+    books = await client.get("/api/library/groups/authors/books", params={"name": "J.R.R. Writer"})
+    assert books.json()["total"] == 2
