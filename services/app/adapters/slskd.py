@@ -412,9 +412,19 @@ class SlskdClient:
     async def test(self) -> dict[str, str]:
         application = await self.request("GET", "/application")
         version = await self.request("GET", "/application/version")
+        try:
+            options = await self.request("GET", "/options")
+        except AdapterError as error:
+            # slskd 0.26 shows its options, with the download folder, only to administrator keys.
+            if error.kind is not FailureKind.AUTHENTICATION:
+                raise
+            raise AdapterError(
+                FailureKind.AUTHENTICATION,
+                "slskd only shares its download folder with an administrator API key. In slskd, "
+                "give this key the administrator role, then test again.",
+            ) from error
         if not soulseek_connected(application):
             raise AdapterError(FailureKind.UNAVAILABLE, "Soulseek is not connected in slskd")
-        options = await self.request("GET", "/options")
         downloads = ((options or {}).get("directories") or {}).get("downloads")
         if not isinstance(downloads, str) or not absolute_download_root(downloads):
             raise AdapterError(FailureKind.UNSUPPORTED, "slskd did not report a download directory")
