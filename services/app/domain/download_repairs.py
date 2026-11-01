@@ -65,6 +65,16 @@ def destination_shape(value):
     }
 
 
+def same_destination(previous, current):
+    # Switching an unimported download from hardlink to copy moves nothing, and copy works
+    # where hardlinks cannot. Any other change still needs a new selection.
+    before, after = destination_shape(previous), destination_shape(current)
+    mode_ok = before.get("mode") == after.get("mode") or after.get("mode") == "copy"
+    before.pop("mode", None)
+    after.pop("mode", None)
+    return mode_ok and before == after
+
+
 async def proposal(db, user, attempt, selection):
     await member(db, user.id)
     if user.role != "admin":
@@ -116,7 +126,7 @@ async def proposal(db, user, attempt, selection):
             "restore the submitted route before connection repair",
         )
     configuration = await destination_configuration(db, destination)
-    if destination_shape(configuration) != destination_shape(frozen["destination"]):
+    if not same_destination(frozen["destination"], configuration):
         raise HTTPException(
             409, "The library destination changed; this repair cannot move an existing import"
         )

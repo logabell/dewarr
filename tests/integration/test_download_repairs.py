@@ -57,6 +57,18 @@ async def change(database, selected, kind="downloader"):
                 **destination.probe,
                 "configuration_revision": fingerprint(configuration),
             }  # Contract fixture; actual probes have their own filesystem/ABS suite.
+        elif kind == "copy":
+            # Hardlinks fail on some filesystems, so the library switches to copying files.
+            destination = await db.get(ImportDestination, selection.destination_id)
+            assert destination.mode == "hardlink"
+            destination.mode = "copy"
+            await db.flush()
+            configuration = await destination_configuration(db, destination)
+            destination.probe = {
+                **destination.probe,
+                "copy": True,
+                "configuration_revision": fingerprint(configuration),
+            }
         else:
             (await db.get(Integration, selection.downloader_id)).credential_generation += 1
 
@@ -82,7 +94,7 @@ async def state(database, identifier):
         return attempt, row
 
 
-@pytest.mark.parametrize("kind", ["downloader", "source", "backend"])
+@pytest.mark.parametrize("kind", ["downloader", "source", "backend", "copy"])
 async def test_reviewed_generations_resume_same_transfer_and_preserve_frozen_selection(
     client, database, selected, submitted, downloader, kind
 ):
