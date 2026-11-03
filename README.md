@@ -157,6 +157,10 @@ Dewarr creates its encryption key in `/config` on first start. Keep that folder 
 
 [Settings, folders, backups, and upgrades](docs/DOCKER.md) · [Metadata and discovery sources](docs/METADATA-SOURCES.md) · [Download clients](docs/DOWNLOAD-CLIENTS.md) · [MAM proxy setup](docs/MAM-PROXY.md) · [Request quotas](docs/REQUEST-QUOTAS.md) · [Contributing](docs/DEVELOPMENT.md)
 
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Dewarr/)
+
 ## Screenshots
 
 Actual Dewarr UI captured with an isolated demo account. Connected services and library contents depend on your setup.
