@@ -11706,6 +11706,8 @@ export interface components {
        * @description Legacy compatibility value; transfer sizes are not capped
        */
       maximum_bytes?: number | null;
+      /** Allow Incomplete Release Metadata */
+      allow_incomplete_release_metadata?: boolean;
     };
     /** PresetInfo */
     PresetInfo: {
@@ -12788,6 +12790,11 @@ export interface components {
        * @default false
        */
       allow_unknown_seeders: boolean;
+      /**
+       * Allow Incomplete Release Metadata
+       * @default false
+       */
+      allow_incomplete_release_metadata: boolean;
       /**
        * Search Series
        * @default true
@@ -15204,6 +15211,11 @@ export interface components {
     app__domain__community_lists__FollowInput: {
       /** Name */
       name?: string | null;
+    };
+    /** ProwlarrArtifactInput */
+    ProwlarrArtifactInput: {
+      /** Downloader Id */
+      downloader_id?: string | null;
     };
   };
   responses: never;
@@ -25217,7 +25229,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ProwlarrArtifactInput"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -25876,7 +25892,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ProwlarrArtifactInput"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

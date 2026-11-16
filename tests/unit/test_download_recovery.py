@@ -133,3 +133,12 @@ def test_sab_normalized_failures_obey_grace_and_verification(status):
     assert observe(
         health, item.model_copy(update={"completed": True}), policy, now + timedelta(days=1)
     ) == ({}, None)
+
+
+def test_peer_refusal_is_the_only_immediate_soulseek_failure_marker():
+    from app.adapters.slskd import is_peer_refusal
+
+    assert is_peer_refusal("Transfer rejected: File not shared.")
+    assert is_peer_refusal("FILE NOT SHARED")
+    assert not is_peer_refusal("Connection timed out")
+    assert not is_peer_refusal("Transfer rejected")

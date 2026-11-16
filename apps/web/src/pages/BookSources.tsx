@@ -732,6 +732,7 @@ function Results({
                           key={item.download?.operation_id || "unselected"}
                           searchId={data.id}
                           resultId={item.id}
+                          source={item.release.source}
                           title={item.release.title}
                           download={item.download}
                           offerWedge={

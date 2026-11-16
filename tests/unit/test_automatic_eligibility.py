@@ -67,6 +67,35 @@ def test_unknown_or_conflicting_source_facts_do_not_become_eligible(change, reas
     assert any(reason in r for r in eligibility(value, WORK, RULE, ReleasePreferences()))
 
 
+def test_incomplete_metadata_toggle_allows_possible_identity_and_unknown_medium():
+    value = release().model_copy(update={"authors": [], "medium": None})
+    strict = eligibility(value, WORK, RULE, ReleasePreferences())
+    relaxed = eligibility(
+        value,
+        WORK,
+        RULE,
+        ReleasePreferences(allow_incomplete_release_metadata=True),
+        descriptor=descriptor(["Harbor.m4b"]),
+    )
+    assert any("corroborate" in reason for reason in strict)
+    assert any("identify" in reason for reason in strict)
+    assert not relaxed, relaxed
+
+
+def test_incomplete_metadata_toggle_does_not_allow_known_author_or_medium_mismatch():
+    preferences = ReleasePreferences(allow_incomplete_release_metadata=True)
+    wrong_author = release().model_copy(update={"authors": ["Another writer"]})
+    wrong_medium = release().model_copy(update={"medium": "ebook"})
+    assert any(
+        "corroborate" in reason
+        for reason in eligibility(wrong_author, WORK, RULE, preferences)
+    )
+    assert any(
+        "different medium" in reason.lower()
+        for reason in eligibility(wrong_medium, WORK, RULE, preferences)
+    )
+
+
 @pytest.mark.parametrize(
     ("title", "authors", "allowed"),
     [

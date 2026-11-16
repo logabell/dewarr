@@ -27,6 +27,7 @@ export default function ProwlarrSources({
   const [medium, setMedium] = useState<Search["medium"]>("all");
   const [omitted, setOmitted] = useState<number[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
+  const [downloader, setDownloader] = useState("");
   const [submitted, setSubmitted] = useState({ q: "", medium });
   const navigate = useNavigate();
   const cache = useQueryClient();
@@ -44,6 +45,13 @@ export default function ProwlarrSources({
     queryFn: async () =>
       result(await api.GET("/api/sources/prowlarr/indexers")),
   });
+  const clients = useQuery({
+    queryKey: ["downloaders"],
+    queryFn: async () => result(await api.GET("/api/downloaders")),
+  });
+  const qbitClients = (clients.data || []).filter(
+    (client) => client.enabled && client.kind === "qbittorrent",
+  );
   const eligible = (indexers.data || []).filter(
     (i) => i.enabled && i.supports_search && !i.excluded,
   );
@@ -117,6 +125,7 @@ export default function ProwlarrSources({
       result(
         await api.POST("/api/sources/prowlarr/results/{result_id}/artifact", {
           params: { path: { result_id: id } },
+          body: downloader ? { downloader_id: downloader } : undefined,
         }),
       ),
     onSuccess: (artifact) =>
@@ -143,7 +152,7 @@ export default function ProwlarrSources({
           Source settings →
         </Link>
       )}
-      <Notice error={indexers.error} />
+      <Notice error={indexers.error || clients.error} />
       <Notice error={inspect.error} />
       <form
         className="panel editor"
@@ -211,12 +220,38 @@ export default function ProwlarrSources({
           {search.isPending ? "Searching sources…" : "Search sources"}
         </button>
       </form>
-      <p className="muted">
-        Catalog identity, narrator, language and file format stay unknown when
-        an indexer does not supply them. Torrent files go to qBittorrent and NZB
-        files go to SABnzbd or NZBGet. Magnet-only and direct links are not
-        supported.
-      </p>
+      <div className="panel editor">
+        <label htmlFor="prowlarr-magnet-downloader">
+          qBittorrent for magnet inspection (optional)
+        </label>
+        <select
+          id="prowlarr-magnet-downloader"
+          value={downloader}
+          onChange={(event) => setDownloader(event.target.value)}
+          disabled={busy}
+        >
+          <option value="">
+            Choose only if a result redirects to a magnet
+          </option>
+          {qbitClients.map((client) => (
+            <option key={client.id} value={client.id}>
+              {client.name}
+            </option>
+          ))}
+        </select>
+        <p className="muted">
+          Catalog identity, narrator, language and file format stay unknown when
+          an indexer does not supply them. Torrent and NZB files use their
+          configured downloaders. Magnet redirects require qBittorrent for
+          metadata inspection; direct HTTP(S) links remain supported.
+        </p>
+        {!qbitClients.length && (
+          <p className="muted">
+            No enabled qBittorrent connection is available.{" "}
+            <Link to="/settings#downloaders">Configure a downloader</Link>.
+          </p>
+        )}
+      </div>
       <div aria-live="polite">
         {batches.map((batch) => (
           <section

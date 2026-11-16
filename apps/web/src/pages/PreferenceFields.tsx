@@ -157,6 +157,30 @@ export default function PreferenceFields({
             <label className="check-label">
               <input
                 type="checkbox"
+                checked={effective.allow_incomplete_release_metadata ?? false}
+                onChange={(event) =>
+                  onChange({
+                    ...overrides,
+                    allow_incomplete_release_metadata: event.target.checked,
+                  })
+                }
+              />
+              Allow incomplete release metadata
+            </label>
+            <div className="setting-help-row">
+              <SettingHelp label="download preferences">
+                Off by default. When enabled, releases with incomplete title,
+                author or medium details can proceed to the existing file and
+                import checks. Known mismatches, unsupported formats and partial
+                content remain blocked.
+              </SettingHelp>
+            </div>
+            {origin("allow_incomplete_release_metadata")}
+          </div>
+          <div className="setting-inline-option">
+            <label className="check-label">
+              <input
+                type="checkbox"
                 checked={effective.criteria?.includes("popularity") || false}
                 onChange={(event) => {
                   const criteria: Preferences["criteria"] = (

@@ -60,6 +60,13 @@ class SlskdRelease(Release):
 class SlskdState(DownloadState):
     reported_complete: bool = False
     total_bytes: int | None = Field(default=None, ge=0)
+    failure_reason: str | None = None
+    peer_refusal: bool = False
+
+
+def is_peer_refusal(reason: str | None) -> bool:
+    """Only an explicit remote file-sharing refusal qualifies for peer fallback."""
+    return bool(reason and "file not shared" in " ".join(reason.casefold().split()))
 
 
 def version_text(value: Any) -> str:
@@ -513,6 +520,7 @@ class SlskdClient:
         files: list[DownloadFile] = []
         complete = bool(transfers) and len(transfers) == len(descriptor.files)
         failed_transfer = False
+        failure_reason = None
         for transfer in transfers:
             remote = str(transfer.get("filename") or "").replace("\\", "/")
             size = optional_count(transfer.get("size"))
@@ -520,6 +528,21 @@ class SlskdClient:
             failed = transfer_failed(transfer.get("state"))
             if failed:
                 failed_transfer = True
+                reason = transfer.get("exception")
+                transfer_id = str(transfer.get("id") or "")
+                if not reason and transfer_id:
+                    try:
+                        detail = await self.request(
+                            "GET",
+                            "/transfers/downloads/"
+                            f"{quote(release.username, safe='')}/{quote(transfer_id, safe='')}",
+                        )
+                    except AdapterError:
+                        detail = None
+                    if isinstance(detail, dict):
+                        reason = detail.get("exception")
+                if isinstance(reason, str) and reason.strip() and not failure_reason:
+                    failure_reason = reason.strip()
             index = match_file(release.files, remaining, remote, size)
             if done and size is not None and index is None:
                 failed_transfer = True
@@ -549,6 +572,8 @@ class SlskdClient:
             association_verified=True,
             reported_complete=complete,
             total_bytes=descriptor.torrent_bytes if complete else None,
+            failure_reason=failure_reason,
+            peer_refusal=is_peer_refusal(failure_reason),
         )
 
     async def cancel(self, username: str, batch_id: str) -> None:

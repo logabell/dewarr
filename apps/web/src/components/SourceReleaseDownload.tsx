@@ -24,6 +24,7 @@ const labels: Record<SavedDownload["state"], string> = {
 export default function SourceReleaseDownload({
   searchId,
   resultId,
+  source,
   title,
   disabled,
   disabledReason,
@@ -36,6 +37,7 @@ export default function SourceReleaseDownload({
 }: {
   searchId: string;
   resultId: string;
+  source?: string;
   title: string;
   disabled: boolean;
   disabledReason?: string;
@@ -57,6 +59,15 @@ export default function SourceReleaseDownload({
   });
   const [operationId, setOperationId] = useState<string>();
   const [useWedge, setUseWedge] = useState(false);
+  const [metadataDownloader, setMetadataDownloader] = useState("");
+  const metadataClients = useQuery({
+    queryKey: ["downloaders"],
+    enabled: source === "prowlarr",
+    queryFn: async () => result(await api.GET("/api/downloaders")),
+  });
+  const metadataDownloaders = (metadataClients.data || []).filter(
+    (client) => client.enabled && client.kind === "qbittorrent",
+  );
   const inspect = useMutation({
     mutationFn: async () =>
       result(
@@ -67,6 +78,9 @@ export default function SourceReleaseDownload({
               path: { search_id: searchId, result_id: resultId },
               query: offerWedge && useWedge ? { use_wedge: true } : {},
             },
+            body: metadataDownloader
+              ? { downloader_id: metadataDownloader }
+              : undefined,
           },
         ),
       ),
@@ -83,6 +97,9 @@ export default function SourceReleaseDownload({
       });
     },
   });
+  const needsMagnetResolver =
+    source === "prowlarr" &&
+    !!inspect.error?.message.includes("redirects to a magnet");
   const start = useMutation({
     mutationFn: async (spendWedge: boolean) =>
       result(
@@ -275,6 +292,7 @@ export default function SourceReleaseDownload({
           <CollectionReview
             searchId={searchId}
             resultId={resultId}
+            source={source}
             close={() => setReviewCollection(false)}
           />
         </Suspense>
@@ -320,9 +338,44 @@ export default function SourceReleaseDownload({
         </p>
       )}
       {inspect.error && (
-        <p className="error" role="alert">
-          {inspect.error.message}
-        </p>
+        <div className="source-magnet-resolver">
+          <p className="error" role="alert">
+            {inspect.error.message}
+          </p>
+          {needsMagnetResolver && (
+            <>
+              <label>
+                qBittorrent for magnet inspection
+                <select
+                  value={metadataDownloader}
+                  onChange={(event) =>
+                    setMetadataDownloader(event.target.value)
+                  }
+                  disabled={inspect.isPending}
+                >
+                  <option value="">Choose a qBittorrent connection</option>
+                  {metadataDownloaders.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                disabled={!metadataDownloader || inspect.isPending}
+                onClick={() => inspect.mutate()}
+              >
+                Retry inspection
+              </button>
+              {!metadataDownloaders.length && (
+                <p className="muted">
+                  Enable a qBittorrent connection in{" "}
+                  <Link to="/settings#downloaders">Download settings</Link>.
+                </p>
+              )}
+            </>
+          )}
+        </div>
       )}
     </>
   );

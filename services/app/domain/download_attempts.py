@@ -501,6 +501,9 @@ def transfer_stage(selection, state):
             "Download complete; file inspection and library confirmation are still required",
         )
     if state.state == "failed":
+        if getattr(state, "peer_refusal", False):
+            reason = state.failure_reason or "File not shared"
+            return "held", f"Soulseek peer refused the file: {reason}"
         return "held", "Soulseek stopped this folder before every file finished"
     if selection.frozen.get("selected_paths"):
         expected = {f["path"]: f["size_bytes"] for f in selection.frozen["descriptor"]["files"]}
@@ -545,6 +548,18 @@ async def finish_observation(db, attempt, selection, state):
     from app.domain import download_recovery
 
     policy = download_recovery.policy_for(await download_recovery.configuration(db), selection)
+    stopped_failure = bool(state and (getattr(state, "failed", False) or state.state == "failed"))
+    if state and getattr(state, "peer_refusal", False) and policy.enabled:
+        release = selection.frozen.get("release") or {}
+        source_id = release.get("source_id") if release.get("source") == "slskd" else None
+        if source_id:
+            attempt.observation = state.model_dump(mode="json")
+            failure_reason = state.failure_reason or "File not shared"
+            reason = f"Soulseek peer refused the file: {failure_reason}"
+            await download_recovery.peer_refused(db, attempt, reason, source_id)
+            if stopped_failure:
+                await capacity.release_slot(db, attempt)
+            return
     health, failure = download_recovery.observe(
         attempt.recovery_observation, state, policy, datetime.now(UTC)
     )
@@ -552,7 +567,6 @@ async def finish_observation(db, attempt, selection, state):
     # SAB preserves native status labels (Failed/Aborted) and exposes the
     # normalized terminal flag. Keep its grace polling and capacity lifecycle
     # consistent with Soulseek's terminal state; qBittorrent errors may resume.
-    stopped_failure = bool(state and (getattr(state, "failed", False) or state.state == "failed"))
     if failure:
         attempt.observation = state.model_dump(mode="json")
         await download_recovery.failed(db, attempt, failure)

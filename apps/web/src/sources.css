@@ -1017,3 +1017,14 @@
 .collection-cover .cover-formats {
   display: none;
 }
+
+.source-magnet-resolver {
+  display: grid;
+  gap: 0.65rem;
+  margin-block: 0.75rem;
+  text-align: left;
+}
+.source-magnet-resolver label {
+  display: grid;
+  gap: 0.35rem;
+}

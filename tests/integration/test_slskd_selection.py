@@ -251,3 +251,113 @@ async def test_reviewed_release_shares_only_when_both_requests_accept_its_langua
         assert selected.frozen["requirements"]["language"] == (
             "en" if other_language == "en" else None
         )
+
+
+async def test_recovery_candidate_ranking_excludes_only_the_refused_soulseek_folder(
+    client, database, catalog, soulseek
+):
+    from app.adapters.mam import MAMRelease
+    from app.db.models import Work
+    from app.domain.release_profiles import ProfileSnapshot
+
+    # Start a real automatic-selection operation using the Soulseek search.
+    response = await client.post(
+        "/api/acquisition/automatic-selections",
+        json=soulseek["body"],
+        headers={"Idempotency-Key": "peer-refusal-candidate-ranking"},
+    )
+    assert response.status_code == 202, response.text
+    operation_id = UUID(response.json()["id"])
+
+    # The original Soulseek result is the peer that refused the file.
+    alternate_release = group_responses(
+        [
+            {
+                "username": "alternate-reader",
+                "files": [
+                    {
+                        "filename": r"Writer\Harbor\Harbor.m4b",
+                        "size": 12,
+                    }
+                ],
+            }
+        ],
+        search_id="alternate-peer-search",
+        observed_at=datetime.now(UTC),
+        title="Harbor",
+        authors=["Writer"],
+    )[0]
+
+    async with database() as db, db.begin():
+        operation = await db.get(Operation, operation_id)
+        original = await db.get(SourceResult, soulseek["result"])
+        refused_release = automatic_selection.release_value(original)
+
+        slskd_connection = await db.get(SourceConnection, "slskd")
+        mam_connection = await db.get(SourceConnection, "mam")
+
+        assert slskd_connection and slskd_connection.enabled
+        assert mam_connection and mam_connection.enabled
+
+        db.add(
+            SourceResult(
+                owner_id=original.owner_id,
+                operation_id=original.operation_id,
+                source_key="slskd",
+                source_generation=slskd_connection.generation,
+                expires_at=original.expires_at,
+                encrypted_reference=encrypt_secrets({}),
+                release_snapshot=alternate_release.model_dump(mode="json"),
+            )
+        )
+
+        db.add(
+            SourceResult(
+                owner_id=original.owner_id,
+                operation_id=original.operation_id,
+                source_key="mam",
+                source_generation=mam_connection.generation,
+                expires_at=original.expires_at,
+                encrypted_reference=encrypt_secrets({"link": None}),
+                release_snapshot=soulseek["release"].model_dump(mode="json"),
+            )
+        )
+
+        operation.payload = {
+            **operation.payload,
+            "excluded_source_ids": [refused_release.source_id],
+        }
+
+    async with database() as db:
+        operation = await db.get(Operation, operation_id)
+        work = await db.get(Work, catalog["work"])
+
+        ranked = await automatic_selection.candidates(
+            db,
+            operation,
+            work,
+            ProfileSnapshot.model_validate(operation.payload["profile"]),
+            operation.payload["requirements"],
+            None,
+        )
+
+        decisions = {
+            (row.source_key, release.source_id): problems
+            for _, row, release, problems in ranked
+        }
+
+        refused_key = ("slskd", refused_release.source_id)
+        alternate_key = ("slskd", alternate_release.source_id)
+        mam_key = ("mam", soulseek["release"].source_id)
+
+        assert refused_key in decisions
+        assert alternate_key in decisions
+        assert mam_key in decisions
+
+        refusal_reason = (
+            "This Soulseek peer folder refused the file during the previous attempt"
+        )
+
+        assert refusal_reason in decisions[refused_key]
+        assert refusal_reason not in decisions[alternate_key]
+        assert refusal_reason not in decisions[mam_key]

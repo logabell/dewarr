@@ -98,8 +98,11 @@ async def search(client, **changes):
     )
 
 
-async def resolve(client, result_id):
-    return await client.post(f"/api/sources/prowlarr/results/{result_id}/artifact")
+async def resolve(client, result_id, body=None):
+    options = {"json": body} if body is not None else {}
+    return await client.post(
+        f"/api/sources/prowlarr/results/{result_id}/artifact", **options
+    )
 
 
 @pytest.mark.parametrize("redirect", [None, "https://indexer.test/file?apikey=secret-indexer"])
@@ -115,7 +118,7 @@ async def test_private_search_resolution_and_shared_download_path(
     found = await search(client)
     assert found.status_code == 200, found.text
     result_id = found.json()["items"][0]["id"]
-    inspected = await resolve(client, result_id)
+    inspected = await resolve(client, result_id, {"downloader_id": str(uuid4())})
     assert inspected.status_code == 200, inspected.text
     artifact_id = inspected.json()["id"]
     assert (await resolve(client, result_id)).json()["id"] == artifact_id

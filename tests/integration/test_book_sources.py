@@ -198,7 +198,8 @@ async def test_incremental_ranked_private_results_preserve_mam_fields_and_owners
     )
     assert rejected_wedge.status_code == 422
     artifact = await client.post(
-        f"/api/source-searches/{identifier}/results/{source_row['id']}/artifact"
+        f"/api/source-searches/{identifier}/results/{source_row['id']}/artifact",
+        json={"downloader_id": str(uuid4())},
     )
     assert artifact.status_code == 200, artifact.text
     assert artifact.json()["source_key"] == "prowlarr"

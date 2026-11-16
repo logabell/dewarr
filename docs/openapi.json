@@ -15916,6 +15916,16 @@
               }
             }
           }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProwlarrArtifactInput"
+              }
+            }
+          },
+          "required": false
         }
       }
     },
@@ -16845,6 +16855,16 @@
               }
             }
           }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProwlarrArtifactInput"
+              }
+            }
+          },
+          "required": false
         }
       }
     },
@@ -34386,6 +34406,10 @@
             "title": "Maximum Bytes",
             "description": "Legacy compatibility value; transfer sizes are not capped",
             "deprecated": true
+          },
+          "allow_incomplete_release_metadata": {
+            "type": "boolean",
+            "title": "Allow Incomplete Release Metadata"
           }
         },
         "additionalProperties": false,
@@ -37261,6 +37285,11 @@
           "allow_unknown_seeders": {
             "type": "boolean",
             "title": "Allow Unknown Seeders",
+            "default": false
+          },
+          "allow_incomplete_release_metadata": {
+            "type": "boolean",
+            "title": "Allow Incomplete Release Metadata",
             "default": false
           },
           "search_series": {
@@ -43772,6 +43801,24 @@
         "additionalProperties": false,
         "type": "object",
         "title": "FollowInput"
+      },
+      "ProwlarrArtifactInput": {
+        "properties": {
+          "downloader_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloader Id"
+          }
+        },
+        "type": "object",
+        "title": "ProwlarrArtifactInput"
       }
     }
   }

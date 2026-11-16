@@ -38,6 +38,34 @@ def exact_title_key(value):
     return " ".join(words(value))
 
 
+def parenthetical_alias_title(value, canonical_title):
+    """Recognize a trailing alternate title, never a content or edition label.
+
+    This is only a title-shape check. Callers must independently corroborate
+    the author before treating the alternate title as identity evidence.
+    """
+    value = stripped_title(value or "")
+    canonical_title = stripped_title(canonical_title or "")
+    match = re.fullmatch(r"(.+?)\s+\(([^()]*)\)", value)
+    if not match or exact_title_key(match.group(1)) != exact_title_key(canonical_title):
+        return False
+
+    note = match.group(2).strip()
+    if not note:
+        return False
+
+    # These labels describe different content or a specific edition, not an
+    # alternate title. Keep this conservative: unknown parentheticals require
+    # independent author corroboration at every call site.
+    excluded = re.compile(
+        r"\b(?:book|volume|vol|part|summary|study\s+guide|workbook|"
+        r"companion|sequel|dramatized|adaptation|graphic\s+novel|"
+        r"box\s+set|omnibus|abridged|unabridged|revised|illustrated)\b",
+        re.IGNORECASE,
+    )
+    return not excluded.search(note)
+
+
 def primary(value):
     tokens = words(value)
     if len(tokens) > 2 and tokens[0] in {"a", "an", "the"}:

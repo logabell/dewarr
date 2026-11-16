@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.adapters.contracts import AdapterError, FailureKind, Release
 from app.adapters.http import configured_url
 from app.domain.catalog_network import retry_delay
-from app.domain.indexer_labels import indexer_language
+from app.domain.indexer_labels import MEDIA, indexer_language, indexer_suffixes
 from app.network_addresses import public_address
 
 _private_download = contextvars.ContextVar("prowlarr_download", default=False)
@@ -43,6 +43,11 @@ for name in ("httpcore.connection", "httpcore.http11", "httpcore.http2"):
 @dataclass(frozen=True, repr=False)
 class DownloadRedirect:
     url: str
+
+
+@dataclass(frozen=True, repr=False)
+class MagnetRedirect:
+    magnet: str = field(repr=False)
 
 
 def redirect_url(base, location):
@@ -239,13 +244,20 @@ class ProwlarrClient:
                     )
                 if 300 <= response.status_code < 400:
                     if binary and response.status_code in REDIRECTS:
+                        location = response.headers.get("location")
+                        if isinstance(location, str) and location.lower().startswith("magnet:"):
+                            if len(location) > 32768:
+                                raise AdapterError(
+                                    FailureKind.UNSUPPORTED,
+                                    "Prowlarr returned an invalid magnet redirect.",
+                                )
+                            return MagnetRedirect(location)
                         return DownloadRedirect(
-                            str(redirect_url(str(response.url), response.headers.get("location")))
+                            str(redirect_url(str(response.url), location))
                         )
                     raise AdapterError(
                         FailureKind.UNSUPPORTED if binary else FailureKind.ROUTE,
-                        "Prowlarr redirected the request. "
-                        "Direct redirects and magnets are not supported here.",
+                        "Prowlarr redirected the request.",
                     )
                 if not 200 <= response.status_code < 300:
                     raise AdapterError(
@@ -362,6 +374,15 @@ class ProwlarrClient:
                 if 3030 in cats and 7020 not in cats
                 else None
             )
+            explicit_media = {
+                label
+                for label, explicit in list(indexer_suffixes(title))[-1][1]
+                if explicit and label in MEDIA
+            }
+            if len(explicit_media) == 1:
+                medium = "ebook" if "ebook" in explicit_media else "audio"
+            elif len(explicit_media) > 1:
+                medium = None
             transport = protocol(row.get("protocol"))
             reference = (
                 self.reference(row.get("downloadUrl"), body.indexer_id)
@@ -413,6 +434,8 @@ class ProwlarrClient:
                     },
                     binary=True,
                 )
+                if isinstance(content, MagnetRedirect):
+                    return content
                 if isinstance(content, DownloadRedirect):
                     content = await self.download_redirect(content.url)
         except (httpx.TimeoutException, TimeoutError):

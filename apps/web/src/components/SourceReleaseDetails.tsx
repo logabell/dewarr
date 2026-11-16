@@ -111,6 +111,7 @@ export default function SourceReleaseDetails({
               reviewContext={reviewContext}
               searchId={searchId}
               resultId={item.id}
+              source={original.source}
               title={release.title}
               disabled={disabled}
               download={item.download}

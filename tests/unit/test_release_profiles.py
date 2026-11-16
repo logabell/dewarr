@@ -43,6 +43,8 @@ WORK = {"title": "Harbor", "authors": ["Writer"]}
         ("Project.Hail.Mary.By.Andy.Weir.Abook.MP3-MG", [], "corroborated"),
         ("Andy.Weir.-.Project.Hail.Mary.Hoerspiel.Audiobook.German", [], "corroborated"),
         ("Project Hail Mary - Andy Weir.m4b", [], "corroborated"),
+        ("Project Hail Mary - Andy Weir [M4B] [128 Kbps]", [], "corroborated"),
+        ("Project Hail Mary - Andy Weir [M4B] [64 Kbps]", [], "corroborated"),
         ("Andy Weir - Project Hail Mary (retail) (m4b)", [], "corroborated"),
         ("Andy Weir - Project Hail Mary ( M4B ) (retail)", [], "corroborated"),
         ("Andy Weir - Project Hail Mary (summary) (m4b)", [], "possible"),
@@ -656,3 +658,113 @@ def test_indexer_missing_subtitle_requires_exact_author_title_pair(title, expect
         ).identity
         == expected
     )
+
+
+def test_parenthetical_alternate_title_requires_matching_author():
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    def release(authors):
+        return ProwlarrRelease(
+            source_id="issue79-fixture",
+            title="We Are Legion (We Are Bob)",
+            raw_title="We Are Legion (We Are Bob)",
+            authors=authors,
+            medium="audio",
+            protocol="nzb",
+            indexer_name="Fixture",
+            categories=[3030],
+            observed_at=datetime.now(UTC),
+            acquisition_supported=True,
+        )
+
+    work = {"title": "We Are Legion", "authors": ["Dennis E. Taylor"]}
+    preferences = ReleasePreferences()
+
+    assert (
+        assess_release(release(["Dennis E. Taylor"]), work, preferences).identity == "corroborated"
+    )
+
+    assert assess_release(release(["Another Author"]), work, preferences).identity == "unmatched"
+
+    assert assess_release(release([]), work, preferences).identity != "corroborated"
+
+
+def test_parenthetical_series_label_requires_catalog_series_and_position():
+    from app.adapters.prowlarr import ProwlarrRelease
+
+    def release(title):
+        return ProwlarrRelease(
+            source_id="issue79-series-fixture",
+            title=title,
+            raw_title=title,
+            authors=["Dennis E. Taylor"],
+            medium="audio",
+            protocol="nzb",
+            indexer_name="Fixture",
+            categories=[3030],
+            observed_at=datetime.now(UTC),
+            acquisition_supported=True,
+        )
+
+    work = {
+        "title": "For We Are Many",
+        "authors": ["Dennis E. Taylor"],
+        "series": [{"name": "Bobiverse", "position": "2"}],
+    }
+    preferences = ReleasePreferences()
+
+    assert (
+        assess_release(release("For We Are Many (Bobiverse Book 2)"), work, preferences).identity
+        == "corroborated"
+    )
+
+    assert (
+        assess_release(release("For We Are Many (Bobiverse Book 3)"), work, preferences).identity
+        != "corroborated"
+    )
+
+    assert (
+        assess_release(release("For We Are Many (Other Series Book 2)"), work, preferences).identity
+        != "corroborated"
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        (
+            "For We Are Many: Bobiverse, Book 2 - Dennis E. Taylor [M4B] [128 Kbps]",
+            "corroborated",
+        ),
+        (
+            "For We Are Many: Bobiverse, Book 3 - Dennis E. Taylor [M4B] [128 Kbps]",
+            "possible",
+        ),
+    ],
+)
+def test_prowlarr_audiobookbay_credit_strips_release_suffixes(title, expected):
+    from app.adapters.prowlarr import ProwlarrRelease
+    from app.domain.release_profiles import indexer_title_authors
+
+    work = {
+        "title": "For We Are Many",
+        "authors": ["Dennis E. Taylor"],
+        "series": [{"name": "Bobiverse", "position": "2"}],
+    }
+    release = ProwlarrRelease(
+        source_id="series-check",
+        title=title,
+        raw_title=title,
+        authors=[],
+        medium="audio",
+        protocol="torrent",
+        indexer_name="AudiobookBay",
+        categories=[3030, 103030],
+        observed_at=datetime.now(UTC),
+        acquisition_supported=True,
+    )
+
+    assert indexer_title_authors(release, work) == (
+        ["Dennis E. Taylor"] if expected == "corroborated" else []
+    )
+    assert assess_release(release, work, ReleasePreferences(), "audio").identity == expected

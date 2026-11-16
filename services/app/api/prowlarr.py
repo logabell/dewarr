@@ -15,7 +15,6 @@ from app.db.models import AuditEvent, SourceConnection, SourceResult
 from app.domain.connection_health import connection_status
 from app.domain.operations import transaction_lock
 from app.domain.prowlarr_network import prowlarr_call
-from app.domain.source_artifacts import persist_artifact
 from app.domain.source_network import check_actor
 from app.security import decrypt_secrets, encrypt_secrets
 
@@ -195,8 +194,17 @@ async def search(body: ProwlarrSearch, user: CurrentUser, db: Database):
     )
 
 
+class ProwlarrArtifactInput(BaseModel):
+    downloader_id: UUID | None = None
+
+
 @router.post("/results/{result_id}/artifact", response_model=SourceArtifactView)
-async def resolve(result_id: UUID, user: Member, db: Database):
+async def resolve(
+    result_id: UUID,
+    user: Member,
+    db: Database,
+    body: ProwlarrArtifactInput | None = None,
+):
     row = await db.get(SourceResult, result_id)
     if not row or row.owner_id != user.id:
         raise HTTPException(404, "Source result not found")
@@ -208,13 +216,17 @@ async def resolve(result_id: UUID, user: Member, db: Database):
         label = "NZB" if release.protocol == "nzb" else "torrent"
         raise HTTPException(422, f"This result has no supported {label} file")
     user_id, generation = user.id, row.source_generation
+    downloader_id = body.downloader_id if body else None
     await db.rollback()
-    artifact, _ = await call(
-        user_id, "resolve", (release, reference), expected_generation=generation
-    )
+    from app.domain.prowlarr_resolution import resolve_prowlarr
+
     try:
-        identifier = await persist_artifact(
-            user_id, release.source_id, artifact, generation, "prowlarr"
+        identifier, _ = await resolve_prowlarr(
+            user_id,
+            release,
+            reference,
+            expected_generation=generation,
+            downloader_id=downloader_id,
         )
     except AdapterError as error:
         if error.kind == FailureKind.UNSUPPORTED:

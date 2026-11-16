@@ -182,9 +182,20 @@ async def event(db, row, name):
     )
 
 
-async def failed(db, attempt, reason, *, actor_id=None, approval=False):
+async def failed(
+    db,
+    attempt,
+    reason,
+    *,
+    actor_id=None,
+    approval=False,
+    blocklist=True,
+    excluded_source_ids=None,
+    recovery_message=None,
+):
     """Caller holds download-members + all member work locks (downloads.locked)."""
     config = await configuration(db)
+    excluded_source_ids = sorted({str(value) for value in (excluded_source_ids or []) if value})
     rows = []
     for selection in await download_memberships.for_attempt(db, attempt.id):
         existing = await db.scalar(
@@ -202,20 +213,24 @@ async def failed(db, attempt, reason, *, actor_id=None, approval=False):
             root_selection_id=UUID(root) if root else selection.id,
             state="approval" if approval else "queued",
             reason=reason[:300],
-            message="Waiting for replacement approval"
-            if approval
-            else "Release blocklisted; finding a replacement",
+            message=(
+                "Waiting for replacement approval"
+                if approval
+                else recovery_message or "Release blocklisted; finding a replacement"
+            ),
             evidence={
                 "cleanup": policy_for(config, selection).cleanup,
                 "cleanup_state": "pending",
                 "reported": actor_id is not None,
+                **({"excluded_source_ids": excluded_source_ids} if excluded_source_ids else {}),
             },
         )
         db.add(row)
         await db.flush()
-        await release_blocklist.add(
-            db, selection, reason, actor_id or selection.owner_id, automatic=actor_id is None
-        )
+        if blocklist:
+            await release_blocklist.add(
+                db, selection, reason, actor_id or selection.owner_id, automatic=actor_id is None
+            )
         # This retires the request scope, never the old transfer or its hash claims.
         selection.state, selection.message = "cancelled", reason[:300]
         reservation = await db.get(AcquisitionReservation, selection.reservation_id)
@@ -232,6 +247,24 @@ async def failed(db, attempt, reason, *, actor_id=None, approval=False):
         operation = await db.get(Operation, attempt.operation_id)
         operation.status, operation.message = "held", attempt.message
     return rows
+
+
+async def peer_refused(db, attempt, reason, source_id):
+    """Recover from a confirmed Soulseek refusal without blocklisting the release."""
+    excluded = {str(source_id)}
+    for selection in await download_memberships.for_attempt(db, attempt.id):
+        automatic = selection.frozen.get("automatic_selection") or {}
+        excluded.update(automatic.get("excluded_source_ids") or [])
+    return await failed(
+        db,
+        attempt,
+        reason,
+        blocklist=False,
+        excluded_source_ids=excluded,
+        recovery_message=(
+            "Peer refused the file; excluding this Soulseek folder and finding another source"
+        ),
+    )
 
 
 async def hold(db, row, message):
@@ -419,6 +452,7 @@ async def run(identifier):
                     list_authority=proof.get("list_authority"),
                     series_authority=proof.get("series_authority"),
                     recovery_selection_id=root.id,
+                    excluded_source_ids=row.evidence.get("excluded_source_ids") or [],
                 )
                 row.replacement_id, row.state = replacement.id, "selecting"
                 row.message = "Selecting the next eligible release with the original constraints"
