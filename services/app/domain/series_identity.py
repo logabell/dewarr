@@ -54,6 +54,9 @@ def series_note_agrees(note, series, *, require_position=False):
             " ",
             remainder,
         ).strip(" ,:;#")
+        # Some audiobook filenames abbreviate "track/book 3" as "T3".
+        # Only strip this marker when it directly precedes a numeric position.
+        remainder = re.sub(r"\bt(?=\d)", "", remainder, flags=re.I).strip(" ,:;#")
         if not remainder and not require_position:
             return True
         position = note_position(remainder)
