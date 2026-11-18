@@ -194,6 +194,14 @@ async def reserved_bytes(db, *, excluding_attempt=None, excluding_entry=None):
     return defaultdict(int, {key: int(amount) for key, amount in rows})
 
 
+def size_label(value):
+    value = max(int(value), 0)
+    for unit, factor in (("TiB", 1024**4), ("GiB", 1024**3), ("MiB", MIB)):
+        if value >= factor:
+            return f"{value / factor:.1f} {unit}"
+    return f"{value} B"
+
+
 def verify_space(observation, required, reserved, limits):
     if datetime.now(UTC) - datetime.fromisoformat(observation["at"]) > timedelta(seconds=10):
         raise CapacityWait("Storage observation expired; capacity will be checked again")
@@ -202,9 +210,12 @@ def verify_space(observation, required, reserved, limits):
         if not space or space["total"] <= 0:
             raise CapacityWait("Storage capacity is unknown; waiting for a fresh observation")
         floor = max(limits.minimum_free_bytes, space["total"] * limits.minimum_free_percent // 100)
-        if space["available"] - reserved.get(key, 0) - amount < floor:
+        free = space["available"] - reserved.get(key, 0)
+        if free - amount < floor:
             raise CapacityWait(
-                "Waiting for free disk space after existing reservations and reserve"
+                f"Waiting for free disk space: {size_label(free)} free after reservations, "
+                f"{size_label(amount)} needed, {size_label(floor)} kept in reserve "
+                "(Settings → Download clients → Storage reserve)"
             )
 
 

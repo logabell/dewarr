@@ -99,3 +99,17 @@ def test_selected_pack_reserves_selected_payload_and_only_selected_import_overhe
     scope["selected_paths"] = ["Pack/Unknown.m4b"]
     with pytest.raises(CapacityWait):
         download_cost(scope, snapshot())
+
+
+def test_waiting_for_space_says_how_much_and_where_to_change_the_reserve():
+    from app.domain.capacity import size_label
+
+    assert size_label(645 * GIB) == "645.0 GiB" and size_label(2 * 1024**4) == "2.0 TiB"
+    assert size_label(-5) == "0 B" and size_label(512) == "512 B"
+    big = {"roots": {"a": "a"}, "at": datetime.now(UTC).isoformat()}
+    big["filesystems"] = {"a": {"available": 645 * GIB, "total": 17 * 1024**4}}
+    with pytest.raises(CapacityWait) as error:
+        verify_space(big, {"a": GIB}, {}, Limits())
+    message = str(error.value)
+    assert "645.0 GiB free" in message and "1.0 GiB needed" in message
+    assert "Storage reserve" in message and "870.4 GiB kept in reserve" in message

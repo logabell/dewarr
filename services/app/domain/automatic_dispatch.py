@@ -107,6 +107,13 @@ async def approve_route(
     policy = await db.scalar(query.execution_options(populate_existing=True))
     if not policy:
         raise HTTPException(409, "An administrator must approve automatic imports for this route")
+    if not policy.enabled and not get_settings().recovery_mode:
+        # Only "requested" until the folders are verified; nothing was approved or changed.
+        raise HTTPException(
+            409,
+            "Automatic import is not active for this library folder. Verify its download "
+            "folder in Settings → Libraries, then turn automatic import on",
+        )
     snapshot = {
         "policy_id": str(policy.id),
         "policy_generation": policy.generation,

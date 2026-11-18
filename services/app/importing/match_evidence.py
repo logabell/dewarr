@@ -14,10 +14,19 @@ from app.importing.metadata import valid_isbn
 from app.importing.naming import StrictModel
 
 ISBN_KEYS = ("isbn", "isbn10", "isbn13", "isbn_10", "isbn_13")
+# ISO 639 codes that say "no usable language" (MP4 streams default to "und").
+# They are absent tags, not assertions, so they must not contradict the catalog.
+UNDETERMINED_LANGUAGES = frozenset({"und", "zxx", "mul", "mis"})
 
 
 def language_key(value):
     return catalog_language(value) or ""
+
+
+def language_assertions(values):
+    """Language keys the files actually assert; blank and undetermined tags are neutral."""
+    keys = (language_key(value) for value in values if isinstance(value, str) and value.strip())
+    return {key for key in keys if key and key not in UNDETERMINED_LANGUAGES}
 
 
 def isbn_key(value):
@@ -182,9 +191,7 @@ def group_evidence(snapshot, group):
             )
         ):
             authors.add(names)
-        languages.update(
-            language_key(value) for value in language if isinstance(value, str) and value.strip()
-        )
+        languages.update(language_assertions(language))
         for assertion in assertions:
             scheme, value = assertion.get("scheme"), assertion.get("value")
             found = identifier(scheme, value)
