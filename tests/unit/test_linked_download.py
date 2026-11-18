@@ -339,3 +339,24 @@ async def test_reviewed_collection_mapping_requires_independent_file_identity(mo
     )
     assert result is (version if case == "corroborated" else None)
     assert attach.await_count == (1 if case == "corroborated" else 0)
+
+
+def test_undetermined_file_languages_are_neutral_but_real_ones_still_conflict():
+    from app.importing.linked_download import request_file_conflicts
+    from app.importing.match_evidence import language_assertions
+
+    assert language_assertions(["und", "ZXX", "mul", "mis", "", "  ", None, 7]) == set()
+    assert language_assertions(["und", "eng"]) == {"en"}
+    work = SimpleNamespace(title="First Harbor", authors=["Alex Morgan"], language="en")
+    release = {"title": work.title, "authors": work.authors}
+
+    def conflicts(languages):
+        facts = MatchEvidence(
+            titles=["first harbor"],
+            authors=[["alex morgan"]],
+            languages=sorted(language_assertions(languages)),
+        )
+        return request_file_conflicts(work, release, facts)
+
+    assert conflicts(["und"]) == []
+    assert conflicts(["fr"]) == ["The files use a different language"]

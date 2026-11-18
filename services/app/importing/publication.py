@@ -773,6 +773,16 @@ def verify_item(folder, spec, deadline, derived=None, receipt=None):
                 raise PublicationError("Generated metadata differs from its frozen manifest")
 
 
+# File browsers drop these into shared folders. Audiobookshelf ignores them, so they
+# cannot be absorbed into a book and must not block publishing.
+OS_METADATA_NAMES = frozenset({".ds_store", "thumbs.db", "desktop.ini", ".localized", ".directory"})
+
+
+def is_os_metadata(name):
+    lowered = name.lower()
+    return lowered in OS_METADATA_NAMES or lowered.startswith("._")
+
+
 def conflicting_name(fd, name):
     key = collision_key(name)
     return next((existing for existing in os.listdir(fd) if collision_key(existing) == key), None)
@@ -797,8 +807,18 @@ def destination_parent(root, relative):
             fd = child
             # Structural ancestors may not contain files that ABS could absorb into a book.
             with os.scandir(fd) as entries:
-                if any(not entry.is_dir(follow_symlinks=False) for entry in entries):
-                    raise PublicationError("A structural destination folder already contains files")
+                stray = sorted(
+                    entry.name
+                    for entry in entries
+                    if not entry.is_dir(follow_symlinks=False) and not is_os_metadata(entry.name)
+                )
+            if stray:
+                shown = ", ".join(name[:60] for name in stray[:3])
+                more = f" and {len(stray) - 3} more" if len(stray) > 3 else ""
+                raise PublicationError(
+                    f"A structural destination folder already contains files: '{part[:80]}' "
+                    f"holds {shown}{more}. Move them out of the library folder and retry"
+                )
         yield fd, parts[-1]
     finally:
         os.close(fd)

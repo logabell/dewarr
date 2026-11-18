@@ -459,6 +459,27 @@ def test_casefold_collision_and_parent_media_are_held(specification):
     assert (spec.destination_root / "Alex Morgan/old.mp3").read_bytes() == b"existing"
 
 
+def test_os_metadata_in_parent_folders_does_not_block_publishing(specification):
+    spec = specification
+    parent = spec.destination_root / "Alex Morgan"
+    parent.mkdir()
+    for name in (".DS_Store", "._cover.jpg", "Thumbs.db", "desktop.ini"):
+        (parent / name).write_bytes(b"junk")
+    publish_item(spec)
+    assert (spec.destination_root / spec.folder).exists()
+
+
+def test_parent_folder_error_names_the_folder_and_files(specification):
+    spec = specification
+    parent = spec.destination_root / "Alex Morgan"
+    parent.mkdir()
+    (parent / ".DS_Store").write_bytes(b"junk")
+    (parent / "old.mp3").write_bytes(b"existing")
+    with pytest.raises(PublicationError, match=r"'Alex Morgan' holds old\.mp3") as error:
+        publish_item(spec)
+    assert ".DS_Store" not in str(error.value)
+
+
 def test_symlink_destination_parent_cannot_escape(specification, tmp_path):
     spec = specification
     outside = tmp_path.resolve() / "outside"
