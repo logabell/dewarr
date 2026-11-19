@@ -22,6 +22,7 @@ from app.db.models import (
     Work,
 )
 from app.domain import download_recovery as recovery
+from app.domain import download_resume
 from app.domain.download_attempts import locked
 from app.domain.operations import transaction_lock
 from app.domain.work_graph import family_ids
@@ -139,17 +140,43 @@ async def blocklist(
     ]
 
 
+class ResumeAttemptView(BaseModel):
+    attempt_id: UUID
+    resumed: bool
+    message: str
+
+
+class UnblockView(BaseModel):
+    block_id: UUID
+    unblocked: bool
+    resumed: int
+    attempts: list[ResumeAttemptView]
+
+
 @router.delete("/blocklist/{block_id}", status_code=204)
 async def remove_block(block_id: UUID, user: Admin, db: Database):
-    block = await db.get(ReleaseBlock, block_id)
-    if not block:
-        raise HTTPException(404, "Blocklist entry not found")
-    from app.domain.work_graph import acquisition_lock
-
-    await acquisition_lock(db, block.work_id)
-    block.active = False
-    db.add(AuditEvent(actor_id=user.id, action="acquisition.blocklist.removed", entity_id=block.id))
+    await download_resume.unblock(db, user, block_id, resume=False)
     await db.commit()
+
+
+@router.post("/blocklist/{block_id}/resume", response_model=UnblockView)
+async def resume_block(block_id: UUID, user: Admin, db: Database):
+    """Remove the block and continue any held transfer it stopped (never re-adds a torrent)."""
+    block, results = await download_resume.unblock(db, user, block_id, resume=True)
+    await db.commit()
+    return UnblockView(
+        block_id=block.id,
+        unblocked=not block.active,
+        resumed=sum(1 for _, reason in results if reason is None),
+        attempts=[
+            ResumeAttemptView(
+                attempt_id=attempt_id,
+                resumed=reason is None,
+                message=reason or "Resumed; checking the existing transfer",
+            )
+            for attempt_id, reason in results
+        ],
+    )
 
 
 @router.post("/reports", response_model=list[DownloadRecoveryView], status_code=202)

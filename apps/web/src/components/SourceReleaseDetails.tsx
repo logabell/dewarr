@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
+import ReleaseBlockNotice from "./ReleaseBlockNotice";
 import SourceReleaseDownload from "./SourceReleaseDownload";
 import { transferSize } from "../pages/DownloadConstraints";
 import BookDialog from "./BookDialog";
@@ -104,6 +105,7 @@ export default function SourceReleaseDetails({
         {!!item.assessment.blocked.length && (
           <p className="notice error">{item.assessment.blocked.join(" · ")}</p>
         )}
+        {item.block && <ReleaseBlockNotice block={item.block} />}
         <div className="release-detail-actions">
           {canAcquire && (
             <SourceReleaseDownload

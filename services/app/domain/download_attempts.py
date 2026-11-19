@@ -79,7 +79,38 @@ def attempt_tag(attempt):
     return "book-search:" + str(attempt.id)
 
 
-def inspection_path(selection):
+def layout_wrapper(expected, actual):
+    """Folder a client added around the torrent's own paths, or None.
+
+    qBittorrent's "Subfolder" content layout wraps a torrent that has no root folder
+    (every single-file torrent) in a new folder named after it. The files and sizes
+    are the ones inspected, only one extra leading folder was added, so the transfer
+    is the expected one. Anything else (renames, other roots, different sizes, mixed
+    prefixes) is still a mismatch.
+    """
+    if not expected or not actual or expected == actual or len(expected) != len(actual):
+        return None
+    wrappers = {path.partition("/")[0] for path in actual if "/" in path}
+    if len(wrappers) != 1 or not all("/" in path for path in actual):
+        return None
+    (wrapper,) = wrappers
+    if wrapper in {"", ".", ".."} or "\\" in wrapper:
+        return None
+    stripped = {path.partition("/")[2]: size for path, size in actual.items()}
+    return wrapper if stripped == expected else None
+
+
+def observed_wrapper(selection, observation):
+    """The wrapper recorded in the last client observation, for a completed transfer."""
+    files = (observation or {}).get("files") or []
+    expected = {
+        item["path"]: item["size_bytes"] for item in selection.frozen["descriptor"]["files"]
+    }
+    actual = {item["relative_path"]: item["size_bytes"] for item in files}
+    return layout_wrapper(expected, actual)
+
+
+def inspection_path(selection, wrapper=None):
     descriptor = selection.frozen["descriptor"]
     paths = [item["path"] for item in descriptor["files"]]
     if len(paths) == 1 and "/" not in paths[0]:
@@ -90,8 +121,8 @@ def inspection_path(selection):
         raise HTTPException(409, "Torrent files do not have one supported inspection root")
     relative = "/".join(
         part
-        for part in (selection.frozen["mapping"]["relative_path"], name)
-        if part not in {"", "."}
+        for part in (selection.frozen["mapping"]["relative_path"], wrapper, name)
+        if part and part not in {"", "."}
     )
     if len(relative) > 1024:
         raise HTTPException(409, "Completed download path exceeds the inspection limit")
@@ -528,7 +559,8 @@ def transfer_stage(selection, state):
         item["path"]: item["size_bytes"] for item in selection.frozen["descriptor"]["files"]
     }
     actual = {item.relative_path: item.size_bytes for item in state.files}
-    if expected != actual or state.total_bytes != selection.frozen["descriptor"]["torrent_bytes"]:
+    matches = expected == actual or layout_wrapper(expected, actual) is not None
+    if not matches or state.total_bytes != selection.frozen["descriptor"]["torrent_bytes"]:
         inspected = (
             "Soulseek file list"
             if selection.frozen["descriptor"].get("parser") == "slskd-file-list"
@@ -665,7 +697,7 @@ async def create_inspection(db, attempt, selection, user, *, key=None):
     relative = (
         completed_nzb_path(selection, (attempt.observation or {})["save_path"])
         if nzb_release(selection)
-        else inspection_path(selection)
+        else inspection_path(selection, observed_wrapper(selection, attempt.observation))
     )
     operation = Operation(
         owner_id=user.id,

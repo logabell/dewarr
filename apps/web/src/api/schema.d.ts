@@ -3858,6 +3858,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/acquisition/recovery/blocklist/{block_id}/resume": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resume Block
+     * @description Remove the block and continue any held transfer it stopped (never re-adds a torrent).
+     */
+    post: operations["resume_block_api_acquisition_recovery_blocklist__block_id__resume_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/acquisition/recovery/reports": {
     parameters: {
       query?: never;
@@ -12153,6 +12173,7 @@ export interface components {
       /** Query Keys */
       query_keys?: string[];
       download?: components["schemas"]["ReleaseDownloadStatus"] | null;
+      block?: components["schemas"]["ReleaseBlockInfo"] | null;
     };
     /** ReadIssueView */
     ReadIssueView: {
@@ -12614,6 +12635,31 @@ export interface components {
       formats: string[];
       /** Source Origin */
       source_origin: string;
+    };
+    /**
+     * ReleaseBlockInfo
+     * @description Why a release cannot be downloaded again until an administrator unblocks it.
+     */
+    ReleaseBlockInfo: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Reason */
+      reason: string;
+      /** Automatic */
+      automatic: boolean;
+      /**
+       * Blocked At
+       * Format: date-time
+       */
+      blocked_at: string;
+      /**
+       * Can Resume
+       * @default false
+       */
+      can_resume: boolean;
     };
     /** ReleaseDownloadStatus */
     ReleaseDownloadStatus: {
@@ -13106,6 +13152,18 @@ export interface components {
       /** Description */
       description: string;
       release_policy?: components["schemas"]["ProfileSnapshot"] | null;
+    };
+    /** ResumeAttemptView */
+    ResumeAttemptView: {
+      /**
+       * Attempt Id
+       * Format: uuid
+       */
+      attempt_id: string;
+      /** Resumed */
+      resumed: boolean;
+      /** Message */
+      message: string;
     };
     /** ReviewInput */
     ReviewInput: {
@@ -14670,6 +14728,20 @@ export interface components {
       path: string;
       /** Size Bytes */
       size_bytes: number;
+    };
+    /** UnblockView */
+    UnblockView: {
+      /**
+       * Block Id
+       * Format: uuid
+       */
+      block_id: string;
+      /** Unblocked */
+      unblocked: boolean;
+      /** Resumed */
+      resumed: number;
+      /** Attempts */
+      attempts: components["schemas"]["ResumeAttemptView"][];
     };
     /** Usage */
     Usage: {
@@ -23225,6 +23297,37 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  resume_block_api_acquisition_recovery_blocklist__block_id__resume_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        block_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UnblockView"];
+        };
       };
       /** @description Validation Error */
       422: {

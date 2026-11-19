@@ -16,7 +16,13 @@ from app.api.operations import OperationView
 from app.api.prowlarr import resolve as resolve_prowlarr
 from app.api.source_artifacts import SourceArtifactView, artifact_view
 from app.db.models import AcquisitionIntent, Operation, SourceConnection, SourceResult
-from app.domain import collection_review, release_download_status, series_preparation
+from app.domain import (
+    collection_review,
+    download_resume,
+    release_blocklist,
+    release_download_status,
+    series_preparation,
+)
 from app.domain.automatic_eligibility import collection_candidate
 from app.domain.book_sources import SearchInput, accessible_work, checked, refresh_search, start
 from app.domain.release_profiles import (
@@ -66,6 +72,17 @@ class SearchQueryPlan(BaseModel):
     warnings: list[str]
 
 
+class ReleaseBlockInfo(BaseModel):
+    """Why a release cannot be downloaded again until an administrator unblocks it."""
+
+    id: UUID
+    reason: str
+    automatic: bool
+    blocked_at: datetime
+    # An interrupted transfer for this release is still on the downloader and can continue.
+    can_resume: bool = False
+
+
 class RankedReleaseView(BaseModel):
     id: UUID
     release: SourceRelease
@@ -75,6 +92,7 @@ class RankedReleaseView(BaseModel):
     possible_collection: bool = False
     query_keys: list[str] = Field(default_factory=list)
     download: release_download_status.ReleaseDownloadStatus | None = None
+    block: ReleaseBlockInfo | None = None
 
 
 class CatalogPreparationItem(BaseModel):
@@ -134,8 +152,14 @@ async def view(db, user, operation_id):
     )
     ranked = []
     work = {**payload["work"], "identifiers": payload.get("identifiers", [])}
-    for row in rows:
-        release = parse_release(row.source_key, row.release_snapshot)
+    parsed = [parse_release(row.source_key, row.release_snapshot) for row in rows]
+    blocks = await release_blocklist.blocks_for(
+        db, UUID(payload["work"]["id"]), [(item, item.medium) for item in parsed]
+    )
+    resumable = {}
+    for block in {b.id: b for b in blocks if b}.values():
+        resumable[block.id] = bool(await download_resume.resumable_attempt_ids(db, block))
+    for row, block, release in zip(rows, blocks, parsed, strict=True):
         release = catalog_language_release(release, work)
         assessment = assess_release(release, work, preferences, payload["medium"])
         if not changed and (authors := indexer_title_authors(release, work)):
@@ -154,6 +178,15 @@ async def view(db, user, operation_id):
                 release=release,
                 possible_collection=collection_candidate(release, work),
                 download=downloads.get(release_download_status.identity(release)),
+                block=ReleaseBlockInfo(
+                    id=block.id,
+                    reason=block.reason,
+                    automatic=block.automatic,
+                    blocked_at=block.created_at,
+                    can_resume=resumable[block.id],
+                )
+                if block
+                else None,
                 assessment=assessment,
                 expires_at=row.expires_at,
                 query_keys=row.query_keys if not changed else [],

@@ -1,4 +1,5 @@
 import InfiniteScroll from "../components/InfiniteScroll";
+import ReleaseBlockNotice from "../components/ReleaseBlockNotice";
 import SourceReleaseDownload from "../components/SourceReleaseDownload";
 import { Info, Search as SearchIcon } from "lucide-react";
 import SourceReleaseDetails, {
@@ -670,10 +671,11 @@ function Results({
                       {sourceName(item.release)} · #{rank + 1}
                       {unavailableReason(item)
                         ? ` · ${unavailableReason(item)}`
-                        : item.assessment.blocked.length
+                        : item.block || item.assessment.blocked.length
                           ? " · Blocked"
                           : ""}
                     </small>
+                    {item.block && <ReleaseBlockNotice block={item.block} />}
                   </td>
                   <td data-label="Authors">
                     {item.release.authors?.join(", ") || "—"}
@@ -742,12 +744,15 @@ function Results({
                           disabled={
                             data.status !== "completed" ||
                             !!unavailableReason(item) ||
+                            !!item.block ||
                             item.assessment.blocked.length > 0
                           }
                           disabledReason={
                             unavailableReason(item)
                               ? `${unavailableReason(item)}. Refresh results to download.`
-                              : undefined
+                              : item.block
+                                ? "This release is blocked. Unblock it first."
+                                : undefined
                           }
                         />
                       )}
@@ -769,6 +774,7 @@ function Results({
           canAcquire={canAcquire && canDownload(detailItem.release.medium)}
           disabled={
             !!unavailableReason(detailItem) ||
+            !!detailItem.block ||
             detailItem.assessment.blocked.length > 0
           }
         />
