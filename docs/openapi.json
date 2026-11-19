@@ -12945,6 +12945,50 @@
         }
       }
     },
+    "/api/acquisition/recovery/blocklist/{block_id}/resume": {
+      "post": {
+        "tags": [
+          "download-recovery"
+        ],
+        "summary": "Resume Block",
+        "description": "Remove the block and continue any held transfer it stopped (never re-adds a torrent).",
+        "operationId": "resume_block_api_acquisition_recovery_blocklist__block_id__resume_post",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnblockView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/acquisition/recovery/reports": {
       "post": {
         "tags": [
@@ -35548,6 +35592,16 @@
                 "type": "null"
               }
             ]
+          },
+          "block": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseBlockInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -36772,6 +36826,42 @@
           "source_origin"
         ],
         "title": "ReleaseAssessment"
+      },
+      "ReleaseBlockInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "automatic": {
+            "type": "boolean",
+            "title": "Automatic"
+          },
+          "blocked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Blocked At"
+          },
+          "can_resume": {
+            "type": "boolean",
+            "title": "Can Resume",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "reason",
+          "automatic",
+          "blocked_at"
+        ],
+        "title": "ReleaseBlockInfo",
+        "description": "Why a release cannot be downloaded again until an administrator unblocks it."
       },
       "ReleaseDownloadStatus": {
         "properties": {
@@ -38076,6 +38166,30 @@
           "description"
         ],
         "title": "RequestView"
+      },
+      "ResumeAttemptView": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "resumed": {
+            "type": "boolean",
+            "title": "Resumed"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "resumed",
+          "message"
+        ],
+        "title": "ResumeAttemptView"
       },
       "ReviewInput": {
         "properties": {
@@ -42191,6 +42305,38 @@
           "size_bytes"
         ],
         "title": "TorrentFile"
+      },
+      "UnblockView": {
+        "properties": {
+          "block_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Block Id"
+          },
+          "unblocked": {
+            "type": "boolean",
+            "title": "Unblocked"
+          },
+          "resumed": {
+            "type": "integer",
+            "title": "Resumed"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/ResumeAttemptView"
+            },
+            "type": "array",
+            "title": "Attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "block_id",
+          "unblocked",
+          "resumed",
+          "attempts"
+        ],
+        "title": "UnblockView"
       },
       "Usage": {
         "properties": {

@@ -69,3 +69,30 @@ async def add(db, selection, reason, actor_id, *, automatic=True):
         db.add(row)
     row.reason, row.actor_id, row.automatic, row.active = reason[:300], actor_id, automatic, True
     return row
+
+
+async def blocks_for(db, work_id, releases):
+    """Active block (or None) for each (release, medium) pair, in one query.
+
+    Used to show blocked releases on a result page. A result carries no torrent
+    descriptor yet, so only the source/id key can match; blocks always record it.
+    """
+    rows = list(
+        await db.scalars(
+            select(ReleaseBlock).where(
+                ReleaseBlock.work_id.in_(family_ids(work_id)), ReleaseBlock.active.is_(True)
+            )
+        )
+    )
+    if not rows:
+        return [None] * len(releases)
+    result = []
+    for release, medium in releases:
+        keys = set(release_keys(release)[1])
+        result.append(
+            next(
+                (row for row in rows if row.medium == medium and keys.intersection(row.identities)),
+                None,
+            )
+        )
+    return result

@@ -1017,3 +1017,13 @@
 .collection-cover .cover-formats {
   display: none;
 }
+
+.release-block-notice {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.release-block-notice p {
+  margin: 0;
+}
