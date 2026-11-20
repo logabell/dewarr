@@ -1,4 +1,4 @@
-import { Fragment, useEffect, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
@@ -64,6 +64,38 @@ export default function OperationHistory({ actions }: { actions?: ReactNode }) {
       ? Math.floor(rawOffset / PAGE_SIZE) * PAGE_SIZE
       : 0;
   const cache = useQueryClient();
+  const [exporting, setExporting] = useState("");
+  const [exportError, setExportError] = useState("");
+  async function exportLogs(format: "csv" | "json") {
+    setExporting(format);
+    setExportError("");
+    try {
+      const query = new URLSearchParams({ format });
+      if (q) query.set("q", q);
+      if (status) query.set("status", status);
+      if (kind) query.set("kind", kind);
+      const response = await fetch(`/api/activity/export?${query}`, {
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error(`Export failed (${response.status})`);
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+        || `dewarr-logs.${format}`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "Export failed");
+    } finally {
+      setExporting("");
+    }
+  }
   function change(key: string, value: string) {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -138,8 +170,17 @@ export default function OperationHistory({ actions }: { actions?: ReactNode }) {
           <h2 id="operation-history-title">Background activity</h2>
           <p className="muted">Jobs and library checks, newest first.</p>
         </div>
-        {actions}
+        <div className="logs-export-actions">
+          <button type="button" onClick={() => void exportLogs("csv")} disabled={Boolean(exporting)}>
+            {exporting === "csv" ? "Exporting…" : "Export CSV"}
+          </button>
+          <button type="button" onClick={() => void exportLogs("json")} disabled={Boolean(exporting)}>
+            {exporting === "json" ? "Exporting…" : "Export JSON"}
+          </button>
+          {actions}
+        </div>
       </div>
+      {exportError && <p className="muted" role="alert">{exportError}</p>}
       <form
         className="logs-toolbar"
         aria-label="Search background activity"

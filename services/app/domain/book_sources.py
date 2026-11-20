@@ -181,7 +181,7 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
             or artifact.sha256 != pack_origin["artifact_sha256"]
         ):
             raise HTTPException(409, "The selected pack artifact is no longer available")
-        expiry = datetime.now(UTC) + timedelta(minutes=25)
+        expiry = datetime.now(UTC) + timedelta(hours=2)
         operation = Operation(
             owner_id=user.id,
             kind="sources.search",
@@ -267,7 +267,7 @@ async def start(db, user, work_id, body, key, *, pack_origin=None, only_sources=
             "profile": profile.model_dump(mode="json"),
             "sources": sources,
             "workers": {},
-            "expires_at": (datetime.now(UTC) + timedelta(minutes=25)).isoformat(),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
         },
         message="Searching connected sources"
         if sources
@@ -322,7 +322,7 @@ async def launch(db, operation, user, work):
                 "query_key": term["key"],
                 "query": term["query"],
             }
-    payload["expires_at"] = (datetime.now(UTC) + timedelta(minutes=25)).isoformat()
+    payload["expires_at"] = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     operation.payload = payload
     operation.job_id = None
     await enqueue_sources(db, operation)
@@ -472,11 +472,12 @@ async def search_with_fallback(identifier, source, token, unit, state, payload, 
     Further pages choose the query using page one before fetching their offset;
     an exhausted later page must not switch to a broader, unrelated result set.
     """
-    queries = (
-        source_queries.book_queries(payload["work"], payload["query"])
-        if state.get("query_key", "book") == "book"
-        else [state["query"]]
-    )
+    if state.get("query_key", "book") != "book":
+        queries = [state["query"]]
+    elif source == "slskd":
+        queries = source_queries.slskd_queries(payload["work"], payload["query"])
+    else:
+        queries = source_queries.book_queries(payload["work"], payload["query"])
     offset = payload["offset"]
     for index in range(state.get("query_index", 0), len(queries)):
         query = queries[index]
@@ -586,7 +587,9 @@ async def run(identifier, source):
                     payload["sources"][source],
                     payload,
                     fetch_slskd,
-                    lambda releases: not releases,
+                    lambda releases: not source_queries.slskd_relevant(
+                        releases, payload["work"], payload.get("medium", "all")
+                    ),
                 )
                 if not await update_unit(
                     identifier,

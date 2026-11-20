@@ -1,7 +1,11 @@
-from datetime import datetime
+import csv
+import io
+import json
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Text, case, cast, func, or_, select
 
@@ -200,6 +204,91 @@ async def activity_page(
         limit=limit,
         statuses=sorted({state for state, _ in facets}),
         kinds=sorted({category for _, category in facets}),
+    )
+
+
+def _redact_export(value):
+    """Keep operation diagnostics useful without exporting credential-like values."""
+    sensitive = ("password", "token", "secret", "api_key", "authorization", "cookie")
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if any(part in str(key).lower() for part in sensitive)
+            else _redact_export(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_export(item) for item in value]
+    return value
+
+
+@router.get("/activity/export")
+async def export_activity(
+    user: CurrentUser,
+    db: Database,
+    format: str = Query(default="csv", pattern="^(csv|json)$"),
+    q: str = Query(default="", max_length=300),
+    status: str = Query(default="", max_length=40),
+    kind: str = Query(default="", max_length=60),
+):
+    """Export every operation matching the current Logs filters (not just the visible page)."""
+    where = [Operation.owner_id == user.id]
+    if status:
+        where.append(Operation.status == status)
+    if kind:
+        where.append(Operation.kind == kind)
+    if q.strip():
+        pattern = (
+            "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        )
+        where.append(
+            or_(
+                Operation.message.ilike(pattern),
+                Operation.kind.ilike(pattern),
+                cast(Operation.id, Text).ilike(pattern),
+            )
+        )
+    rows = (
+        await db.scalars(
+            select(Operation)
+            .where(*where)
+            .order_by(Operation.created_at.desc(), Operation.id)
+        )
+    ).all()
+    records = [
+        {
+            "id": str(row.id),
+            "kind": row.kind,
+            "status": row.status,
+            "message": row.message,
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+            "payload": _redact_export(row.payload or {}),
+        }
+        for row in rows
+    ]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    if format == "json":
+        content = json.dumps(
+            {"exported_at": datetime.now(timezone.utc).isoformat(),
+             "count": len(records), "filters": {"q": q, "status": status, "kind": kind},
+             "operations": records},
+            ensure_ascii=False, indent=2,
+        )
+        return Response(
+            content=content, media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="dewarr-logs-{stamp}.json"'},
+        )
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["id", "kind", "status", "message", "created_at", "updated_at", "payload"],
+    )
+    writer.writeheader()
+    for record in records:
+        writer.writerow({**record, "payload": json.dumps(record["payload"], ensure_ascii=False)})
+    return Response(
+        content=output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="dewarr-logs-{stamp}.csv"'},
     )
 
 

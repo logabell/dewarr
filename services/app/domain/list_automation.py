@@ -282,7 +282,7 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
             await automatic_selection.repair(db, existing)
             if existing.status in {"queued", "running"}:
                 return (
-                    "pending",
+                    "selecting",
                     "A compatible selection is already running",
                     next_tick(now),
                 )
@@ -324,7 +324,7 @@ async def advance_target(db, user, policy, book, target, progress, now, *, serie
                 or "already has an acquisition" in str(error.detail)
             ):
                 return (
-                    "pending",
+                    "selecting",
                     "A compatible selection is already running",
                     next_tick(now),
                 )
@@ -438,9 +438,9 @@ async def advance_book(db, user, policy, book, now):
     progress.pop("resume_attempts", None)
     book.progress = progress
     priority = {
-        "held": 0,
-        "searching": 1,
-        "selecting": 2,
+        "searching": 0,
+        "selecting": 1,
+        "held": 2,
         "pending": 3,
         "wanted": 4,
         "available": 5,
@@ -497,25 +497,48 @@ async def run(identifier):
         now = datetime.now(UTC)
         records = await list_policies.members(db, user, policy.list_id)
         leaders = await list_monitoring.reconcile(db, policy, records, now)
-        due = list(
-            await db.scalars(
-                select(ListAcquisitionBook)
-                .where(
-                    ListAcquisitionBook.policy_id == policy.id,
-                    ListAcquisitionBook.generation == policy.generation,
-                    ListAcquisitionBook.id.in_(leaders),
+        base = (
+            select(ListAcquisitionBook)
+            .where(
+                ListAcquisitionBook.policy_id == policy.id,
+                ListAcquisitionBook.generation == policy.generation,
+                ListAcquisitionBook.id.in_(leaders),
+            )
+        )
+
+        # Finish an already-started book before opening another one.
+        # This also drains searches launched by older batch-based versions.
+        active = await db.scalar(
+            base.where(ListAcquisitionBook.state.in_(["searching", "selecting"]))
+            .order_by(ListAcquisitionBook.created_at, ListAcquisitionBook.id)
+            .limit(1)
+        )
+
+        book = None
+        if active is not None:
+            # An active book owns the turn even when its next poll is not due.
+            if active.next_check_at is None or active.next_check_at <= now:
+                book = active
+        else:
+            # A queued download (pending) does not hold up the next book.
+            book = await db.scalar(
+                base.where(
+                    ListAcquisitionBook.state.in_(["held", "wanted"]),
                     ListAcquisitionBook.next_check_at <= now,
                 )
                 .order_by(ListAcquisitionBook.next_check_at, ListAcquisitionBook.id)
-                .limit(25)
+                .limit(1)
             )
-        )
-        for book in due:
+
+        checked = 0
+        if book is not None:
             try:
                 async with db.begin_nested():
                     await advance_book(db, user, policy, book, now)
             except HTTPException as error:
                 await db.refresh(book)
                 book.state, book.message, book.next_check_at = "held", str(error.detail), None
-        operation.status, operation.message = "completed", f"Checked {len(due)} monitored books"
+            checked = 1
+
+        operation.status, operation.message = "completed", f"Checked {checked} monitored books"
         policy.message = "Monitoring list additions and requested media"

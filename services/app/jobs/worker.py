@@ -142,42 +142,62 @@ async def run_worker() -> None:
             await asyncio.gather(recovery, return_exceptions=True)
 
 
-async def run_pools(queue):
+def worker_pool_config(queue):
+    registered = {task.queue for task in queue.tasks.values()}
+
     control = {"system", "notifications"}
     files = {"imports", "inspection"}
     inventory = {"inventory"}
     confirmation = {"confirmation"}
+    sources = {"sources"}
+    acquisition = {"acquisition"}
+    lists = {"lists"}
+    metadata = {"metadata"}
+    downloads = {"downloads"}
     catalog_cache = {"catalog-cache"}
-    remaining = (
-        {task.queue for task in queue.tasks.values()}
-        - control
-        - files
-        - inventory
-        - confirmation
-        - catalog_cache
-        - {"recovery"}
+
+    reserved = (
+        control
+        | files
+        | inventory
+        | confirmation
+        | sources
+        | acquisition
+        | lists
+        | metadata
+        | downloads
+        | catalog_cache
+        | {"recovery"}
     )
-    # One slot per work class, plus two bounded display-refresh slots so a slow
-    # provider does not hold up every visible card. Provider rate limits still
-    # apply across both slots. File work remains separate from control jobs.
+    remaining = registered - reserved
+
+    return (
+        ("control", control, 1),
+        ("files", files, 1),
+        ("inventory", inventory, 1),
+        ("confirmation", confirmation, 1),
+        ("sources", sources, 2),
+        ("acquisition", acquisition, 2),
+        ("lists", lists, 1),
+        ("metadata", metadata, 1),
+        ("downloads", downloads, 1),
+        ("background", remaining, 1),
+        ("catalog-cache", catalog_cache, 2),
+    )
+
+
+async def run_pools(queue):
     async with asyncio.TaskGroup() as workers:
-        for index, queues in enumerate(
-            (control, files, inventory, confirmation, remaining, catalog_cache)
-        ):
+        for name, queues, concurrency in worker_pool_config(queue):
+            if not queues:
+                continue
             workers.create_task(
                 queue.run_worker_async(
                     queues=sorted(queues),
-                    concurrency=2 if queues == catalog_cache else 1,
-                    name=(
-                        "control",
-                        "files",
-                        "inventory",
-                        "confirmation",
-                        "background",
-                        "catalog-cache",
-                    )[index],
+                    concurrency=concurrency,
+                    name=name,
                     install_signal_handlers=False,
-                    listen_notify=index == 0,
+                    listen_notify=name == "control",
                     fetch_job_polling_interval=1,
                     update_heartbeat_interval=10,
                     stalled_worker_timeout=60,

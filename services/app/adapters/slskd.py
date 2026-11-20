@@ -29,7 +29,7 @@ from app.adapters.torrent_descriptor import TorrentDescriptor, TorrentFile
 SEARCH_TIMEOUT_MS = 15000
 SEARCH_BUDGET_SECONDS = 20
 SEARCH_CALL_TIMEOUT = 30
-AUDIO = {".m4b", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wav", ".wma"}
+AUDIO = {".m4b", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wav", ".wma", ".opus"}
 EBOOK = {".epub", ".pdf", ".cbz", ".mobi", ".azw", ".azw3"}
 MEDIA = AUDIO | EBOOK
 COMPLETE = {"succeeded", "completed"}

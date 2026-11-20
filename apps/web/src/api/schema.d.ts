@@ -2698,6 +2698,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/lists/{list_id}/acquisition/selected": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Selected Books */
+    get: operations["selected_books_api_lists__list_id__acquisition_selected_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/lists/{list_id}/acquisition": {
     parameters: {
       query?: never;
@@ -6019,6 +6036,15 @@ export interface components {
       offset: number;
       /** Limit */
       limit: number;
+    };
+    /** SelectedBooksPage */
+    SelectedBooksPage: {
+      records: components["schemas"]["ActivationRecord"][];
+      total: number;
+      offset: number;
+      limit: number;
+      /** Format: date-time */
+      activated_at?: string | null;
     };
     /** ActivityContext */
     ActivityContext: {
@@ -9825,6 +9851,8 @@ export interface components {
       };
       /** Include Work Ids */
       include_work_ids?: string[];
+      /** Select All Missing */
+      select_all_missing?: boolean;
       /**
        * Expected Revision
        * @default 0
@@ -20866,6 +20894,40 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ActivationView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  selected_books_api_lists__list_id__acquisition_selected_get: {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        list_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SelectedBooksPage"];
         };
       };
       /** @description Validation Error */

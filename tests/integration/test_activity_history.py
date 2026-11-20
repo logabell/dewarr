@@ -237,3 +237,52 @@ async def test_bounds(client, admin, params):
 
 async def test_anonymous(client):
     assert (await client.get("/api/activity/page")).status_code == 401
+
+
+async def test_activity_export_includes_all_matching_rows_and_redacts_secrets(
+    client, admin, database
+):
+    async with database() as db, db.begin():
+        rows = [
+            operation(
+                UUID(admin["id"]),
+                i,
+                kind="metadata.enrich",
+                status="failed" if i == 0 else "completed",
+                message=f"Export record {i}",
+                payload={"work_id": str(uuid4()), "nested": {"api_key": "do-not-export", "attempt": i}},
+            )
+            for i in range(55)
+        ]
+        db.add_all(rows)
+    response = await client.get(
+        "/api/activity/export", params={"format": "json", "kind": "metadata.enrich"}
+    )
+    assert response.status_code == 200
+    assert "attachment;" in response.headers["content-disposition"]
+    data = response.json()
+    assert data["count"] == 55
+    assert data["filters"]["kind"] == "metadata.enrich"
+    assert len(data["operations"]) == 55
+    assert data["operations"][0]["payload"]["nested"]["api_key"] == "[REDACTED]"
+    assert "do-not-export" not in response.text
+
+    csv_response = await client.get(
+        "/api/activity/export", params={"format": "csv", "status": "failed"}
+    )
+    assert csv_response.status_code == 200
+    assert "text/csv" in csv_response.headers["content-type"]
+    assert "Export record 0" in csv_response.text
+    assert "Export record 1" not in csv_response.text
+
+
+async def test_activity_export_is_owner_scoped_and_validates_format(client, admin, database):
+    owner = await login_member(client)
+    async with database() as db, db.begin():
+        db.add(operation(UUID(admin["id"]), message="Other user's private export row"))
+        db.add(operation(owner, message="My export row"))
+    response = await client.get("/api/activity/export", params={"format": "json"})
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert response.json()["operations"][0]["message"] == "My export row"
+    assert (await client.get("/api/activity/export", params={"format": "xml"})).status_code == 422

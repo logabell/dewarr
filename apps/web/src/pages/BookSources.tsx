@@ -317,6 +317,15 @@ function Results({
           ? "Source settings changed"
           : null;
   const expired = Date.parse(data.expires_at) <= now;
+  const totalSources = data.sources.length;
+  const completedSources = data.sources.filter(
+    (source) => source.state === "completed" || source.state === "failed",
+  ).length;
+  const progress = totalSources
+    ? data.status === "completed"
+      ? 100
+      : Math.round((completedSources / totalSources) * 100)
+    : 0;
   const needsRefresh =
     expired || data.items.some((item) => unavailableReason(item));
   const pageIndex = Math.max(
@@ -335,19 +344,17 @@ function Results({
   const detailItem = data.items[detailIndex];
   const sort = view.get("releaseSort") || "profile";
   const text = view.get("releaseFilter") || "";
-  const source = view.get("releaseSource") || "";
   const format = view.get("releaseFormat") || "";
   const hideBlocked = view.get("releaseAvailable") === "1";
+  const showUnmatched = view.get("releaseUnmatched") === "1";
   const setSort = (v: string) => updateView({ releaseSort: v });
   const setText = (v: string) => updateView({ releaseFilter: v });
-  const setSource = (v: string) => updateView({ releaseSource: v });
   const setFormat = (v: string) => updateView({ releaseFormat: v });
   const setHideBlocked = (v: boolean) =>
     updateView({ releaseAvailable: v ? "1" : null });
+  const setShowUnmatched = (v: boolean) =>
+    updateView({ releaseUnmatched: v ? "1" : null });
   const resultsHeading = useRef<HTMLParagraphElement>(null);
-  const origins = new Map(
-    data.items.map(({ release }) => [sourceKey(release), sourceName(release)]),
-  );
   const formats = [
     ...new Set(
       data.items.flatMap(({ release }) =>
@@ -358,12 +365,10 @@ function Results({
   const hasUnknownFormat = data.items.some(
     ({ release }) => !release.formats?.length,
   );
-  const showSources = origins.size > 1;
   const showFormats = formats.length + Number(hasUnknownFormat) > 1;
   const showSort = data.items.length > 1;
   const hasSeeders = data.items.some(({ release }) => release.seeders != null);
   const hasSize = data.items.some(({ release }) => release.size_bytes != null);
-  const sourceValid = !source || (showSources && origins.has(source));
   const formatValid =
     !format ||
     (showFormats &&
@@ -376,22 +381,23 @@ function Results({
         : sort === "smallest" || sort === "largest"
           ? hasSize
           : true));
-  const activeSource = sourceValid ? source : "";
   const activeFormat = formatValid ? format : "";
   const activeSort = sortValid ? sort : "profile";
   useEffect(() => {
-    if (!sourceValid) setSource("");
     if (!formatValid) setFormat("");
     if (!sortValid) setSort("profile");
-    if (!sourceValid || !formatValid || !sortValid) setPageIndex(0);
-  }, [sourceValid, formatValid, sortValid]);
+    if (!formatValid || !sortValid) setPageIndex(0);
+  }, [formatValid, sortValid]);
   const needle = text.trim().toLowerCase();
+  const unmatchedCount = data.items.filter(
+    (item) => item.assessment.identity === "unmatched",
+  ).length;
   const filtered = data.items
     .map((item, rank) => ({ item, rank }))
     .filter(({ item }) => {
       const release = item.release;
       return (
-        (!activeSource || sourceKey(release) === activeSource) &&
+        (showUnmatched || item.assessment.identity !== "unmatched") &&
         (!activeFormat ||
           (activeFormat === "unknown"
             ? !release.formats?.length
@@ -427,47 +433,37 @@ function Results({
       order = a.item.release.title.localeCompare(b.item.release.title);
     return order || a.rank - b.rank;
   });
+  const identityFiltered = unmatchedCount > 0 && !showUnmatched;
   const filteredView = !!(
     needle ||
-    activeSource ||
     activeFormat ||
-    hideBlocked
+    hideBlocked ||
+    identityFiltered ||
+    showUnmatched
   );
   const visibleCount = (pageIndex + 1) * 50;
   return (
     <>
-      {data.status !== "completed" && (
-        <p role="status" className="source-result-status">
-          {data.message}
-        </p>
-      )}
-      {data.sources
-        .filter((source) => source.state === "failed")
-        .map((source) => (
-          <p className="notice error" key={source.key}>
-            {source.name}: {source.message}
+      {totalSources > 0 && (
+        <section className="source-progress" aria-label="Search progress">
+          <div className="source-progress-heading">
+            <strong>
+              {data.status === "completed"
+                ? "Search complete"
+                : "Finding matching releases"}
+            </strong>
+            <span>{progress}%</span>
+          </div>
+          <progress
+            value={progress}
+            max={100}
+            aria-label="Search completion"
+          />
+          <p>
+            {completedSources} of {totalSources} searches finished
+            {" · "}{data.items.length} results found
           </p>
-        ))}
-      {!!data.sources.length && (
-        <details className="source-coverage" open={data.items.length === 0}>
-          <summary>
-            Source coverage ·{" "}
-            {data.sources.some((source) => source.count === 0)
-              ? `${data.sources
-                  .filter((source) => source.count === 0)
-                  .map((source) => source.name)
-                  .join(", ")} returned no releases`
-              : `${data.sources.length} checked`}
-          </summary>
-          <ul>
-            {data.sources.map((source) => (
-              <li key={source.key}>
-                <strong>{source.name}</strong> · {source.state} · {source.count}{" "}
-                releases<p>{source.message}</p>
-              </li>
-            ))}
-          </ul>
-        </details>
+        </section>
       )}
       {!data.sources.length && (
         <p className="notice">
@@ -544,25 +540,6 @@ function Results({
               </label>
             )}
 
-            {showSources && (
-              <label>
-                <span className="sr-only">Result source</span>
-                <select
-                  value={activeSource}
-                  onChange={(event) => {
-                    setSource(event.target.value);
-                    setPageIndex(0);
-                  }}
-                >
-                  <option value="">All sources</option>
-                  {[...origins].map(([key, name]) => (
-                    <option key={key} value={key}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
             {showFormats && (
               <label>
                 <span className="sr-only">Reported format</span>
@@ -596,15 +573,28 @@ function Results({
               />
               Hide blocked or expired results
             </label>
+            {unmatchedCount > 0 && (
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={showUnmatched}
+                  onChange={(event) => {
+                    setShowUnmatched(event.target.checked);
+                    setPageIndex(0);
+                  }}
+                />
+                Show unmatched results ({unmatchedCount})
+              </label>
+            )}
           </div>
 
           {(filteredView || activeSort !== "profile") && (
             <button
               onClick={() => {
                 setText("");
-                setSource("");
                 setFormat("");
                 setHideBlocked(false);
+                setShowUnmatched(false);
                 setSort("profile");
                 setPageIndex(0);
               }}
@@ -622,6 +612,9 @@ function Results({
       >
         {data.items.length} distinct releases
         {filteredView ? ` · ${filtered.length} match your filters` : ""}
+        {!showUnmatched && unmatchedCount > 0
+          ? ` · ${unmatchedCount} unmatched hidden`
+          : ""}
         {filtered.length > 0
           ? ` · showing ${1}–${Math.min(visibleCount, filtered.length)}`
           : ""}
@@ -667,7 +660,12 @@ function Results({
                       {item.release.title}
                     </button>
                     <small>
-                      {sourceName(item.release)} · #{rank + 1}
+                      #{rank + 1}
+                      {item.assessment.identity === "possible"
+                        ? " · Needs checking"
+                        : item.assessment.identity === "unmatched"
+                          ? " · Unmatched"
+                          : ""}
                       {unavailableReason(item)
                         ? ` · ${unavailableReason(item)}`
                         : item.assessment.blocked.length
@@ -763,6 +761,7 @@ function Results({
       {detailItem && (
         <SourceReleaseDetails
           item={detailItem}
+          workId={data.work_id}
           reviewContext={reviewContext(detailItem)}
           rank={detailIndex}
           searchId={data.id}
@@ -784,22 +783,6 @@ function Results({
       />
     </>
   );
-}
-
-function sourceKey(release: Search["items"][number]["release"]) {
-  return release.source === "prowlarr"
-    ? `prowlarr:${release.indexer_id}`
-    : release.source;
-}
-
-function sourceName(release: Search["items"][number]["release"]) {
-  return release.source === "mam"
-    ? "MAM"
-    : release.source === "audiobookbay"
-      ? "AudiobookBay"
-      : release.source === "slskd"
-        ? "Soulseek"
-        : `${release.indexer_name || "Prowlarr"} (indexer ${release.indexer_id})`;
 }
 
 function compareKnown(

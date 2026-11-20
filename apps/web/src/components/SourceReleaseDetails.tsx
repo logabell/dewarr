@@ -1,7 +1,8 @@
 import { useId, useState } from "react";
 import { ReleaseDescription, ReleaseMediaInfo } from "./ReleaseContent";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, result } from "../api/client";
 import type { components } from "../api/schema";
 import SourceReleaseDownload from "./SourceReleaseDownload";
@@ -25,6 +26,7 @@ export function ReleaseTags({ release }: { release: Item["release"] }) {
 export default function SourceReleaseDetails({
   item,
   searchId,
+  workId,
   rank,
   close,
   disabled,
@@ -33,6 +35,7 @@ export default function SourceReleaseDetails({
 }: {
   item: Item;
   searchId: string;
+  workId: string;
   rank: number;
   close: () => void;
   disabled: boolean;
@@ -40,9 +43,46 @@ export default function SourceReleaseDetails({
   reviewContext?: string;
 }) {
   const [tab, setTab] = useState("Description");
+  const [downloader, setDownloader] = useState("");
   const tabsId = useId();
   const tabs = ["Description", "Media info", "Details"];
   const original = item.release;
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+
+  const clients = useQuery({
+    queryKey: ["downloaders"],
+    queryFn: async () => result(await api.GET("/api/downloaders")),
+  });
+
+  const qbitClients = (clients.data || []).filter(
+    (client) => client.enabled && client.kind === "qbittorrent",
+  );
+
+  const inspect = useMutation({
+    mutationFn: async () =>
+      result(
+        await api.POST(
+          "/api/source-searches/{search_id}/results/{result_id}/artifact",
+          {
+            params: {
+              path: {
+                search_id: searchId,
+                result_id: item.id,
+              },
+            },
+            body: downloader ? { downloader_id: downloader } : undefined,
+          },
+        ),
+      ),
+    onSuccess: (artifact) => {
+      const context = new URLSearchParams(params);
+      context.set("work", workId);
+      navigate(
+        `/sources/artifacts/${artifact.id}?${context.toString()}`,
+      );
+    },
+  });
   const detail = useQuery({
     queryKey: ["mam-release", original.source_id],
     enabled: original.source === "mam" && item.current_connection,
@@ -105,6 +145,45 @@ export default function SourceReleaseDetails({
           <p className="notice error">{item.assessment.blocked.join(" · ")}</p>
         )}
         <div className="release-detail-actions">
+          {original.source === "prowlarr" && (
+            <>
+              {qbitClients.length > 0 && (
+                <label>
+                  qBittorrent for magnet inspection (optional)
+                  <select
+                    value={downloader}
+                    onChange={(event) => setDownloader(event.target.value)}
+                    disabled={inspect.isPending}
+                  >
+                    <option value="">Choose only if redirected to a magnet</option>
+                    {qbitClients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                disabled={!item.current_connection || !original.acquisition_supported || inspect.isPending}
+                onClick={() => inspect.mutate()}
+              >
+                {inspect.isPending
+                  ? "Inspecting…"
+                  : original.protocol === "nzb"
+                    ? "Inspect NZB"
+                    : "Inspect torrent"}
+              </button>
+              {inspect.error && (
+                <p className="notice error" role="alert">
+                  {inspect.error instanceof Error
+                    ? inspect.error.message
+                    : "Could not inspect this release."}
+                </p>
+              )}
+            </>
+          )}
           {canAcquire && (
             <SourceReleaseDownload
               possibleCollection={item.possible_collection}
@@ -129,7 +208,7 @@ export default function SourceReleaseDetails({
               target="_blank"
               rel="noreferrer"
             >
-              View on MAM <ExternalLink size={14} />
+              Open release page <ExternalLink size={14} />
             </a>
           )}
         </div>
@@ -140,7 +219,7 @@ export default function SourceReleaseDetails({
         )}
         {detail.error && (
           <p className="notice">
-            Could not refresh MAM details. Showing the saved search result.{" "}
+            Could not refresh additional details. Showing the saved search result.{" "}
             <button onClick={() => detail.refetch()}>Retry details</button>
           </p>
         )}

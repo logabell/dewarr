@@ -148,6 +148,86 @@ async def test_future_only_activation_skips_backlog_and_new_addition_downloads_o
     assert (await activate(client, f, plan))["revision"] == saved["revision"]
 
 
+async def test_select_all_missing_backlog_is_frozen_and_activated(
+    client, database, policy_fixture
+):
+    f = policy_fixture
+    await add(client, f)
+
+    # Read the current membership revision using the same list endpoint as the picker.
+    listing = await client.get(f"/api/lists/{f['list']}?offset=0&limit=25")
+    assert listing.status_code == 200, listing.text
+    revision = listing.json()["content_revision"]
+
+    # The shared fixture creates an active request. Withdraw its reason so
+    # this test exercises a genuinely missing book, not a pending reservation.
+    request_id = f["source"]["body"]["intent_id"]
+    current = await client.get(f"/api/requests/{request_id}")
+    assert current.status_code == 200, current.text
+    reason = current.json()["reasons"][0]
+    withdrawn = await client.delete(
+        f"/api/requests/{request_id}/reasons/{reason['id']}"
+    )
+    assert withdrawn.status_code == 200, withdrawn.text
+
+    plan = await preview(
+        client, f, select_all_missing=True, expected_content_revision=revision
+    )
+    assert plan["selected"] == 1
+
+    saved = await activate(client, f, plan)
+
+    selected = await client.get(
+        f"/api/lists/{f['list']}/acquisition/selected?offset=0&limit=25"
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["total"] == 1
+    assert selected.json()["records"][0]["work_id"] == f["work"]
+    assert selected.json()["records"][0]["selected"] is True
+
+    second_page = await client.get(
+        f"/api/lists/{f['list']}/acquisition/selected?offset=25&limit=25"
+    )
+    assert second_page.status_code == 200, second_page.text
+    assert second_page.json()["total"] == 1
+    assert second_page.json()["records"] == []
+
+    async with database() as db:
+        monitored = await db.scalar(
+            select(ListAcquisitionBook).where(
+                ListAcquisitionBook.policy_id == UUID(saved["id"]),
+                ListAcquisitionBook.work_id == UUID(f["work"]),
+            )
+        )
+        assert monitored is not None
+
+
+async def test_select_all_missing_requires_revision_and_cannot_mix_manual_ids(
+    client, policy_fixture
+):
+    f = policy_fixture
+    await add(client, f)
+
+    missing_revision = await client.post(
+        f"/api/lists/{f['list']}/acquisition/preview",
+        json={**f["config"], "select_all_missing": True},
+        headers={"Idempotency-Key": str(uuid4())},
+    )
+    assert missing_revision.status_code == 422
+
+    mixed = await client.post(
+        f"/api/lists/{f['list']}/acquisition/preview",
+        json={
+            **f["config"],
+            "select_all_missing": True,
+            "include_work_ids": [f["work"]],
+            "expected_content_revision": "0" * 64,
+        },
+        headers={"Idempotency-Key": str(uuid4())},
+    )
+    assert mixed.status_code == 422
+
+
 async def test_selected_backlog_is_explicit_and_membership_change_invalidates_preview(
     client, database, policy_fixture
 ):

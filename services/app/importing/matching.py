@@ -29,7 +29,7 @@ from app.importing.match_evidence import (
 from app.importing.naming import StrictModel, fingerprint
 from app.importing.versioning import version_revision
 
-MATCHER_VERSION = 8
+MATCHER_VERSION = 9
 MAX_CANDIDATES = 50
 
 
@@ -136,7 +136,10 @@ def candidate_evidence(facts, version, origin, work, needs_review, *, request_ma
         for entry in (origin, work)
         if entry.authors
     }
-    if facts.authors and all(tuple(names) in credits for names in facts.authors):
+    if facts.authors and all(
+        names and any(set(names) <= set(credit) for credit in credits)
+        for names in facts.authors
+    ):
         reasons.append("Embedded authors agree")
     else:
         conflicts.append("Embedded authors are missing or differ")

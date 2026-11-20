@@ -124,6 +124,34 @@ def test_folders_become_releases_without_inventing_identity():
     assert described.files[0].path == "Book_ Title/Harbor.m4b"
 
 
+def test_opus_folders_are_classified_as_audio_and_eligible():
+    found = group_responses(
+        [
+            {
+                "username": "reader",
+                "files": [{"filename": "Writer/Harbor/Harbor.opus", "size": 20}],
+            }
+        ],
+        search_id="search-opus",
+        observed_at=datetime.now(UTC),
+        title="Harbor",
+        authors=["Writer"],
+    )
+    assert len(found) == 1
+    release = found[0]
+    assert release.medium == "audio"
+    assert release.formats == ["opus"]
+    descriptor, _content = file_list_descriptor(release)
+    reasons = eligibility(
+        release,
+        {"title": "Harbor", "authors": ["Writer"]},
+        {"medium": "audio", "language": None, "version_id": None, "abridged": None},
+        ReleasePreferences(),
+        descriptor=descriptor,
+    )
+    assert not reasons, reasons
+
+
 def test_a_cut_off_or_locked_folder_is_not_an_automatic_grab():
     complete = [{"filename": "Harbor/Harbor.m4b", "size": 20}]
     complete += [{"filename": f"Other/{index}.mp3", "size": 1} for index in range(500)]

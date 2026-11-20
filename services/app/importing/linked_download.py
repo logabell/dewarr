@@ -43,7 +43,8 @@ def request_file_conflicts(
     if facts.titles and not title_agrees:
         conflicts.append("The files name a different book")
     if any(
-        names != authors and not (credited and title_agrees and set(authors) <= set(names))
+        not (names and set(names) <= set(authors))
+        and not (credited and title_agrees and set(authors) <= set(names))
         for names in facts.authors
     ):
         conflicts.append("The files name a different author")
@@ -99,7 +100,9 @@ def agrees_with_request(work, release, facts, *, series=(), verified_titles=()):
     if facts.titles and not file_titles_agree:
         return False
     if any(
-        value != authors and not (credited_source and file_corroborated) for value in facts.authors
+        not (value and set(value) <= set(authors))
+        and not (credited_source and file_corroborated)
+        for value in facts.authors
     ):
         return False
     release_authors = sorted(normalized(name) for name in release.get("authors", []))

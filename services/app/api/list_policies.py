@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.api.dependencies import Database, Member
 from app.api.requests import TargetView
+from app.db.models import Operation
 from app.domain import list_monitoring
 from app.domain import list_policies as policies
 from app.domain.acquisition import RequestOptions, RequestSpec
@@ -74,6 +75,14 @@ class ActivationView(BaseModel):
     selected: int
     offset: int
     limit: int
+
+
+class SelectedBooksPage(BaseModel):
+    records: list[ActivationRecord]
+    total: int
+    offset: int
+    limit: int
+    activated_at: datetime | None = None
 
 
 class RevisionInput(BaseModel):
@@ -180,6 +189,40 @@ async def activate(list_id: UUID, identifier: UUID, user: Member, db: Database):
     result = await view(db, policy)
     await db.commit()
     return result
+
+
+@router.get("/selected", response_model=SelectedBooksPage)
+async def selected_books(
+    list_id: UUID,
+    user: Member,
+    db: Database,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=100),
+):
+    await owner_context(db, user.id, list_id)
+    operation = await db.scalar(
+        select(Operation)
+        .where(
+            Operation.owner_id == user.id,
+            Operation.kind == policies.KIND,
+            Operation.status == "completed",
+            Operation.payload["command"]["list_id"].astext == str(list_id),
+        )
+        .order_by(Operation.created_at.desc(), Operation.id.desc())
+        .limit(1)
+    )
+    selected = (
+        [record for record in operation.payload.get("records", []) if record.get("selected")]
+        if operation
+        else []
+    )
+    return SelectedBooksPage(
+        records=selected[offset : offset + limit],
+        total=len(selected),
+        offset=offset,
+        limit=limit,
+        activated_at=operation.created_at if operation else None,
+    )
 
 
 @router.post("/pause", response_model=ListPolicyView)

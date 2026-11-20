@@ -165,6 +165,7 @@ function FollowEditor({ follow }: { follow: Follow }) {
   const [, setParams] = useSearchParams();
   const [filters, setFilters] = useState(follow.filters);
   const [offset, setOffset] = useState(0);
+  const [selectedOffset, setSelectedOffset] = useState(0);
   const path = { list_id: follow.list_id };
   const changed = () => {
     for (const key of [
@@ -172,6 +173,7 @@ function FollowEditor({ follow }: { follow: Follow }) {
       "follow-observations",
       "list-policy",
       "list-policy-books",
+      "list-policy-selected",
       "list-books",
     ])
       void cache.invalidateQueries({ queryKey: [key] });
@@ -223,6 +225,15 @@ function FollowEditor({ follow }: { follow: Follow }) {
         }),
       ),
   });
+  const selectedBooks = useQuery({
+    queryKey: ["list-policy-selected", follow.list_id, selectedOffset],
+    queryFn: async () =>
+      result(
+        await api.GET("/api/lists/{list_id}/acquisition/selected", {
+          params: { path, query: { offset: selectedOffset, limit: 25 } },
+        }),
+      ),
+  });
   const exclude = useMutation({
     mutationFn: async (book: { id: string; excluded: boolean }) =>
       result(
@@ -258,6 +269,7 @@ function FollowEditor({ follow }: { follow: Follow }) {
           unfollow.error ||
           sync.error ||
           observations.error ||
+          selectedBooks.error ||
           exclude.error
         }
       />
@@ -320,8 +332,66 @@ function FollowEditor({ follow }: { follow: Follow }) {
           activate a policy.
         </p>
       )}
+      <section className="panel editor" aria-label="Books selected for acquisition">
+        <h3>Selected in last activation</h3>
+        {selectedBooks.isPending ? (
+          <Loading />
+        ) : (
+          <>
+            <p>
+              {selectedBooks.data?.total ?? 0} books selected for acquisition
+            </p>
+            {selectedBooks.data?.activated_at ? (
+              <p className="muted">
+                Activated{" "}
+                {new Date(selectedBooks.data.activated_at).toLocaleString()}
+              </p>
+            ) : null}
+            {selectedBooks.data?.records.map((book) => (
+              <article className="source-attribution" key={book.work_id}>
+                <div>
+                  <Link to={`/books/${book.work_id}`}>{book.title}</Link>
+                  <p>
+                    Selected ·{" "}
+                    {book.targets
+                      .map((target) => `${target.slot}: ${target.state}`)
+                      .join(" · ")}
+                  </p>
+                </div>
+              </article>
+            ))}
+            {selectedBooks.data?.total === 0 ? (
+              <p className="muted">No activated selection recorded yet.</p>
+            ) : null}
+            <div className="button-row">
+              {selectedOffset > 0 ? (
+                <button
+                  onClick={() => setSelectedOffset(Math.max(0, selectedOffset - 25))}
+                >
+                  Previous selected books
+                </button>
+              ) : null}
+              {selectedOffset + 25 < (selectedBooks.data?.total ?? 0) ? (
+                <button onClick={() => setSelectedOffset(selectedOffset + 25)}>
+                  Next selected books
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
+      </section>
       <section className="panel editor">
         <h3>Books and exclusions</h3>
+        <div className="button-row">
+          {offset > 0 ? (
+            <button onClick={() => setOffset(Math.max(0, offset - 50))}>
+              Previous books
+            </button>
+          ) : null}
+          {offset + 50 < (observations.data?.total || 0) ? (
+            <button onClick={() => setOffset(offset + 50)}>Next books</button>
+          ) : null}
+        </div>
         {observations.data?.items.map((book) => (
           <article className="source-attribution" key={book.id}>
             <div>
@@ -345,16 +415,6 @@ function FollowEditor({ follow }: { follow: Follow }) {
             </div>
           </article>
         ))}
-        <div className="button-row">
-          {offset > 0 ? (
-            <button onClick={() => setOffset(offset - 50)}>
-              Previous books
-            </button>
-          ) : null}
-          {offset + 50 < (observations.data?.total || 0) ? (
-            <button onClick={() => setOffset(offset + 50)}>Next books</button>
-          ) : null}
-        </div>
       </section>
     </article>
   );
