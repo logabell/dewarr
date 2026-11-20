@@ -124,6 +124,34 @@ def test_folders_become_releases_without_inventing_identity():
     assert described.files[0].path == "Book_ Title/Harbor.m4b"
 
 
+def test_opus_folders_are_classified_as_audio_and_eligible():
+    found = group_responses(
+        [
+            {
+                "username": "reader",
+                "files": [{"filename": "Writer/Harbor/Harbor.opus", "size": 20}],
+            }
+        ],
+        search_id="search-opus",
+        observed_at=datetime.now(UTC),
+        title="Harbor",
+        authors=["Writer"],
+    )
+    assert len(found) == 1
+    release = found[0]
+    assert release.medium == "audio"
+    assert release.formats == ["opus"]
+    descriptor, _content = file_list_descriptor(release)
+    reasons = eligibility(
+        release,
+        {"title": "Harbor", "authors": ["Writer"]},
+        {"medium": "audio", "language": None, "version_id": None, "abridged": None},
+        ReleasePreferences(),
+        descriptor=descriptor,
+    )
+    assert not reasons, reasons
+
+
 def test_a_cut_off_or_locked_folder_is_not_an_automatic_grab():
     complete = [{"filename": "Harbor/Harbor.m4b", "size": 20}]
     complete += [{"filename": f"Other/{index}.mp3", "size": 1} for index in range(500)]
@@ -495,3 +523,74 @@ async def test_an_errored_transfer_fails_the_batch():
         state = await client.batch("attempt-1", release)
     assert state.state == "failed"
     assert state.completed is False
+
+
+@pytest.mark.asyncio
+async def test_file_not_shared_is_read_from_the_individual_transfer_record():
+    release = _album()
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("/batches/attempt-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "transfers": [
+                        {
+                            "id": "99092500-823c-45ef-b830-fa51816ec355",
+                            "filename": "Album/track.mp3",
+                            "size": 10,
+                            "state": "Rejected",
+                        },
+                        {
+                            "filename": "Album/chapter.mp3",
+                            "size": 20,
+                            "state": "Completed",
+                        },
+                    ]
+                },
+            )
+        if request.url.path.endswith("/99092500-823c-45ef-b830-fa51816ec355"):
+            return httpx.Response(200, json={"exception": "Transfer rejected: File not shared."})
+        raise AssertionError(f"Unexpected slskd request: {request.method} {request.url}")
+
+    async with SlskdClient(
+        "http://slskd.test:5030", KEY, transport=httpx.MockTransport(handler)
+    ) as client:
+        state = await client.batch("attempt-1", release)
+    assert state.state == "failed"
+    assert state.failure_reason == "Transfer rejected: File not shared."
+    assert state.peer_refusal is True
+    assert any(
+        "/transfers/downloads/reader/99092500-823c-45ef-b830-fa51816ec355" in p for p in calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_transfer_exception_is_not_classified_as_peer_refusal():
+    release = _album()
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/batches/attempt-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "transfers": [
+                        {
+                            "id": "transfer-1",
+                            "filename": "Album/track.mp3",
+                            "size": 10,
+                            "state": "Errored",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"exception": "Connection timed out"})
+
+    async with SlskdClient(
+        "http://slskd.test:5030", KEY, transport=httpx.MockTransport(handler)
+    ) as client:
+        state = await client.batch("attempt-1", release)
+    assert state.failure_reason == "Connection timed out"
+    assert state.peer_refusal is False

@@ -108,6 +108,37 @@ async def read(client, identifier):
     return await client.get(f"/api/source-searches/{identifier}")
 
 
+async def test_automated_search_expiry_is_two_hours_and_refreshed_on_launch(
+    client, admin, database, catalog, monkeypatch
+):
+    await configure_mam(client)
+    saved = await begin(client, catalog, key="two-hour-expiry-regression")
+
+    def assert_two_hour_window(expiry):
+        remaining = datetime.fromisoformat(expiry) - datetime.now(UTC)
+        assert timedelta(hours=1, minutes=59) < remaining <= timedelta(hours=2)
+
+    async def skip_enqueue(db, operation):
+        return None
+
+    monkeypatch.setattr(book_sources, "enqueue_sources", skip_enqueue)
+
+    async with database() as db, db.begin():
+        operation = await db.get(Operation, UUID(saved["id"]))
+        user = await db.get(User, UUID(admin["id"]))
+        work = await db.get(Work, catalog["work"])
+
+        assert operation is not None
+        assert user is not None
+        assert work is not None
+
+        assert_two_hour_window(operation.payload["expires_at"])
+
+        await book_sources.launch(db, operation, user, work)
+
+        assert_two_hour_window(operation.payload["expires_at"])
+
+
 @pytest.mark.parametrize("torrent_state", ["enabled", "disabled", "excluded", "no_books"])
 async def test_prowlarr_discovery_explains_missing_torrent_sources(
     client, admin, catalog, selection_route, prowlarr_http, torrent_state
@@ -198,7 +229,8 @@ async def test_incremental_ranked_private_results_preserve_mam_fields_and_owners
     )
     assert rejected_wedge.status_code == 422
     artifact = await client.post(
-        f"/api/source-searches/{identifier}/results/{source_row['id']}/artifact"
+        f"/api/source-searches/{identifier}/results/{source_row['id']}/artifact",
+        json={"downloader_id": str(uuid4())},
     )
     assert artifact.status_code == 200, artifact.text
     assert artifact.json()["source_key"] == "prowlarr"

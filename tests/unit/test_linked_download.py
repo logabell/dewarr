@@ -339,3 +339,66 @@ async def test_reviewed_collection_mapping_requires_independent_file_identity(mo
     )
     assert result is (version if case == "corroborated" else None)
     assert attach.await_count == (1 if case == "corroborated" else 0)
+
+
+@pytest.mark.parametrize(
+    ("file_title", "position", "expected"),
+    [
+        ("The Empyrean T3: Onyx Storm", "3", True),
+        ("The Empyrean T2: Onyx Storm", "3", False),
+        ("The Stormlight Archive T3: Onyx Storm", "3", False),
+        ("The Empyrean T3: Fourth Wing", "3", False),
+    ],
+)
+def test_linked_download_accepts_catalogued_t_series_prefix(
+    file_title, position, expected
+):
+    from app.importing.linked_download import request_file_conflicts
+
+    work = SimpleNamespace(
+        title="Onyx Storm",
+        authors=["Rebecca Yarros"],
+        language="en",
+        metadata_fields={},
+    )
+    release = {"title": "Onyx Storm", "authors": ["Rebecca Yarros"]}
+    facts = MatchEvidence(
+        titles=[file_title],
+        authors=[["rebecca yarros"]],
+    )
+    series = [{"name": "The Empyrean", "position": position}]
+
+    assert agrees_with_request(work, release, facts, series=series) is expected
+    conflicts = request_file_conflicts(work, release, facts, series=series)
+    assert ("The files name a different book" not in conflicts) is expected
+
+@pytest.mark.parametrize(
+    ("file_authors", "expected"),
+    [
+        (["clive cussler"], True),
+        (["clive cussler", "russell blake"], True),
+        (["other author"], False),
+        (["clive cussler", "other author"], False),
+    ],
+)
+def test_linked_download_accepts_incomplete_catalogue_authors_without_unrelated_authors(
+    file_authors, expected
+):
+    from app.importing.linked_download import request_file_conflicts
+
+    work = SimpleNamespace(
+        title="The Eye of Heaven",
+        authors=["Clive Cussler", "Russell Blake"],
+        language="en",
+        metadata_fields={},
+    )
+    release = {"title": work.title, "authors": work.authors}
+    facts = MatchEvidence(
+        titles=["the eye of heaven"],
+        authors=[file_authors],
+    )
+
+    assert agrees_with_request(work, release, facts) is expected
+
+    conflicts = request_file_conflicts(work, release, facts)
+    assert ("The files name a different author" not in conflicts) is expected

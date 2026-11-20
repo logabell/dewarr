@@ -1,5 +1,6 @@
 """Bounded catalog-derived search terms, never authorization for pack coverage."""
 
+import re
 import unicodedata
 from types import SimpleNamespace
 
@@ -47,6 +48,70 @@ def targeted_query(work):
     """Narrow a noisy title search by its catalog author; matching stays separate."""
     return _title_author_query(work)
 
+
+def slskd_queries(work, query):
+    """Build bounded Soulseek fallbacks for the default catalog search."""
+    work = SimpleNamespace(**work)
+    if normalized_query(query) != normalized_query(default_query(work)):
+        return [query]
+
+    title = optional_subtitle_base(work.title)
+    title_without_number = re.sub(r"^\s*#\s*\d+\s+", "", title).strip()
+    candidates = [query, _title_author_query(work), title_without_number]
+    result, seen = [], set()
+    for value in candidates:
+        key = normalized_query(value)
+        if key and key not in seen:
+            result.append(value)
+            seen.add(key)
+    return result
+
+
+def slskd_relevant(releases, work, medium="all"):
+    """Decide whether Soulseek results justify stopping the query fallbacks."""
+    title = optional_subtitle_base(work["title"])
+    title = re.sub(r"^\s*#\s*\d+\s+", "", title).strip()
+    title_pattern = (
+        rf"(?<![\w']){re.escape(title)}(?![\w'])" if title else None
+    )
+
+    authors = identity_authors(work.get("authors") or [])[0]
+    surnames = {
+        author.split()[-1].strip(".,").casefold()
+        for author in authors
+        if author.split() and len(author.split()[-1].strip(".,")) >= 3
+    }
+
+    for release in releases:
+        release_medium = getattr(release, "medium", None)
+        if medium == "ebook" and release_medium == "audio":
+            continue
+        if medium == "audio" and release_medium == "ebook":
+            continue
+
+        paths = [str(getattr(release, "directory", "") or "")]
+        paths.extend(
+            str(getattr(item, "filename", "") or "")
+            for item in (getattr(release, "files", None) or [])
+        )
+        haystack = " ".join(paths)
+
+        if not title_pattern or not re.search(title_pattern, haystack, re.I):
+            continue
+
+        # An audio folder needs author evidence as well as the title. This
+        # prevents music folders with coincidental title words stopping search.
+        if release_medium == "audio":
+            if any(
+                re.search(rf"(?<![\w']){re.escape(surname)}(?![\w'])", haystack, re.I)
+                for surname in surnames
+            ):
+                return True
+            continue
+
+        return True
+
+    return False
 
 def book_queries(work, query):
     """Broaden a default search after empty responses; preserve custom queries.

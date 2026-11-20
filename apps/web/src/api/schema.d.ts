@@ -2698,6 +2698,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/lists/{list_id}/acquisition/selected": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Selected Books */
+    get: operations["selected_books_api_lists__list_id__acquisition_selected_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/lists/{list_id}/acquisition": {
     parameters: {
       query?: never;
@@ -6019,6 +6036,15 @@ export interface components {
       offset: number;
       /** Limit */
       limit: number;
+    };
+    /** SelectedBooksPage */
+    SelectedBooksPage: {
+      records: components["schemas"]["ActivationRecord"][];
+      total: number;
+      offset: number;
+      limit: number;
+      /** Format: date-time */
+      activated_at?: string | null;
     };
     /** ActivityContext */
     ActivityContext: {
@@ -9825,6 +9851,8 @@ export interface components {
       };
       /** Include Work Ids */
       include_work_ids?: string[];
+      /** Select All Missing */
+      select_all_missing?: boolean;
       /**
        * Expected Revision
        * @default 0
@@ -11706,6 +11734,8 @@ export interface components {
        * @description Legacy compatibility value; transfer sizes are not capped
        */
       maximum_bytes?: number | null;
+      /** Allow Incomplete Release Metadata */
+      allow_incomplete_release_metadata?: boolean;
     };
     /** PresetInfo */
     PresetInfo: {
@@ -12788,6 +12818,11 @@ export interface components {
        * @default false
        */
       allow_unknown_seeders: boolean;
+      /**
+       * Allow Incomplete Release Metadata
+       * @default false
+       */
+      allow_incomplete_release_metadata: boolean;
       /**
        * Search Series
        * @default true
@@ -15204,6 +15239,11 @@ export interface components {
     app__domain__community_lists__FollowInput: {
       /** Name */
       name?: string | null;
+    };
+    /** ProwlarrArtifactInput */
+    ProwlarrArtifactInput: {
+      /** Downloader Id */
+      downloader_id?: string | null;
     };
   };
   responses: never;
@@ -20867,6 +20907,40 @@ export interface operations {
       };
     };
   };
+  selected_books_api_lists__list_id__acquisition_selected_get: {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        list_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SelectedBooksPage"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   saved_preview_api_lists__list_id__acquisition_previews__identifier__get: {
     parameters: {
       query?: {
@@ -25217,7 +25291,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ProwlarrArtifactInput"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -25876,7 +25954,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ProwlarrArtifactInput"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

@@ -61,6 +61,7 @@ export default function ListPolicy({
     cache.setQueryData(["list-policy", listId], value);
     void cache.invalidateQueries({ queryKey: ["following"] });
     void cache.invalidateQueries({ queryKey: ["list-policy-books", listId] });
+    void cache.invalidateQueries({ queryKey: ["list-policy-selected", listId] });
   };
   const pause = useMutation({
     mutationFn: async () =>
@@ -225,6 +226,7 @@ function PolicyEditor({
     ),
   );
   const [selected, setSelected] = useState<string[]>([]);
+  const [selectAllMissing, setSelectAllMissing] = useState(false);
   const [selectionValid, setSelectionValid] = useState(false);
   const [contentRevision, setContentRevision] = useState<string>();
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -287,9 +289,12 @@ function PolicyEditor({
     profile_effective_revision: profile?.effective_revision,
     preference_overrides: overrides,
     expected_revision: policy?.revision || 0,
-    include_work_ids: mode === "automatic" ? selected : [],
+    include_work_ids: mode === "automatic" && !selectAllMissing ? selected : [],
+    select_all_missing: mode === "automatic" && selectAllMissing,
     expected_content_revision:
-      mode === "automatic" && selected.length ? contentRevision : undefined,
+      mode === "automatic" && (selected.length > 0 || selectAllMissing)
+        ? contentRevision
+        : undefined,
     downloader_id:
       mode === "automatic" &&
       (downloaderId || !primaryDownloaderPreference(preferences, downloaders))
@@ -508,6 +513,23 @@ function PolicyEditor({
                   skipped. Routes need administrator approval for automatic
                   importing.
                 </p>
+                <label className="check-label">
+                  <input
+                    type="checkbox"
+                    checked={selectAllMissing}
+                    disabled={!selectionValid || !contentRevision}
+                    onChange={(event) => {
+                      setSelectAllMissing(event.target.checked);
+                      if (event.target.checked) setSelected([]);
+                      changed();
+                    }}
+                  />
+                  Select all missing books in this list
+                </label>
+                <p className="muted">
+                  This uses your Desired media setting above. Only books with
+                  at least one requested format marked wanted are selected.
+                </p>
                 <details>
                   <summary>
                     Include current books ({selected.length} selected, maximum
@@ -518,6 +540,7 @@ function PolicyEditor({
                     selected={selected}
                     onChange={(ids) => {
                       setSelected(ids);
+                      setSelectAllMissing(false);
                       changed();
                     }}
                     maximum={25}
@@ -533,8 +556,8 @@ function PolicyEditor({
               disabled={
                 preview.isPending ||
                 (mode === "automatic" &&
-                  selected.length > 0 &&
-                  !selectionValid) ||
+                  (selected.length > 0 || selectAllMissing) &&
+                  (!selectionValid || !contentRevision)) ||
                 !profiles.isSuccess ||
                 (!!profileId && !profile) ||
                 (mode === "automatic" &&
@@ -565,6 +588,12 @@ function PolicyEditor({
             {receipt.data.total} current books · {receipt.data.selected}{" "}
             selected for acquisition.
           </p>
+          {receipt.data.selected > 0 && (
+            <p>
+              These selected books are frozen into this preview. Activation
+              will use this exact selection.
+            </p>
+          )}
           <p>
             Current books not selected remain in your list. Existing authorized
             work continues when you resume an unchanged policy. Removing a book

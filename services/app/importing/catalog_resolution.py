@@ -143,10 +143,21 @@ async def schedule(db, row, matches):
     except HTTPException:
         return False
     facts = match.evidence
+    from app.domain.book_sources import identity as catalog_identity
+    from app.domain.series_identity import title_outside_series_note
+    from app.domain.title_matching import parenthetical_alias_title
+
+    catalog = await catalog_identity(db, work, requester.id)
+    authors_agree = facts.authors == [sorted(normalized(name) for name in work.authors)]
     if (
         not facts.titles
-        or not all(compatible_title(title, work.title) for title in facts.titles)
-        or (facts.authors != [sorted(normalized(name) for name in work.authors)])
+        or not authors_agree
+        or not all(
+            compatible_title(title, work.title)
+            or title_outside_series_note(title, catalog) is not None
+            or parenthetical_alias_title(title, work.title)
+            for title in facts.titles
+        )
     ):
         return False
     inspection = await db.get(DownloadInspection, row.inspection_id)

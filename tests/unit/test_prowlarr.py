@@ -200,25 +200,30 @@ async def test_unknowns_and_unsupported_protocols():
         assert hit.release.acquisition_supported and hit.reference == "secret_proxy_link"
 
 
-async def test_proxy_redirect_does_not_follow_or_log_private_reference(caplog):
+async def test_proxy_magnet_redirect_is_returned_opaque_without_following_or_logging(caplog):
+    from app.adapters.prowlarr import MagnetRedirect
+
     caplog.set_level(logging.INFO, logger="httpx")
     calls = []
+    magnet = "magnet:?xt=urn:btih:" + "a" * 40 + "&tr=https%3A%2F%2Ftracker.test%2Fprivate"
 
     def handler(req):
         calls.append(req)
         if req.url.path.endswith("/search"):
             return httpx.Response(200, json=[release()])
-        return httpx.Response(301, headers={"Location": "magnet:?xt=urn:btih:private"})
+        return httpx.Response(301, headers={"Location": magnet})
 
     async with ProwlarrClient(
         "https://prowlarr.test/base", "secret-api", transport=httpx.MockTransport(handler)
     ) as client:
         hit = (await client.search(ProwlarrSearch(q="Book", indexer_id=7))).hits[0]
-        with pytest.raises(AdapterError) as caught:
-            await client.resolve((hit.release, hit.reference))
-        assert caught.value.kind == FailureKind.UNSUPPORTED
+        result = await client.resolve((hit.release, hit.reference))
+        assert isinstance(result, MagnetRedirect)
+        assert result.magnet == magnet
+        assert "private" not in repr(result)
     assert len(calls) == 2
-    assert "secret_proxy_link" not in caplog.text and "private" not in str(caught.value)
+    assert "secret_proxy_link" not in caplog.text
+    assert "private" not in caplog.text
 
 
 async def test_oversized_page_is_bounded():
@@ -309,7 +314,6 @@ async def test_download_redirects_pin_dns_strip_credentials_and_keep_secrets_pri
         ("http://indexer.test/file", ["93.184.216.34"]),
         ("https://user:password@indexer.test/file", ["93.184.216.34"]),
         ("file:///etc/passwd", ["93.184.216.34"]),
-        ("magnet:?xt=urn:btih:private", ["93.184.216.34"]),
         ("https://indexer.test/file#fragment", ["93.184.216.34"]),
         ("https://indexer.test:bad/file", ["93.184.216.34"]),
         ("", ["93.184.216.34"]),
@@ -434,3 +438,27 @@ async def test_redirect_tries_only_prevalidated_addresses_on_connect_failure():
         assert (await client.resolve((hit.release, hit.reference))).content == torrent_bytes()
     assert lookups == [("indexer.test", None)]
     assert calls == ["2606:4700:4700::1111", "1.1.1.1"]
+
+@pytest.mark.parametrize(
+    ("title", "category", "expected"),
+    [
+        ("For We Are Many [Audiobook]", 7020, "audio"),
+        ("For We Are Many [Ebook]", 3030, "ebook"),
+        ("For We Are Many [Audiobook] [Ebook]", 7020, None),
+        ("For We Are Many Audiobook", 7020, "ebook"),
+    ],
+)
+async def test_explicit_media_label_resolves_conflicting_category(title, category, expected):
+    async with ProwlarrClient(
+        "https://prowlarr.test/base",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(
+                200, json=[release(title=title, categories=[{"id": category}])]
+            )
+        ),
+    ) as client:
+        item = (await client.search(ProwlarrSearch(q="Book", indexer_id=7))).hits[0].release
+
+    assert item.medium == expected
+    assert item.categories == [category]

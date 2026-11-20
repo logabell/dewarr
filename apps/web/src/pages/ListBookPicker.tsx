@@ -54,6 +54,11 @@ export default function ListBookPicker({
     onValidityChange(valid);
   }, [valid, onValidityChange]);
   useEffect(() => {
+    if (!revision && books.data?.content_revision) {
+      setRevision(books.data.content_revision);
+    }
+  }, [revision, books.data?.content_revision]);
+  useEffect(() => {
     onRevisionChange(revision);
   }, [revision, onRevisionChange]);
   const combined = [

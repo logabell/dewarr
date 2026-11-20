@@ -10,7 +10,7 @@ LANGUAGES["deutsch"] = "de"
 MEDIA = frozenset({"audiobook", "abook", "hoerbuch", "hörbuch", "hoerspiel", "hörspiel", "ebook"})
 FORMATS = frozenset({"m4b", "mp3", "epub", "pdf", "flac", "aac", "ogg", "opus", "azw3", "mobi"})
 LABELS = MEDIA | FORMATS | LANGUAGES.keys() | {"unabridged", "ungekuerzt", "ungekürzt", "retail"}
-_LABEL = rf"(?:{'|'.join(sorted(LABELS))}|(?:19|20)\d{{2}})"
+_LABEL = rf"(?:{'|'.join(sorted(LABELS))}|(?:19|20)\d{{2}}|\d{{2,3}}\s*kbps)"
 _SUFFIX = re.compile(
     rf"(?:[.\s_]*\[\s*(?P<square>{_LABEL})\s*\]|"
     rf"[.\s_]*\(\s*(?P<round>{_LABEL})\s*\)|"

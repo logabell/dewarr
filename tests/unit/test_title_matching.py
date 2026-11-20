@@ -4,7 +4,11 @@ import pytest
 
 from app.adapters.catalog_types import BookData
 from app.domain.hardcover_matching import MatchEvidence, compatible
-from app.domain.title_matching import compatible_title, title_search_variants
+from app.domain.title_matching import (
+    compatible_title,
+    parenthetical_alias_title,
+    title_search_variants,
+)
 
 
 @pytest.mark.parametrize(
@@ -41,3 +45,20 @@ def test_hardcover_connector_match_still_requires_author_evidence(authors, expec
         provider="hardcover", external_id="research", title="Angels & Demons", authors=["Dan Brown"]
     )
     assert compatible(MatchEvidence(title="Angels and Demons", authors=authors), book) is expected
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("We Are Legion (We Are Bob)", True),
+        ("For We Are Many (Bobiverse Book 2)", False),
+        ("Harbor (A Study Guide)", False),
+        ("Harbor (Part 1)", False),
+        ("Harbor (Unabridged)", False),
+        ("Another Book (We Are Bob)", False),
+        ("We Are Legion", False),
+        ("We Are Legion (   )", False),
+    ],
+)
+def test_parenthetical_alias_title_is_narrow_and_excludes_content_labels(title, expected):
+    assert parenthetical_alias_title(title, "We Are Legion") is expected

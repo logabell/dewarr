@@ -21,7 +21,7 @@ from app.domain.series_identity import (
     title_outside_series_note,
     title_outside_series_prefix,
 )
-from app.domain.title_matching import compatible_title
+from app.domain.title_matching import compatible_title, parenthetical_alias_title
 from app.importing.naming import fingerprint
 
 FORMATS = {
@@ -51,6 +51,9 @@ class ReleasePreferences(ScopePreferences):
     ebook_destination_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     audio_destination_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     allow_unknown_seeders: bool = Field(default=False, exclude_if=lambda value: not value)
+    allow_incomplete_release_metadata: bool = Field(
+        default=False, exclude_if=lambda value: not value
+    )
     search_series: bool = True
     prefer_series_packs: bool = True
     series_scope: Literal["just_book", "prefer_packs", "complete_series"] | None = Field(
@@ -159,6 +162,8 @@ class PreferenceOverrides(ReleasePreferences):
                 values[field] = None
         if "allow_unknown_seeders" in self.model_fields_set:
             values["allow_unknown_seeders"] = self.allow_unknown_seeders
+        if "allow_incomplete_release_metadata" in self.model_fields_set:
+            values["allow_incomplete_release_metadata"] = self.allow_incomplete_release_metadata
         for field in ("source_strategy", "source_fallback", "recording_style"):
             if field in self.model_fields_set:
                 values[field] = getattr(self, field)
@@ -463,14 +468,20 @@ def indexer_title_authors(release, work):
         for head, separator, tail in (title.partition(" - "), title.rpartition(" - ")):
             if not separator:
                 continue
-            credit = normalized(tail.split(",")[0])
+            # Strip recognised release labels before comparing the first
+            # credit. Prowlarr copies of AudiobookBay titles can append
+            # format and bitrate labels after the author name.
+            credits = {
+                normalized(prefix)
+                for prefix, _ in indexer_suffixes(tail.split(",")[0])
+            }
             bare = title_outside_series_note(head, work) or title_outside_series_prefix(head, work)
             full_title = normalized(parse_title_labels(work["title"]).title)
-            if credit in authors and (
+            if credits & authors.keys() and (
                 normalized(head) in expected_titles
                 or (bare is not None and full_title and normalized(bare) == full_title)
             ):
-                matched.add(authors[credit])
+                matched.add(authors[next(value for value in credits if value in authors)])
     # "Series 5 - Author" omits the catalog subtitle. Accept it only when that
     # series and position are already on the work and the first credit matches.
     if not matched:
@@ -538,9 +549,14 @@ def assess_release(release, work, preferences, medium="all"):
     release = catalog_language_release(release, work)
     raw, part, dramatized = release_labels(getattr(release, "title", release.raw_title))
     title, expected = normalized(raw), normalized(parse_title_labels(work["title"]).title)
-    title_agrees = compatible_title(raw, work["title"])
     authors = {normalized(a) for a in release.authors}
     work_authors = {normalized(a) for a in work["authors"]}
+    author_agrees = bool(authors & work_authors)
+    title_agrees = (
+        compatible_title(raw, work["title"])
+        or title_outside_series_note(raw, work) is not None
+        or (author_agrees and parenthetical_alias_title(raw, work["title"]))
+    )
     known = set().union(*(identifier_values(value) for value in work.get("identifiers") or []))
     same_edition = bool(known & identifier_values(getattr(release, "isbn", None)))
     parsed_authors = indexer_title_authors(release, work)

@@ -30,3 +30,8 @@ compose.override.yml
 # Bundled public discovery collections are application assets.
 !services/app/data/
 !services/app/data/**
+# Local diagnostic and patch backups; never send these in a build context.
+.patch-backups/
+diagnostic-upload/
+**/*.bak*
+**/*.before-*

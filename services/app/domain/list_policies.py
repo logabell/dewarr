@@ -54,6 +54,7 @@ class ListPolicyInput(BaseModel):
     downloader_generation: int | None = Field(default=None, ge=1)
     routes: dict[Literal["ebook", "audio"], PolicyRoute] = Field(default_factory=dict)
     include_work_ids: list[UUID] = Field(default_factory=list, max_length=25)
+    select_all_missing: bool = False
     expected_revision: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
@@ -62,8 +63,12 @@ class ListPolicyInput(BaseModel):
             raise ValueError("Choose exact versions from their book pages")
         if len(set(self.include_work_ids)) != len(self.include_work_ids):
             raise ValueError("Select each backlog book once")
-        if self.mode != "automatic" and self.include_work_ids:
-            raise ValueError("Use reviewed list requests for manual backlog selection")
+        if self.mode != "automatic" and (self.include_work_ids or self.select_all_missing):
+            raise ValueError("Backlog selection is only available in automatic mode")
+        if self.select_all_missing and self.include_work_ids:
+            raise ValueError("Choose all missing books or individual books, not both")
+        if self.select_all_missing and not self.expected_content_revision:
+            raise ValueError("Refresh the list before selecting all missing books")
         return self
 
 
@@ -217,30 +222,38 @@ async def preview(db, user, list_id, body, key):
         raise HTTPException(409, "Backlog selection is no longer in this list")
     spec = RequestSpec.model_validate(config["specification"])
     projected = []
-    series_plans = {}
+    selected_ids = set(map(str, body.include_work_ids))
+
     for record in records:
         await validate_request(db, user, UUID(record["work_id"]), spec)
         outcomes = await assess(db, user, UUID(record["work_id"]), spec)
-        if (
-            config["mode"] == "automatic"
-            and config["profile"]["preferences"].get("series_scope") == "complete_series"
-            and record["work_id"] in set(map(str, body.include_work_ids))
-        ):
-            from app.domain.list_series import plan
+        targets = await pending_targets(db, user, UUID(record["work_id"]), spec, outcomes)
+        projected.append({**record, "targets": targets})
 
-            series_plans[record["work_id"]] = await plan(db, user, UUID(record["work_id"]))
-        projected.append(
-            {
-                **record,
-                "targets": await pending_targets(db, user, UUID(record["work_id"]), spec, outcomes),
-                "selected": record["work_id"] in set(map(str, body.include_work_ids)),
-                **(
-                    {"series_scope": series_plans[record["work_id"]]}
-                    if record["work_id"] in series_plans
-                    else {}
-                ),
-            }
-        )
+    if body.select_all_missing:
+        selected_ids = {
+            record["work_id"]
+            for record in projected
+            if any(target["state"] == "wanted" for target in record["targets"])
+        }
+
+    series_plans = {}
+    if (
+        config["mode"] == "automatic"
+        and config["profile"]["preferences"].get("series_scope") == "complete_series"
+    ):
+        from app.domain.list_series import plan
+
+        for record in projected:
+            if record["work_id"] in selected_ids:
+                series_plans[record["work_id"]] = await plan(
+                    db, user, UUID(record["work_id"])
+                )
+
+    for record in projected:
+        record["selected"] = record["work_id"] in selected_ids
+        if record["work_id"] in series_plans:
+            record["series_scope"] = series_plans[record["work_id"]]
     excluded = 0
     subscription = await db.scalar(
         select(ListSubscription).where(ListSubscription.list_id == list_id)
@@ -274,6 +287,7 @@ async def preview(db, user, list_id, body, key):
             "configuration": config,
             "members": records,
             "records": projected,
+            "selected_work_ids": sorted(selected_ids),
             "counts": counts,
             **({"series_plans": series_plans} if series_plans else {}),
             "expires_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
@@ -365,8 +379,12 @@ async def activate(db, user, operation):
     await db.flush()
     from app.domain.list_monitoring import reconcile
 
+    selected_ids = set(payload.get("selected_work_ids", map(str, body.include_work_ids)))
+    if not selected_ids <= {record["work_id"] for record in records}:
+        raise HTTPException(409, "Reviewed backlog selection is no longer in this list")
+
     leaders = await reconcile(
-        db, policy, records, now, activation=True, selected=set(map(str, body.include_work_ids))
+        db, policy, records, now, activation=True, selected=selected_ids
     )
     for book in await db.scalars(
         select(ListAcquisitionBook).where(ListAcquisitionBook.id.in_(leaders))

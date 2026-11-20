@@ -13,6 +13,7 @@ from app.api.audiobookbay import resolve as resolve_abb
 from app.api.dependencies import CurrentUser, Database, Member
 from app.api.metadata import adapter_http_error
 from app.api.operations import OperationView
+from app.api.prowlarr import ProwlarrArtifactInput
 from app.api.prowlarr import resolve as resolve_prowlarr
 from app.api.source_artifacts import SourceArtifactView, artifact_view
 from app.db.models import AcquisitionIntent, Operation, SourceConnection, SourceResult
@@ -267,6 +268,7 @@ async def inspect(
     result_id: UUID,
     user: Member,
     db: Database,
+    body: ProwlarrArtifactInput | None = None,
     use_wedge: bool = Query(False),
 ):
     operation, changed = await checked(db, search_id, user.id)
@@ -292,9 +294,15 @@ async def inspect(
                 403, "This account can request books, but a download needs approval"
             )
     if row.source_key == "audiobookbay":
+        if body and body.downloader_id:
+            raise HTTPException(
+                422, "A metadata downloader can be selected only for Prowlarr results"
+            )
         return await resolve_abb(result_id, user, db)
     if row.source_key == "prowlarr":
-        return await resolve_prowlarr(result_id, user, db)
+        return await resolve_prowlarr(result_id, user, db, body)
+    if body and body.downloader_id:
+        raise HTTPException(422, "A metadata downloader can be selected only for Prowlarr results")
     owner_id, generation, source_id = (
         user.id,
         row.source_generation,

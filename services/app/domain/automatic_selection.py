@@ -41,7 +41,6 @@ from app.domain.automatic_eligibility import (
 from app.domain.book_sources import checked
 from app.domain.downloaders import client_protocol, connection_or_404
 from app.domain.operations import transaction_lock
-from app.domain.prowlarr_network import prowlarr_call
 from app.domain.release_profiles import (
     ProfileSnapshot,
     assess_release,
@@ -301,7 +300,15 @@ async def context(db, user_id, body, *, recovery_selection_id=None):
 
 
 async def begin(
-    db, user, body, key, *, list_authority=None, series_authority=None, recovery_selection_id=None
+    db,
+    user,
+    body,
+    key,
+    *,
+    list_authority=None,
+    series_authority=None,
+    recovery_selection_id=None,
+    excluded_source_ids=None,
 ):
     if get_settings().recovery_mode:
         raise HTTPException(409, "Automatic selection is paused for recovery")
@@ -319,6 +326,9 @@ async def begin(
         command.pop("download_when_ready")  # Preserve earlier preparation-only command receipts.
     if not body.use_wedge:
         command.pop("use_wedge")
+    excluded_source_ids = sorted({str(value) for value in (excluded_source_ids or []) if value})
+    if excluded_source_ids and not recovery_selection_id:
+        raise HTTPException(409, "Source exclusions are only valid during recovery")
     previous = await db.scalar(
         select(Operation).where(Operation.owner_id == user.id, Operation.idempotency_key == key)
     )
@@ -328,6 +338,7 @@ async def begin(
             or previous.payload["command"] != command
             or (previous.payload.get("list_authority") != list_authority)
             or (previous.payload.get("series_authority") != series_authority)
+            or (previous.payload.get("excluded_source_ids", []) != excluded_source_ids)
         ):
             raise HTTPException(409, "This command key was already used for another selection")
         return previous
@@ -389,6 +400,7 @@ async def begin(
                 if recovery_selection_id
                 else {}
             ),
+            **({"excluded_source_ids": excluded_source_ids} if excluded_source_ids else {}),
             "work": deepcopy(search.payload["work"]),
             "profile": profile.model_dump(mode="json"),
             "requirements": rule,
@@ -443,6 +455,11 @@ async def repair(db, operation):
             )
 
 
+def recovery_excludes_source(row, release, excluded_source_ids):
+    """Exclude only the exact Soulseek peer-folder source, never another source."""
+    return row.source_key == "slskd" and release.source_id in excluded_source_ids
+
+
 async def candidates(db, operation, work, profile, rule, version):
     from app.domain import release_blocklist
     from app.domain.pack_expansion import matches_source, pinned_source
@@ -465,6 +482,7 @@ async def candidates(db, operation, work, profile, rule, version):
         await release_blocklist.active_keys(db, work.id, rule["medium"]) if rows else set()
     )
     root_id = operation.payload.get("recovery_selection_id")
+    excluded_source_ids = set(operation.payload.get("excluded_source_ids") or [])
     if root_id and rows:
         from app.domain.download_recovery import frozen_context
 
@@ -484,6 +502,10 @@ async def candidates(db, operation, work, profile, rule, version):
             unattended=operation.payload["command"].get("download_when_ready", False),
             catalog=operation.payload.get("pack_catalog"),
         )
+        if recovery_excludes_source(row, release, excluded_source_ids):
+            problems.append(
+                "This Soulseek peer folder refused the file during the previous attempt"
+            )
         if not operation.payload.get("recovery_selection_id") and not matches_source(
             pinned_source(operation.payload.get("series_authority")), row, release
         ):
@@ -577,8 +599,15 @@ async def resolve_candidate(
         if not reference:
             label = "NZB" if getattr(release, "protocol", None) == "nzb" else "torrent"
             raise HTTPException(422, f"This result has no supported {label} file")
-        artifact, generation = await prowlarr_call(
-            owner_id, "resolve", (release, reference), expected_generation=row.source_generation
+        from app.domain.prowlarr_resolution import resolve_prowlarr
+
+        return await resolve_prowlarr(
+            owner_id,
+            release,
+            reference,
+            expected_generation=row.source_generation,
+            downloader_id=downloader_id,
+            downloader_generation=downloader_generation,
         )
     identifier = await persist_artifact(
         owner_id, artifact.release.source_id, artifact, generation, row.source_key
@@ -771,7 +800,7 @@ async def run(identifier):
             fresh = type(release_value(row)).model_validate(cached["release"])
         else:
             async with asyncio.timeout(180):
-                if row.source_key == "audiobookbay":
+                if row.source_key in {"audiobookbay", "prowlarr"}:
                     artifact_id, fresh = await resolve_candidate(
                         owner_id,
                         row,
@@ -1152,6 +1181,15 @@ async def run(identifier):
                             "dispatch_approval": operation.payload.get(route["approval_key"]),
                             "list_authority": operation.payload.get("list_authority"),
                             "series_authority": operation.payload.get("series_authority"),
+                            **(
+                                {
+                                    "excluded_source_ids": operation.payload.get(
+                                        "excluded_source_ids", []
+                                    )
+                                }
+                                if operation.payload.get("excluded_source_ids")
+                                else {}
+                            ),
                         },
                     )
                     operation.payload = {**operation.payload, "selection_id": str(selected.id)}

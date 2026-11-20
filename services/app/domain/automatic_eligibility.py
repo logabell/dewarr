@@ -65,9 +65,15 @@ def eligibility(
         if descriptor and pack_sources
         else None
     )
-    if assessment.identity != "corroborated" and not pack_sources:
+    allow_incomplete = preferences.allow_incomplete_release_metadata
+    if (
+        assessment.identity == "unmatched"
+        or (assessment.identity != "corroborated" and not allow_incomplete)
+    ) and not pack_sources:
         reasons.append("The source must corroborate the catalog title and author")
-    if release.medium != rule["medium"]:
+    if release.medium != rule["medium"] and not (
+        allow_incomplete and release.medium is None
+    ):
         reasons.append("The source must identify the requested medium")
     required_language = rule["language"] or (version.language if version else None)
     if not language_accepts(required_language, release.language):

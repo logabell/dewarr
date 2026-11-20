@@ -251,7 +251,7 @@ async def source(client, database, admin, catalog, selection_route, monkeypatch)
         callback = None
         failure = None
 
-        async def __call__(self, owner, row, use_wedge=False):
+        async def __call__(self, owner, row, use_wedge=False, **kwargs):
             self.calls.append(row.id)
             if self.callback:
                 await self.callback()

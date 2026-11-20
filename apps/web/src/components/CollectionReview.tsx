@@ -29,10 +29,12 @@ const filesFor = (entry: Entry, recording: string) => {
 export default function CollectionReview({
   searchId,
   resultId,
+  source,
   close,
 }: {
   searchId: string;
   resultId: string;
+  source?: string;
   close: () => void;
 }) {
   const cache = useQueryClient();
@@ -42,6 +44,15 @@ export default function CollectionReview({
   const key = useRef(randomUUID());
   const [recordings, setRecordings] = useState<Record<string, string>>({});
   const [artifactId, setArtifactId] = useState<string>();
+  const [metadataDownloader, setMetadataDownloader] = useState("");
+  const metadataClients = useQuery({
+    queryKey: ["downloaders"],
+    enabled: source === "prowlarr",
+    queryFn: async () => result(await api.GET("/api/downloaders")),
+  });
+  const metadataDownloaders = (metadataClients.data || []).filter(
+    (client) => client.enabled && client.kind === "qbittorrent",
+  );
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [catalogChoices, setCatalogChoices] = useState<Record<string, string>>(
     {},
@@ -51,11 +62,19 @@ export default function CollectionReview({
       result(
         await api.POST(
           "/api/source-searches/{search_id}/results/{result_id}/artifact",
-          { params: { path: { search_id: searchId, result_id: resultId } } },
+          {
+            params: { path: { search_id: searchId, result_id: resultId } },
+            body: metadataDownloader
+              ? { downloader_id: metadataDownloader }
+              : undefined,
+          },
         ),
       ),
     onSuccess: (artifact) => setArtifactId(artifact.id),
   });
+  const needsMagnetResolver =
+    source === "prowlarr" &&
+    !!inspect.error?.message.includes("redirects to a magnet");
   const started = useRef(false);
   useEffect(() => {
     if (!started.current) {
@@ -423,13 +442,43 @@ export default function CollectionReview({
       {!data ? (
         <div className="collection-loading">
           {inspect.isError || preview.isError ? (
-            <button
-              onClick={() =>
-                artifactId ? preview.refetch() : inspect.mutate()
-              }
-            >
-              Try matching again
-            </button>
+            <>
+              {needsMagnetResolver && (
+                <div className="source-magnet-resolver">
+                  <label>
+                    qBittorrent for magnet inspection
+                    <select
+                      value={metadataDownloader}
+                      onChange={(event) =>
+                        setMetadataDownloader(event.target.value)
+                      }
+                      disabled={inspect.isPending}
+                    >
+                      <option value="">Choose a qBittorrent connection</option>
+                      {metadataDownloaders.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {!metadataDownloaders.length && (
+                    <p className="muted">
+                      Enable a qBittorrent connection in{" "}
+                      <Link to="/settings#downloaders">Download settings</Link>.
+                    </p>
+                  )}
+                </div>
+              )}
+              <button
+                disabled={needsMagnetResolver && !metadataDownloader}
+                onClick={() =>
+                  artifactId ? preview.refetch() : inspect.mutate()
+                }
+              >
+                {inspect.isError ? "Retry inspection" : "Try matching again"}
+              </button>
+            </>
           ) : (
             <>
               <Loading />

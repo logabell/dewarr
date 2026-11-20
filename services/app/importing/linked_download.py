@@ -11,7 +11,7 @@ from app.domain.book_sources import identity
 from app.domain.catalog_titles import display_title
 from app.domain.identity import normalized
 from app.domain.release_profiles import indexer_title_authors
-from app.domain.series_identity import title_outside_series_note
+from app.domain.series_identity import title_outside_series_note, title_outside_series_prefix
 from app.domain.title_matching import compatible_title
 from app.domain.work_graph import canonical_work
 from app.importing.file_editions import attach_file_edition
@@ -30,6 +30,7 @@ def request_file_conflicts(
     title_agrees = bool(facts.titles) and all(
         compatible_title(value, work.title, allow_extra_subtitle=reviewed_collection)
         or (title_outside_series_note(value, catalog) is not None)
+        or (title_outside_series_prefix(value, catalog) is not None)
         or value in verified_titles
         for value in facts.titles
     )
@@ -42,7 +43,8 @@ def request_file_conflicts(
     if facts.titles and not title_agrees:
         conflicts.append("The files name a different book")
     if any(
-        names != authors and not (credited and title_agrees and set(authors) <= set(names))
+        not (names and set(names) <= set(authors))
+        and not (credited and title_agrees and set(authors) <= set(names))
         for names in facts.authors
     ):
         conflicts.append("The files name a different author")
@@ -66,6 +68,7 @@ def agrees_with_request(work, release, facts, *, series=(), verified_titles=()):
     file_titles_agree = bool(facts.titles) and all(
         compatible_title(value, work.title)
         or (title_outside_series_note(value, catalog) is not None)
+        or (title_outside_series_prefix(value, catalog) is not None)
         or value in verified_titles
         for value in facts.titles
     )
@@ -97,7 +100,9 @@ def agrees_with_request(work, release, facts, *, series=(), verified_titles=()):
     if facts.titles and not file_titles_agree:
         return False
     if any(
-        value != authors and not (credited_source and file_corroborated) for value in facts.authors
+        not (value and set(value) <= set(authors))
+        and not (credited_source and file_corroborated)
+        for value in facts.authors
     ):
         return False
     release_authors = sorted(normalized(name) for name in release.get("authors", []))
@@ -130,6 +135,7 @@ async def file_match(db, work, selection, inspection, group):
         for value in facts.titles
         if compatible_title(value, work.title)
         or title_outside_series_note(value, catalog) is not None
+        or title_outside_series_prefix(value, catalog) is not None
     )
     if len(titles) != len(facts.titles):
         from app.importing.series_identity import corroborated_titles
